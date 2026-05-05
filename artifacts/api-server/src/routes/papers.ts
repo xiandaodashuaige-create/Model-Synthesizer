@@ -545,7 +545,13 @@ router.post(
       res.status(400).json({ error: "Could not read this PDF. Make sure it's a real PDF (not scanned images)." });
       return;
     }
-    const fullText = parsed.text.trim();
+    // Postgres TEXT rejects NUL bytes; extracted PDF text frequently contains them
+    // (font encoding artefacts), and a few other control chars also cause issues.
+    const fullText = parsed.text
+      .replace(/\u0000/g, "")
+      // eslint-disable-next-line no-control-regex
+      .replace(/[\u0001-\u0008\u000B\u000C\u000E-\u001F]/g, " ")
+      .trim();
     if (fullText.length < 200) {
       res.status(400).json({
         error:
@@ -621,35 +627,41 @@ ${head}`;
     // Cap stored full text to keep DB rows bounded (≈ 80k chars / ~20k tokens worth of context).
     const storedFullText = fullText.slice(0, 80000);
 
-    if (existing.length > 0) {
-      const [updated] = await db
-        .update(papersTable)
-        .set({ fullText: storedFullText, openAccessUrl: metadata.openAccessUrl ?? existing[0].openAccessUrl })
-        .where(eq(papersTable.id, existing[0].id))
+    try {
+      if (existing.length > 0) {
+        const [updated] = await db
+          .update(papersTable)
+          .set({ fullText: storedFullText, openAccessUrl: metadata.openAccessUrl ?? existing[0].openAccessUrl })
+          .where(eq(papersTable.id, existing[0].id))
+          .returning();
+        res.status(200).json({ ...formatPaper(updated), fullTextChars: storedFullText.length, alreadyExisted: true });
+        return;
+      }
+
+      const [paper] = await db
+        .insert(papersTable)
+        .values({
+          sessionId,
+          externalId: metadata.externalId,
+          title: metadata.title,
+          abstract: metadata.abstract ?? null,
+          authors: metadata.authors,
+          year: metadata.year ?? null,
+          venue: metadata.venue ?? null,
+          citationCount: metadata.citationCount ?? null,
+          openAccessUrl: metadata.openAccessUrl ?? null,
+          url: metadata.url,
+          fullText: storedFullText,
+          extracted: "false",
+        })
         .returning();
-      res.status(200).json({ ...formatPaper(updated), fullTextChars: storedFullText.length, alreadyExisted: true });
-      return;
+
+      res.status(201).json({ ...formatPaper(paper), fullTextChars: storedFullText.length, alreadyExisted: false });
+    } catch (err) {
+      req.log.error({ err, externalId: metadata.externalId, fullTextChars: storedFullText.length }, "DB insert/update for uploaded PDF failed");
+      const msg = err instanceof Error ? err.message : "Database error";
+      res.status(500).json({ error: `Failed to save paper: ${msg}` });
     }
-
-    const [paper] = await db
-      .insert(papersTable)
-      .values({
-        sessionId,
-        externalId: metadata.externalId,
-        title: metadata.title,
-        abstract: metadata.abstract ?? null,
-        authors: metadata.authors,
-        year: metadata.year ?? null,
-        venue: metadata.venue ?? null,
-        citationCount: metadata.citationCount ?? null,
-        openAccessUrl: metadata.openAccessUrl ?? null,
-        url: metadata.url,
-        fullText: storedFullText,
-        extracted: "false",
-      })
-      .returning();
-
-    res.status(201).json({ ...formatPaper(paper), fullTextChars: storedFullText.length, alreadyExisted: false });
   },
 );
 
