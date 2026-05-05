@@ -11,6 +11,7 @@ type ImageHit = {
   sourceDomain: string;
   width?: number;
   height?: number;
+  category?: "conceptual_model" | "sem_path" | "framework";
 };
 
 type PaperHit = {
@@ -773,6 +774,22 @@ export function ModelAssistantChat({
                         >
                           <Heart className={"w-3.5 h-3.5 " + (liked ? "fill-white" : "")} />
                         </button>
+                        {r.category && (
+                          <div
+                            data-testid={`badge-image-category-${i}`}
+                            title={t(`models.assistant.searchImages.category.${r.category}.tip` as any)}
+                            className={
+                              "absolute top-1 left-1 inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-semibold backdrop-blur " +
+                              (r.category === "conceptual_model"
+                                ? "bg-emerald-600/95 text-white"
+                                : r.category === "sem_path"
+                                  ? "bg-violet-600/95 text-white"
+                                  : "bg-sky-600/95 text-white")
+                            }
+                          >
+                            ✓ {t(`models.assistant.searchImages.category.${r.category}.label` as any)}
+                          </div>
+                        )}
                         <div className="p-1.5 flex flex-col gap-1 min-h-0">
                           <div className="text-[11px] leading-tight line-clamp-2 text-foreground" title={r.title}>{r.title}</div>
                           <div className="flex items-center justify-between gap-1">

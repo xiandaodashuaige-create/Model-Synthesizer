@@ -369,6 +369,18 @@ export const SearchModelImages200Provider = {
   brave: "brave",
 } as const;
 
+/**
+ * AI-assigned category — what KIND of model figure this is. Absent only when the AI gate was skipped (raw mode) or fell back.
+ */
+export type SearchModelImages200ResultsItemCategory =
+  (typeof SearchModelImages200ResultsItemCategory)[keyof typeof SearchModelImages200ResultsItemCategory];
+
+export const SearchModelImages200ResultsItemCategory = {
+  conceptual_model: "conceptual_model",
+  sem_path: "sem_path",
+  framework: "framework",
+} as const;
+
 export type SearchModelImages200ResultsItem = {
   title: string;
   thumbnailUrl: string;
@@ -377,6 +389,8 @@ export type SearchModelImages200ResultsItem = {
   sourceDomain: string;
   width?: number;
   height?: number;
+  /** AI-assigned category — what KIND of model figure this is. Absent only when the AI gate was skipped (raw mode) or fell back. */
+  category?: SearchModelImages200ResultsItemCategory;
 };
 
 export type SearchModelImages200 = {

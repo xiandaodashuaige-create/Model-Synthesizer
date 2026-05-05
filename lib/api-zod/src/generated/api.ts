@@ -424,6 +424,12 @@ export const SearchModelImagesResponse = zod.object({
       sourceDomain: zod.string(),
       width: zod.number().optional(),
       height: zod.number().optional(),
+      category: zod
+        .enum(["conceptual_model", "sem_path", "framework"])
+        .optional()
+        .describe(
+          "AI-assigned category — what KIND of model figure this is. Absent only when the AI gate was skipped (raw mode) or fell back.",
+        ),
     }),
   ),
 });

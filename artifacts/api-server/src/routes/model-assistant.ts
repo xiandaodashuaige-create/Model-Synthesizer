@@ -215,6 +215,8 @@ Be specific. Reference variables and papers BY NAME. Never invent variables that
 //     hints + academic-domain bonus, and return the top N.
 //  4. If `raw=true`, skip OpenAI expansion and use the user's text verbatim.
 // ---------------------------------------------------------------------------
+type ImageCategory = "conceptual_model" | "sem_path" | "framework" | "other";
+
 type ImageSearchHit = {
   title: string;
   thumbnailUrl: string;
@@ -223,10 +225,33 @@ type ImageSearchHit = {
   sourceDomain: string;
   width?: number;
   height?: number;
+  category?: ImageCategory; // assigned by AI gate; absent when AI was skipped
   _score: number;
   _matched: number;
   _query: string;
 };
+
+// Hard-block obvious noise BEFORE the AI gate so the model spends its budget
+// on actually-ambiguous candidates. Patterns are anchored on common stock /
+// off-topic phrasing seen in real result sets.
+const HARD_NEGATIVE_TITLE_RE = /(stock photo|shutterstock|gettyimages|getty images|istockphoto|alamy|clipart|powerpoint template|ppt template|wallpaper hd|coloring page|cartoon vector|cad drawing|circuit diagram|wiring diagram|p&id|piping diagram|er diagram example|class diagram example|gene expression heatmap|protein structure|molecular structure|crystal structure|swimlane|gantt chart|mind map template)/i;
+const HARD_NEGATIVE_DOMAIN_RE = /(shutterstock\.com|gettyimages\.com|istockphoto\.com|alamy\.com|dreamstime\.com|123rf\.com|pinterest\.|wallpaper|clipart-library|vecteezy\.com|freepik\.com|canva\.com\/templates|slidesgo\.com|slidemodel\.com|smartdraw\.com)/i;
+
+// Pre-built `site:a OR site:b OR …` clause for the publisher-restricted lane.
+// We pick the publishers most likely to host conceptual-model figure pages
+// with stable URLs.
+const PUBLISHER_SITE_FILTER = [
+  "researchgate.net",
+  "sciencedirect.com",
+  "link.springer.com",
+  "onlinelibrary.wiley.com",
+  "tandfonline.com",
+  "emerald.com",
+  "journals.sagepub.com",
+  "frontiersin.org",
+  "mdpi.com",
+  "pmc.ncbi.nlm.nih.gov",
+].map((d) => `site:${d}`).join(" OR ");
 
 const ACADEMIC_SITES = [
   "sciencedirect.com",
@@ -284,38 +309,52 @@ function isAcademicSource(sourceUrl: string): boolean {
   return ACADEMIC_SITES.some((d) => host === d || host.endsWith(`.${d}`));
 }
 
-// Second-pass AI relevance gate: given the user's topic and a list of candidate
-// figure titles + source URLs, return the subset of indices that are ACTUALLY
-// about the topic. Figures that are merely on academic sites but unrelated
-// (e.g. neural-network diagrams, generic flowcharts, journal logos) get
-// dropped here. Returns null if the AI call fails — caller should fall back
-// to the un-gated list rather than serve nothing.
+// Second-pass AI relevance gate: given the user's topic + session context and a
+// list of candidate figure titles + source URLs, return the subset of indices
+// to KEEP, each tagged with a CATEGORY so the UI can show the user WHY each
+// image was kept ("✓ SEM 路径图", "✓ 概念模型图"). Figures that are off-topic
+// (neural-network diagrams, journal logos, generic flowcharts, etc.) get
+// dropped. Returns null if the AI call fails — caller falls back to ungated.
 async function aiRelevanceFilter(
   rawQuery: string,
   expandedQueries: string[],
   candidates: Array<{ title: string; sourceDomain: string }>,
-): Promise<number[] | null> {
+  sessionCtx: SessionImageCtx | null,
+): Promise<Array<{ i: number; category: ImageCategory }> | null> {
   if (candidates.length === 0) return [];
   try {
     const list = candidates
       .map((c, i) => `${i}. [${c.sourceDomain}] ${c.title.slice(0, 180)}`)
       .join("\n");
+    const ctxBlock = sessionCtx
+      ? `\nSESSION CONTEXT (the user's actual research):
+- Topic: ${sessionCtx.topic ?? "(not specified)"}
+- Key variables: ${sessionCtx.variableNames.slice(0, 12).join(", ") || "(none)"}
+- Sample paper titles: ${sessionCtx.paperTitles.slice(0, 5).join(" | ") || "(none)"}\n`
+      : "";
     const completion = await openai.chat.completions.create({
       model: "gpt-5.4",
-      max_completion_tokens: 600,
+      max_completion_tokens: 1000,
       messages: [
         {
           role: "system",
-          content: `You are filtering image search results. The user is looking for conceptual-model / theoretical-framework FIGURES from research papers about a SPECIFIC topic.
+          content: `You are pre-cleaning image search results for an academic researcher. They want CONCEPTUAL MODEL / THEORETICAL FRAMEWORK / SEM PATH figures from research papers — the boxes-and-arrows diagrams that researchers draw to summarize hypothesized relationships among constructs.
 
-For each candidate (numbered list of "title [source]"), decide whether the figure is plausibly a conceptual model / SEM / framework / hypothesis diagram on this topic. Be GENEROUS — keep it if the title is short/generic ("Fig. 1", "Conceptual model") AND the source is a reputable academic paper site, because thumbnails often have minimal titles. Drop only when the title clearly indicates an UNRELATED domain (e.g. neural network architecture, gene expression, molecular structure, financial chart, journal logo, generic flowchart with no topic words).
+For each candidate, choose ONE category:
+- "conceptual_model" → boxes-and-arrows diagram of constructs and hypothesized relationships (the gold standard)
+- "sem_path" → structural equation model / PLS-SEM path diagram with coefficients
+- "framework" → broader theoretical framework / antecedents-mediators-outcomes diagram
+- "other" → DROP. Includes: neural network architecture, system architecture, data flow, gene/molecular figures, journal logos, generic flowcharts with no topic words, stock photos, presentation templates, screenshots of UIs, photo of a person, methodology flowchart, PRISMA diagram
 
-Output ONLY a JSON object: {"keep": [list of indices, integers]}.`,
+Be GENEROUS for the first 3 categories when the source is a reputable academic publisher AND the topic words plausibly match — paper-figure thumbnails often have terse titles like "Fig. 1" or "Conceptual model".
+Be STRICT for "other" — when in doubt and topic words are missing, drop it.
+
+Output ONLY a JSON object: {"keep":[{"i":0,"category":"conceptual_model"}, {"i":3,"category":"sem_path"}, ...]} — only entries you are keeping. Do not echo the rest.`,
         },
         {
           role: "user",
           content: `User's topic (Chinese or rough English): ${rawQuery}
-Expanded English queries: ${expandedQueries.join(" | ")}
+Expanded English queries: ${expandedQueries.join(" | ")}${ctxBlock}
 
 Candidates:
 ${list}`,
@@ -327,39 +366,63 @@ ${list}`,
     if (!match) return null;
     const parsed = JSON.parse(match[0]) as { keep?: unknown };
     if (!Array.isArray(parsed.keep)) return null;
-    const keep = parsed.keep
-      .filter((n): n is number => typeof n === "number" && Number.isInteger(n))
-      .filter((n) => n >= 0 && n < candidates.length);
+    const allowed = new Set<ImageCategory>(["conceptual_model", "sem_path", "framework"]);
+    const out: Array<{ i: number; category: ImageCategory }> = [];
+    for (const e of parsed.keep) {
+      if (typeof e !== "object" || e === null) continue;
+      const i = (e as { i?: unknown }).i;
+      const c = (e as { category?: unknown }).category;
+      if (typeof i !== "number" || !Number.isInteger(i) || i < 0 || i >= candidates.length) continue;
+      if (typeof c !== "string" || !allowed.has(c as ImageCategory)) continue;
+      out.push({ i, category: c as ImageCategory });
+    }
     // Defend against the AI returning an empty list when it shouldn't — if it
     // dropped EVERYTHING, fall back rather than show nothing.
-    if (keep.length === 0 && candidates.length >= 4) return null;
-    return keep;
+    if (out.length === 0 && candidates.length >= 4) return null;
+    return out;
   } catch {
     return null;
   }
 }
 
-async function expandQueriesWithAI(rawQuery: string): Promise<string[]> {
-  // Ask GPT to translate any rough/Chinese phrasing into 2-3 precise English
-  // academic search queries. Falls back to the raw query if AI fails.
+type SessionImageCtx = {
+  topic: string | null;
+  variableNames: string[];
+  paperTitles: string[];
+};
+
+async function expandQueriesWithAI(
+  rawQuery: string,
+  sessionCtx: SessionImageCtx | null,
+): Promise<string[]> {
+  // Ask GPT to translate the user's rough/Chinese phrasing into 3-5 precise
+  // English academic queries — GROUNDED in the session's actual variables and
+  // paper titles when available, so we don't drift to a generic interpretation.
   try {
+    const ctxBlock = sessionCtx
+      ? `\nSESSION CONTEXT (use this to ground the queries — they should target THIS user's specific research, not a generic interpretation):
+- Topic: ${sessionCtx.topic ?? "(unspecified)"}
+- Variables already extracted: ${sessionCtx.variableNames.slice(0, 16).join(", ") || "(none)"}
+- Sample paper titles in this project: ${sessionCtx.paperTitles.slice(0, 6).join(" | ") || "(none)"}`
+      : "";
     const completion = await openai.chat.completions.create({
       model: "gpt-5.4",
-      max_completion_tokens: 400,
+      max_completion_tokens: 500,
       messages: [
         {
           role: "system",
-          content: `You convert a user's rough research topic into 2-3 PRECISE English academic search queries that will find conceptual model / theoretical framework FIGURES inside published research papers.
+          content: `You convert a user's rough research topic into 3-5 PRECISE English academic search queries that will find conceptual model / theoretical framework / SEM-path FIGURES inside published research papers.
 
 Rules:
-- Output ONLY a JSON object: {"queries": ["query 1", "query 2", "query 3"]}
-- Each query: 4-8 words, all lowercase English, NO quotes, NO site: filters
-- Use canonical academic terminology (e.g. "AI streamer" not "AI-broadcast", "impulse buying" not "impulsive purchase", "parasocial interaction", "purchase intention", "trust", "anthropomorphism", "live streaming commerce")
-- If the input mentions Chinese constructs (e.g. 直播/主播/冲动消费/信任/心流), translate to standard academic English equivalents
-- Each query should target a SPECIFIC variant of the topic, not all be paraphrases
+- Output ONLY a JSON object: {"queries": ["query 1", "query 2", "query 3", ...]}
+- Each query: 4-9 words, all lowercase English, NO quotes, NO site: filters
+- Use canonical academic terminology (e.g. "parasocial interaction", "purchase intention", "perceived anthropomorphism", "live streaming commerce", "technology acceptance", "perceived usefulness", "psychological safety")
+- If the input mentions Chinese constructs (e.g. 直播/主播/冲动消费/信任/心流/远程办公), translate to standard academic English equivalents
+- When SESSION CONTEXT is provided, AT LEAST 2 of the queries must combine the user's topic with SPECIFIC constructs from their session variables (e.g. if user says "AI 主播" and session has variables "perceived trust" + "purchase intention", produce "AI streamer perceived trust purchase intention")
+- Each query should target a DIFFERENT variant of the topic — vary the construct combinations, do not paraphrase
 - Do NOT include words like "research", "model", "framework", "figure", "diagram" — they're added separately`,
         },
-        { role: "user", content: rawQuery },
+        { role: "user", content: `User's input: ${rawQuery}${ctxBlock}` },
       ],
     });
     const txt = completion.choices[0]?.message?.content ?? "";
@@ -372,9 +435,28 @@ Rules:
       .filter((q): q is string => typeof q === "string")
       .map((q) => q.trim())
       .filter((q) => q.length >= 3)
-      .slice(0, 3);
+      .slice(0, 5);
   } catch (err) {
     return [];
+  }
+}
+
+// Load session context (topic + variable names + paper titles) for grounding
+// the image-search queries and the AI relevance gate. Never throws — returns
+// null on any DB issue so image search still works.
+async function loadSessionImageCtx(sessionId: number): Promise<SessionImageCtx | null> {
+  try {
+    const [vars, papers] = await Promise.all([
+      db.select({ name: variablesTable.name }).from(variablesTable).where(eq(variablesTable.sessionId, sessionId)),
+      db.select({ title: papersTable.title }).from(papersTable).where(eq(papersTable.sessionId, sessionId)),
+    ]);
+    return {
+      topic: null, // sessionsTable.description could be plumbed here later
+      variableNames: vars.map((v) => v.name).filter((n) => !!n),
+      paperTitles: papers.map((p) => p.title).filter((t) => !!t),
+    };
+  } catch {
+    return null;
   }
 }
 
@@ -524,12 +606,15 @@ router.post("/sessions/:id/model-assistant/search-model-images", async (req, res
   }
 
   try {
+    // ---- Stage 0: load session context for grounded queries -------------
+    const sessionCtx = rawMode ? null : await loadSessionImageCtx(params.data.id);
+
     // ---- Stage 1: build the list of expanded query strings ---------------
     let expandedQueries: string[] = [];
     if (rawMode) {
       expandedQueries = [rawQuery];
     } else {
-      const aiQueries = await expandQueriesWithAI(rawQuery);
+      const aiQueries = await expandQueriesWithAI(rawQuery, sessionCtx);
       // Always include the user's literal phrase too, in case the AI dropped a
       // critical token. Quote multi-word user input.
       const quoted = /\s/.test(rawQuery) && !/^".*"$/.test(rawQuery) ? `"${rawQuery}"` : rawQuery;
@@ -545,23 +630,32 @@ router.post("/sessions/:id/model-assistant/search-model-images", async (req, res
       if (expandedQueries.length === 0) expandedQueries = [quoted];
     }
 
-    // ---- Stage 2: run image search per expanded query --------------------
-    // Provider priority: SerpApi (Google Images, ~10x larger index) → Brave.
-    // Each query is appended with " conceptual model figure" to bias toward
-    // research figures. Over-fetch so the AI relevance gate has plenty of
-    // candidates.
-    const perQueryFetch = 30;
+    // ---- Stage 2: run image search across PARALLEL LANES ----------------
+    //   Lane A (general):   "<query> conceptual model figure"
+    //   Lane B (publisher): "<query> conceptual model figure (site:rg OR site:sd OR …)"
+    // Lane B widens coverage with academic publisher pages broad search misses.
+    // Provider priority: SerpApi (Google Images) → Brave. Brave doesn't honor
+    // OR site: filters reliably so Lane B is SerpApi-only.
+    const perQueryFetch = 25;
     let provider: "serpapi" | "brave" = "brave";
-    let allItems: Array<{ raw: any; title: string; sourceUrl: string; thumbnailUrl: string; fullImage: string; sourceDomain: string; width?: number; height?: number; _query: string }> = [];
+    let allItems: Array<{ raw: any; title: string; sourceUrl: string; thumbnailUrl: string; fullImage: string; sourceDomain: string; width?: number; height?: number; _query: string; _lane: "general" | "publisher" }> = [];
     let anyOk = false;
 
     if (serpKey) {
-      const calls = expandedQueries.map((q) =>
+      const laneA = expandedQueries.map((q) =>
         serpApiImageSearch(`${q} conceptual model figure`, serpKey, perQueryFetch, req.log, page).then((items) =>
-          items.map((it) => ({ ...it, _query: q })),
+          items.map((it) => ({ ...it, _query: q, _lane: "general" as const })),
         ),
       );
-      const settled = await Promise.allSettled(calls);
+      const laneB = expandedQueries.slice(0, 3).map((q) =>
+        // Parenthesize the OR-clause so Google parses it as one disjunction —
+        // without parens, "topic site:a OR site:b" is read as "(topic site:a) OR site:b"
+        // which leaks unrestricted hits from site:b through.
+        serpApiImageSearch(`${q} conceptual model figure (${PUBLISHER_SITE_FILTER})`, serpKey, perQueryFetch, req.log, page).then((items) =>
+          items.map((it) => ({ ...it, _query: q, _lane: "publisher" as const })),
+        ),
+      );
+      const settled = await Promise.allSettled([...laneA, ...laneB]);
       const items = settled.flatMap((s) => (s.status === "fulfilled" ? s.value : []));
       const ok = settled.some((s) => s.status === "fulfilled" && s.value.length > 0);
       if (ok) {
@@ -576,7 +670,7 @@ router.post("/sessions/:id/model-assistant/search-model-images", async (req, res
     if (!anyOk && braveKey) {
       const calls = expandedQueries.map((q) =>
         braveImageSearch(`${q} conceptual model figure`, braveKey, perQueryFetch, req.log, page).then((items) =>
-          items.map((it) => ({ ...it, _query: q })),
+          items.map((it) => ({ ...it, _query: q, _lane: "general" as const })),
         ),
       );
       const settled = await Promise.allSettled(calls);
@@ -590,16 +684,74 @@ router.post("/sessions/:id/model-assistant/search-model-images", async (req, res
       return;
     }
 
+    // ---- Stage 2.5: HARD negative filter (cheap pre-clean) --------------
+    // Drop obvious garbage BEFORE we spend AI tokens on it. Stock photo
+    // domains, presentation templates, gene heatmaps, etc.
+    const droppedHard = { byDomain: 0, byTitle: 0 };
+    const preFiltered = allItems.filter((it) => {
+      if (HARD_NEGATIVE_DOMAIN_RE.test(it.sourceDomain) || HARD_NEGATIVE_DOMAIN_RE.test(it.sourceUrl)) {
+        droppedHard.byDomain++;
+        return false;
+      }
+      if (HARD_NEGATIVE_TITLE_RE.test(it.title)) {
+        droppedHard.byTitle++;
+        return false;
+      }
+      return true;
+    });
+
     // ---- Stage 3: dedupe by sourceUrl, then by thumbnailUrl --------------
-    const bySource = new Map<string, (typeof allItems)[number]>();
-    for (const it of allItems) {
+    const bySource = new Map<string, (typeof preFiltered)[number]>();
+    for (const it of preFiltered) {
       // Prefer the first occurrence (academic queries run first in flatMap order).
       if (!bySource.has(it.sourceUrl)) bySource.set(it.sourceUrl, it);
     }
     const seenThumb = new Set<string>();
-    const deduped = Array.from(bySource.values()).filter((it) => {
+    let deduped = Array.from(bySource.values()).filter((it) => {
       if (seenThumb.has(it.thumbnailUrl)) return false;
       seenThumb.add(it.thumbnailUrl);
+      return true;
+    });
+
+    // ---- Stage 3.5: per-paper cap (avoid 5 thumbnails of the same paper) -
+    // Key by ARTICLE identifier — DOI, ScienceDirect PII, Springer chapter id,
+    // PMC id, ResearchGate publication id, arXiv id — falling back to the
+    // FULL pathname (minus figure anchor / query). The naive "first 4 path
+    // segments" approach collapses entire publishers (e.g. all ScienceDirect
+    // articles share /science/article/pii) and over-suppresses good results.
+    const perPaperCount = new Map<string, number>();
+    function articleKey(rawUrl: string, domain: string): string {
+      try {
+        const u = new URL(rawUrl);
+        const path = u.pathname;
+        // DOI (any host) — strongest identifier.
+        const doi = path.match(/\b(10\.\d{4,9}\/[^\s/?#]+)/i);
+        if (doi) return `doi:${doi[1].toLowerCase()}`;
+        // ScienceDirect / Elsevier PII.
+        const pii = path.match(/\/pii\/([A-Z0-9]+)/i);
+        if (pii) return `pii:${pii[1]}`;
+        // PubMed Central.
+        const pmc = path.match(/\/pmc\/articles\/(PMC\d+)/i);
+        if (pmc) return `pmc:${pmc[1]}`;
+        // arXiv.
+        const arx = path.match(/\/abs\/(\d{4}\.\d{4,5})/);
+        if (arx) return `arxiv:${arx[1]}`;
+        // ResearchGate publication.
+        const rg = path.match(/\/publication\/(\d+)/i);
+        if (rg) return `rg:${rg[1]}`;
+        // Default: full normalized pathname (lowercased, no trailing slash,
+        // no fragment). Two figure URLs from the SAME article will normally
+        // share this; two different articles won't.
+        return `${domain}:${path.toLowerCase().replace(/\/+$/, "")}`;
+      } catch {
+        return rawUrl.slice(0, 80);
+      }
+    }
+    deduped = deduped.filter((it) => {
+      const key = articleKey(it.sourceUrl, it.sourceDomain);
+      const n = perPaperCount.get(key) ?? 0;
+      if (n >= 2) return false;
+      perPaperCount.set(key, n + 1);
       return true;
     });
 
@@ -655,21 +807,38 @@ router.post("/sessions/:id/model-assistant/search-model-images", async (req, res
     scored.sort((a, b) => b._score - a._score);
     const ranked = scored;
 
-    // ---- Stage 6: AI relevance gate -------------------------------------
-    // Send the top ~30 candidates' titles to GPT and let it drop the
-    // off-topic ones (neural-net diagrams, journal logos, etc.). Falls back
-    // to the un-gated list if the AI call fails or hits an edge case.
-    let finalList = ranked;
+    // ---- Stage 6: multi-class AI relevance gate --------------------------
+    // Send top ~40 candidates' titles to GPT, which CLASSIFIES each as
+    // conceptual_model | sem_path | framework | other (drop). Returns a
+    // category per kept image so the UI can display a "✓ SEM 路径图" badge.
+    // Falls back to the un-gated list if the AI call fails entirely.
+    let finalList: typeof ranked = ranked;
     if (!rawMode && ranked.length > 0) {
-      const candidates = ranked.slice(0, 30);
+      const candidates = ranked.slice(0, 40);
       const keep = await aiRelevanceFilter(
         rawQuery,
         expandedQueries,
         candidates.map((c) => ({ title: c.title, sourceDomain: c.sourceDomain })),
+        sessionCtx,
       );
       if (keep && keep.length > 0) {
-        const keepSet = new Set(keep);
-        finalList = candidates.filter((_, i) => keepSet.has(i));
+        const keepMap = new Map(keep.map((k) => [k.i, k.category]));
+        const approved = candidates
+          .map((c, i) => ({ ...c, category: keepMap.get(i) }))
+          .filter((c) => c.category !== undefined);
+        // Backfill: if the AI was very strict and approved fewer than `count`,
+        // top up from the highest-ranked unkept items (no category) so the
+        // grid isn't half-empty. The user sees clearly which are AI-approved
+        // (badge) vs. fallbacks (no badge).
+        if (approved.length < count) {
+          const need = count - approved.length;
+          const fallbacks = candidates
+            .filter((_, i) => !keepMap.has(i))
+            .slice(0, need);
+          finalList = [...approved, ...fallbacks];
+        } else {
+          finalList = approved;
+        }
       }
     }
 
@@ -678,6 +847,12 @@ router.post("/sessions/:id/model-assistant/search-model-images", async (req, res
     // hasMore heuristic: if upstream returned at least the requested count
     // worth of distinct items, more pages probably exist.
     const hasMore = page < 10 && deduped.length >= count;
+
+    req.log.info({
+      rawQuery, expanded: expandedQueries.length, raw: allItems.length,
+      droppedHard, deduped: deduped.length, kept: results.length,
+      categories: results.map((r) => (r as any).category).filter(Boolean),
+    }, "image search complete");
 
     res.json({
       query: expandedQueries.join(" | "),
@@ -833,7 +1008,7 @@ router.post("/sessions/:id/model-assistant/search-model-papers", async (req, res
     if (rawMode) {
       expandedQueries = [rawQuery];
     } else {
-      const aiQueries = await expandQueriesWithAI(rawQuery);
+      const aiQueries = await expandQueriesWithAI(rawQuery, await loadSessionImageCtx(params.data.id));
       expandedQueries = [...aiQueries, rawQuery];
       const seen = new Set<string>();
       expandedQueries = expandedQueries.filter((q) => {

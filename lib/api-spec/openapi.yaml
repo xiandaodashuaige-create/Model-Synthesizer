@@ -533,6 +533,10 @@ paths:
                           type: integer
                         height:
                           type: integer
+                        category:
+                          type: string
+                          enum: [conceptual_model, sem_path, framework]
+                          description: AI-assigned category — what KIND of model figure this is. Absent only when the AI gate was skipped (raw mode) or fell back.
         "503":
           description: Search provider unavailable or not configured
           content:

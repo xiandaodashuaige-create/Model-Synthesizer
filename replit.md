@@ -112,3 +112,21 @@ Per-session user-curated research model with provenance-tracked edges. Independe
 - One-click "作为我的研究模型基础" import button on each AI candidate model
 
 **i18n note**: interpolation uses single-brace `{key}` syntax, NOT `{{key}}`.
+
+## Image Search Pipeline (`POST /sessions/:id/model-assistant/search-model-images`)
+
+Multi-stage pipeline in `artifacts/api-server/src/routes/model-assistant.ts` that finds research-model figures from published papers. Designed for three goals: wide database, queries close to user need, pre-cleaned results.
+
+1. **Stage 0 — session context**: `loadSessionImageCtx(sessionId)` pulls variable names + paper titles from the session (never throws).
+2. **Stage 1 — grounded query expansion**: `expandQueriesWithAI(rawQuery, sessionCtx)` produces 3-5 English academic queries; ≥2 must combine the user's topic with constructs from session variables (e.g. "AI streamer" + "perceived trust" + "purchase intention").
+3. **Stage 2 — parallel search lanes** (SerpAPI; Brave fallback if SerpAPI fails entirely):
+   - Lane A: `<query> conceptual model figure` (5 queries)
+   - Lane B: `<query> conceptual model figure (site:rg OR site:sd OR …)` — top 3 queries, parens REQUIRED so Google parses one disjunction
+4. **Stage 2.5 — hard-negative pre-filter**: drop stock photo domains (Shutterstock/Getty/Pinterest/Freepik/Canva templates) and obvious off-topic titles (gene heatmaps, neural network architecture, PRISMA/swimlane/Gantt) before spending AI tokens.
+5. **Stage 3 — dedupe** by sourceUrl then thumbnail.
+6. **Stage 3.5 — per-paper cap**: max 2 results per article (keyed by extracted DOI / Elsevier PII / PMC id / arXiv id / ResearchGate publication id, falling back to full pathname). Naive "first N path segments" collapses entire publishers — do NOT use that.
+7. **Stage 4-5 — relevance scoring + ranking** (figure-hint regex + academic-source bonus).
+8. **Stage 6 — multi-class AI gate**: `aiRelevanceFilter(rawQuery, expandedQueries, candidates, sessionCtx)` classifies each as `conceptual_model | sem_path | framework | other`; `other` is dropped. Backfill: if approved < `count`, top up from highest-ranked unkept items (no category badge → user sees they're fallbacks).
+9. **Result `category` field** is plumbed through OpenAPI → generated client → frontend, where `model-assistant-chat.tsx` renders a colored top-left badge (emerald=concept, violet=SEM, sky=framework) with i18n labels under `models.assistant.searchImages.category.*`.
+
+Smoke test (session 8, "AI 主播 冲动消费"): 12/12 categorized, 6 different publishers (MDPI/Springer/Wiley/SD/T&F/Frontiers).
