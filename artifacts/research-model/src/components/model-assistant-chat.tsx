@@ -1,7 +1,17 @@
 import React, { useEffect, useRef, useState } from "react";
-import { useChatModelAssistant } from "@workspace/api-client-react";
-import { BookPlus, Loader2, MessageSquare, Paperclip, Send, Sparkles, Trash2, X } from "lucide-react";
+import { useChatModelAssistant, useSearchModelImages } from "@workspace/api-client-react";
+import { BookPlus, ExternalLink, Image as ImageIcon, Loader2, MessageSquare, Paperclip, Search, Send, Sparkles, Trash2, X } from "lucide-react";
 import { useT } from "@/lib/i18n";
+
+type ImageHit = {
+  title: string;
+  thumbnailUrl: string;
+  imageUrl?: string;
+  sourceUrl: string;
+  sourceDomain: string;
+  width?: number;
+  height?: number;
+};
 
 type Attachment = { name: string; kind: "image" | "text"; data: string };
 type ChatMsg = { role: "user" | "assistant"; content: string; attachments?: Attachment[] };
@@ -29,6 +39,30 @@ export function ModelAssistantChat({
   const [lastNeedsMore, setLastNeedsMore] = useState<NeedsMore | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Image search state
+  const imageSearch = useSearchModelImages();
+  const [imgPanelOpen, setImgPanelOpen] = useState(false);
+  const [imgQuery, setImgQuery] = useState("");
+  const [imgResults, setImgResults] = useState<ImageHit[] | null>(null);
+  const [imgError, setImgError] = useState<string | null>(null);
+  const [lightbox, setLightbox] = useState<ImageHit | null>(null);
+
+  const runImageSearch = (q: string) => {
+    const trimmed = q.trim();
+    if (!trimmed) return;
+    setImgQuery(trimmed);
+    setImgPanelOpen(true);
+    setImgResults(null);
+    setImgError(null);
+    imageSearch.mutate(
+      { id: sessionId, data: { query: trimmed, count: 8 } },
+      {
+        onSuccess: (resp) => setImgResults((resp.results ?? []) as ImageHit[]),
+        onError: () => setImgError(t("models.assistant.searchImages.failed" as any)),
+      },
+    );
+  };
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
@@ -172,13 +206,23 @@ export function ModelAssistantChat({
               ))}
             </div>
           )}
-          <a
-            data-testid="link-add-more-papers"
-            href={`/sessions/${sessionId}/papers${lastNeedsMore.searchQuery ? `?q=${encodeURIComponent(lastNeedsMore.searchQuery)}` : ""}`}
-            className="inline-flex items-center gap-1.5 rounded-md bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold px-3 py-1.5"
-          >
-            <BookPlus className="w-3.5 h-3.5" /> {t("models.assistant.needsMore.cta" as any)}
-          </a>
+          <div className="flex flex-wrap gap-2">
+            <a
+              data-testid="link-add-more-papers"
+              href={`/sessions/${sessionId}/papers${lastNeedsMore.searchQuery ? `?q=${encodeURIComponent(lastNeedsMore.searchQuery)}` : ""}`}
+              className="inline-flex items-center gap-1.5 rounded-md bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold px-3 py-1.5"
+            >
+              <BookPlus className="w-3.5 h-3.5" /> {t("models.assistant.needsMore.cta" as any)}
+            </a>
+            <button
+              type="button"
+              data-testid="button-search-model-images-from-needs"
+              onClick={() => runImageSearch(lastNeedsMore.searchQuery ?? (lastNeedsMore.missingConstructs ?? []).join(" "))}
+              className="inline-flex items-center gap-1.5 rounded-md border border-amber-500 bg-white hover:bg-amber-50 text-amber-800 text-xs font-semibold px-3 py-1.5"
+            >
+              <ImageIcon className="w-3.5 h-3.5" /> {t("models.assistant.searchImages.cta" as any)}
+            </button>
+          </div>
         </div>
       )}
 
@@ -230,6 +274,109 @@ export function ModelAssistantChat({
         </div>
       )}
 
+      {imgPanelOpen && (
+        <div className="border-t border-sky-200 bg-sky-50/60 px-4 py-3 space-y-2" data-testid="panel-image-search">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1.5 text-xs font-semibold text-sky-900">
+              <ImageIcon className="w-3.5 h-3.5" /> {t("models.assistant.searchImages.title" as any)}
+              {imgQuery && <span className="font-normal text-sky-700">— "{imgQuery}"</span>}
+            </div>
+            <button
+              type="button"
+              onClick={() => { setImgPanelOpen(false); setImgResults(null); setImgError(null); }}
+              data-testid="button-close-image-search"
+              className="text-sky-700 hover:text-sky-900"
+              title={t("models.assistant.searchImages.close" as any)}
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          {imageSearch.isPending && (
+            <div className="text-xs text-sky-800 inline-flex items-center gap-2">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" /> {t("models.assistant.searchImages.loading" as any)}
+            </div>
+          )}
+          {imgError && <div className="text-xs text-red-700 bg-white rounded p-2 border border-red-200">{imgError}</div>}
+          {imgResults && imgResults.length === 0 && !imageSearch.isPending && (
+            <div className="text-xs text-sky-800">{t("models.assistant.searchImages.empty" as any)}</div>
+          )}
+          {imgResults && imgResults.length > 0 && (
+            <>
+              <p className="text-[11px] text-sky-700">{t("models.assistant.searchImages.hint" as any)}</p>
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+                {imgResults.map((r, i) => (
+                  <div key={i} data-testid={`image-result-${i}`} className="bg-white border border-sky-200 rounded-md overflow-hidden flex flex-col">
+                    <button
+                      type="button"
+                      onClick={() => setLightbox(r)}
+                      className="block w-full aspect-[4/3] bg-muted overflow-hidden"
+                    >
+                      <img
+                        src={r.thumbnailUrl}
+                        alt={r.title}
+                        loading="lazy"
+                        referrerPolicy="no-referrer"
+                        className="w-full h-full object-cover hover:scale-105 transition-transform"
+                      />
+                    </button>
+                    <div className="p-1.5 flex flex-col gap-1 min-h-0">
+                      <div className="text-[11px] leading-tight line-clamp-2 text-foreground" title={r.title}>{r.title}</div>
+                      <div className="flex items-center justify-between gap-1">
+                        <span className="text-[10px] text-muted-foreground truncate" title={r.sourceDomain}>{r.sourceDomain}</span>
+                        <a
+                          href={r.sourceUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          data-testid={`link-image-source-${i}`}
+                          className="inline-flex items-center gap-0.5 text-[10px] text-sky-700 hover:text-sky-900 font-semibold whitespace-nowrap"
+                        >
+                          {t("models.assistant.searchImages.openSource" as any)} <ExternalLink className="w-2.5 h-2.5" />
+                        </a>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {lightbox && (
+        <div
+          className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4"
+          onClick={() => setLightbox(null)}
+          data-testid="lightbox-image"
+        >
+          <div className="max-w-5xl w-full max-h-full flex flex-col items-center gap-2" onClick={(e) => e.stopPropagation()}>
+            <img
+              src={lightbox.imageUrl ?? lightbox.thumbnailUrl}
+              alt={lightbox.title}
+              referrerPolicy="no-referrer"
+              className="max-h-[80vh] max-w-full object-contain rounded shadow-2xl bg-white"
+            />
+            <div className="flex items-center gap-3 bg-white rounded-md px-3 py-2 max-w-full">
+              <span className="text-xs text-foreground line-clamp-2 flex-1 min-w-0" title={lightbox.title}>{lightbox.title}</span>
+              <a
+                href={lightbox.sourceUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-xs text-sky-700 hover:text-sky-900 font-semibold whitespace-nowrap"
+              >
+                {t("models.assistant.searchImages.openSource" as any)} <ExternalLink className="w-3 h-3" />
+              </a>
+              <button
+                type="button"
+                onClick={() => setLightbox(null)}
+                className="text-muted-foreground hover:text-foreground"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="border-t border-border p-3 space-y-2">
         {pendingAttachments.length > 0 && (
           <div className="flex flex-wrap gap-1.5">
@@ -274,6 +421,15 @@ export function ModelAssistantChat({
               title={t("models.assistant.attach" as any)}
             >
               <Paperclip className="w-4 h-4" />
+            </button>
+            <button
+              data-testid="button-search-model-images"
+              onClick={() => runImageSearch(input.trim() || imgQuery)}
+              disabled={!input.trim() && !imgQuery}
+              className="inline-flex items-center justify-center rounded-md border border-input bg-background hover:bg-sky-50 hover:border-sky-300 h-9 w-9 disabled:opacity-50"
+              title={t("models.assistant.searchImages.cta" as any)}
+            >
+              <ImageIcon className="w-4 h-4 text-sky-700" />
             </button>
             <button
               data-testid="button-send-chat"

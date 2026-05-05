@@ -449,6 +449,71 @@ paths:
                         items:
                           type: string
 
+  /sessions/{id}/model-assistant/search-model-images:
+    post:
+      operationId: searchModelImages
+      tags: [models]
+      summary: Search the web for research model / conceptual framework figures matching a topic. Returns thumbnails plus original page URLs so the user can quickly find the source paper.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [query]
+              properties:
+                query:
+                  type: string
+                  description: Topic / construct to search for. The server will augment it with academic phrasing.
+                count:
+                  type: integer
+                  minimum: 1
+                  maximum: 12
+      responses:
+        "200":
+          description: Image search results
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [results, query]
+                properties:
+                  query:
+                    type: string
+                    description: The augmented query actually sent to the search provider.
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      required: [title, thumbnailUrl, sourceUrl, sourceDomain]
+                      properties:
+                        title:
+                          type: string
+                        thumbnailUrl:
+                          type: string
+                        imageUrl:
+                          type: string
+                        sourceUrl:
+                          type: string
+                        sourceDomain:
+                          type: string
+                        width:
+                          type: integer
+                        height:
+                          type: integer
+        "503":
+          description: Search provider unavailable or not configured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /sessions/{id}/models/generate:
     post:
       operationId: generateModels

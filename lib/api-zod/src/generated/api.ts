@@ -354,6 +354,41 @@ export const ChatModelAssistantResponse = zod.object({
 });
 
 /**
+ * @summary Search the web for research model / conceptual framework figures matching a topic. Returns thumbnails plus original page URLs so the user can quickly find the source paper.
+ */
+export const SearchModelImagesParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const searchModelImagesBodyCountMax = 12;
+
+export const SearchModelImagesBody = zod.object({
+  query: zod
+    .string()
+    .describe(
+      "Topic \/ construct to search for. The server will augment it with academic phrasing.",
+    ),
+  count: zod.number().min(1).max(searchModelImagesBodyCountMax).optional(),
+});
+
+export const SearchModelImagesResponse = zod.object({
+  query: zod
+    .string()
+    .describe("The augmented query actually sent to the search provider."),
+  results: zod.array(
+    zod.object({
+      title: zod.string(),
+      thumbnailUrl: zod.string(),
+      imageUrl: zod.string().optional(),
+      sourceUrl: zod.string(),
+      sourceDomain: zod.string(),
+      width: zod.number().optional(),
+      height: zod.number().optional(),
+    }),
+  ),
+});
+
+/**
  * @summary Generate new research model combinations using AI
  */
 export const GenerateModelsParams = zod.object({

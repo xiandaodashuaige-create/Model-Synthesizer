@@ -201,4 +201,90 @@ Be specific. Reference variables and papers BY NAME. Never invent variables that
   }
 });
 
+// ---------------------------------------------------------------------------
+// Image search: find research-model / conceptual-framework figures on the web.
+// Powered by Brave Search Image API.
+// ---------------------------------------------------------------------------
+router.post("/sessions/:id/model-assistant/search-model-images", async (req, res) => {
+  const params = ChatModelAssistantParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: "Invalid session id" });
+    return;
+  }
+  const rawQuery = typeof req.body?.query === "string" ? req.body.query.trim() : "";
+  if (!rawQuery) {
+    res.status(400).json({ error: "Missing query" });
+    return;
+  }
+  const count = Math.min(12, Math.max(1, Number(req.body?.count) || 8));
+
+  const apiKey = process.env.BRAVE_API_KEY;
+  if (!apiKey) {
+    res.status(503).json({ error: "Image search is not configured (missing BRAVE_API_KEY)" });
+    return;
+  }
+
+  // Augment the user's topic with academic-figure phrasing so we hit real
+  // research papers instead of stock photography.
+  const augmented = `${rawQuery} conceptual framework research model diagram`;
+
+  try {
+    const url = new URL("https://api.search.brave.com/res/v1/images/search");
+    url.searchParams.set("q", augmented);
+    url.searchParams.set("count", String(count));
+    url.searchParams.set("safesearch", "strict");
+
+    const r = await fetch(url.toString(), {
+      headers: {
+        "X-Subscription-Token": apiKey,
+        Accept: "application/json",
+      },
+    });
+
+    if (!r.ok) {
+      const text = await r.text().catch(() => "");
+      req.log.warn({ status: r.status, text: text.slice(0, 400) }, "Brave image search failed");
+      res.status(502).json({ error: `Image search failed (status ${r.status})` });
+      return;
+    }
+
+    const data = (await r.json()) as {
+      results?: Array<{
+        title?: string;
+        url?: string;
+        source?: string;
+        thumbnail?: { src?: string };
+        properties?: { url?: string; width?: number; height?: number };
+        meta_url?: { hostname?: string; netloc?: string };
+      }>;
+    };
+
+    const isHttp = (u: string) => /^https?:\/\//i.test(u);
+    const results = (data.results ?? [])
+      .map((item) => {
+        const sourceUrl = item.url ?? "";
+        const thumbnailUrl = item.thumbnail?.src ?? item.properties?.url ?? "";
+        if (!sourceUrl || !thumbnailUrl) return null;
+        if (!isHttp(sourceUrl) || !isHttp(thumbnailUrl)) return null;
+        const fullImage = item.properties?.url && isHttp(item.properties.url) ? item.properties.url : thumbnailUrl;
+        return {
+          title: (item.title ?? "(untitled)").slice(0, 200),
+          thumbnailUrl,
+          imageUrl: fullImage,
+          sourceUrl,
+          sourceDomain: item.meta_url?.hostname ?? item.source ?? "",
+          width: item.properties?.width,
+          height: item.properties?.height,
+        };
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null)
+      .slice(0, count);
+
+    res.json({ query: augmented, results });
+  } catch (err) {
+    req.log.error({ err }, "Brave image search threw");
+    res.status(502).json({ error: "Image search failed" });
+  }
+});
+
 export default router;

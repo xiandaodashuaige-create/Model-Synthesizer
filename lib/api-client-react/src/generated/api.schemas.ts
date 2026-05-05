@@ -283,6 +283,32 @@ export type ChatModelAssistant200 = {
   needsMorePapers?: ChatModelAssistant200NeedsMorePapers;
 };
 
+export type SearchModelImagesBody = {
+  /** Topic / construct to search for. The server will augment it with academic phrasing. */
+  query: string;
+  /**
+   * @minimum 1
+   * @maximum 12
+   */
+  count?: number;
+};
+
+export type SearchModelImages200ResultsItem = {
+  title: string;
+  thumbnailUrl: string;
+  imageUrl?: string;
+  sourceUrl: string;
+  sourceDomain: string;
+  width?: number;
+  height?: number;
+};
+
+export type SearchModelImages200 = {
+  /** The augmented query actually sent to the search provider. */
+  query: string;
+  results: SearchModelImages200ResultsItem[];
+};
+
 export type GenerateModelsBody = {
   /** Optional user-supplied direction/constraints/research focus to steer the AI */
   userPrompt?: string;

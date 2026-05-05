@@ -32,6 +32,8 @@ import type {
   Paper,
   PaperSearchResult,
   ResearchModel,
+  SearchModelImages200,
+  SearchModelImagesBody,
   SearchPapersBody,
   Session,
   SessionSummary,
@@ -1497,6 +1499,93 @@ export const useChatModelAssistant = <
   TContext
 > => {
   return useMutation(getChatModelAssistantMutationOptions(options));
+};
+
+/**
+ * @summary Search the web for research model / conceptual framework figures matching a topic. Returns thumbnails plus original page URLs so the user can quickly find the source paper.
+ */
+export const getSearchModelImagesUrl = (id: number) => {
+  return `/api/sessions/${id}/model-assistant/search-model-images`;
+};
+
+export const searchModelImages = async (
+  id: number,
+  searchModelImagesBody: SearchModelImagesBody,
+  options?: RequestInit,
+): Promise<SearchModelImages200> => {
+  return customFetch<SearchModelImages200>(getSearchModelImagesUrl(id), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(searchModelImagesBody),
+  });
+};
+
+export const getSearchModelImagesMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof searchModelImages>>,
+    TError,
+    { id: number; data: BodyType<SearchModelImagesBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof searchModelImages>>,
+  TError,
+  { id: number; data: BodyType<SearchModelImagesBody> },
+  TContext
+> => {
+  const mutationKey = ["searchModelImages"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof searchModelImages>>,
+    { id: number; data: BodyType<SearchModelImagesBody> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return searchModelImages(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type SearchModelImagesMutationResult = NonNullable<
+  Awaited<ReturnType<typeof searchModelImages>>
+>;
+export type SearchModelImagesMutationBody = BodyType<SearchModelImagesBody>;
+export type SearchModelImagesMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Search the web for research model / conceptual framework figures matching a topic. Returns thumbnails plus original page URLs so the user can quickly find the source paper.
+ */
+export const useSearchModelImages = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof searchModelImages>>,
+    TError,
+    { id: number; data: BodyType<SearchModelImagesBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof searchModelImages>>,
+  TError,
+  { id: number; data: BodyType<SearchModelImagesBody> },
+  TContext
+> => {
+  return useMutation(getSearchModelImagesMutationOptions(options));
 };
 
 /**
