@@ -360,21 +360,31 @@ export const SearchModelImagesParams = zod.object({
   id: zod.coerce.number(),
 });
 
-export const searchModelImagesBodyCountMax = 12;
+export const searchModelImagesBodyCountMax = 20;
 
 export const SearchModelImagesBody = zod.object({
   query: zod
     .string()
     .describe(
-      "Topic \/ construct to search for. The server will augment it with academic phrasing.",
+      "Topic \/ construct to search for. The server will augment it with academic phrasing unless `raw` is true.",
     ),
   count: zod.number().min(1).max(searchModelImagesBodyCountMax).optional(),
+  raw: zod
+    .boolean()
+    .optional()
+    .describe(
+      "When true, skip server-side query augmentation and use the user's text exactly.",
+    ),
 });
 
 export const SearchModelImagesResponse = zod.object({
   query: zod
     .string()
     .describe("The augmented query actually sent to the search provider."),
+  rawQuery: zod
+    .string()
+    .optional()
+    .describe("The original query the user typed, before augmentation."),
   results: zod.array(
     zod.object({
       title: zod.string(),

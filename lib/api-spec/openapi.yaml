@@ -470,11 +470,14 @@ paths:
               properties:
                 query:
                   type: string
-                  description: Topic / construct to search for. The server will augment it with academic phrasing.
+                  description: Topic / construct to search for. The server will augment it with academic phrasing unless `raw` is true.
                 count:
                   type: integer
                   minimum: 1
-                  maximum: 12
+                  maximum: 20
+                raw:
+                  type: boolean
+                  description: When true, skip server-side query augmentation and use the user's text exactly.
       responses:
         "200":
           description: Image search results
@@ -487,6 +490,9 @@ paths:
                   query:
                     type: string
                     description: The augmented query actually sent to the search provider.
+                  rawQuery:
+                    type: string
+                    description: The original query the user typed, before augmentation.
                   results:
                     type: array
                     items:

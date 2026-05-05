@@ -216,7 +216,9 @@ router.post("/sessions/:id/model-assistant/search-model-images", async (req, res
     res.status(400).json({ error: "Missing query" });
     return;
   }
-  const count = Math.min(12, Math.max(1, Number(req.body?.count) || 8));
+  const count = Math.min(20, Math.max(1, Number(req.body?.count) || 12));
+  // When raw=true, skip all augmentation and let the user search exactly as typed.
+  const rawMode = req.body?.raw === true;
 
   const apiKey = process.env.BRAVE_API_KEY;
   if (!apiKey) {
@@ -224,14 +226,20 @@ router.post("/sessions/:id/model-assistant/search-model-images", async (req, res
     return;
   }
 
-  // Augment the user's topic with academic-figure phrasing so we hit real
-  // research papers instead of stock photography.
-  const augmented = `${rawQuery} conceptual framework research model diagram`;
+  // Quote the user's phrase to keep multi-word topics together, then add ONE
+  // academic qualifier so we hit research figures, not stock art. Earlier
+  // versions stuffed 4 generic keywords ("conceptual framework research model
+  // diagram") which drowned out the user's terms — keeping it minimal works
+  // far better.
+  const quoted = /\s/.test(rawQuery) && !/^".*"$/.test(rawQuery) ? `"${rawQuery}"` : rawQuery;
+  const augmented = rawMode ? rawQuery : `${quoted} research model framework`;
 
   try {
+    // Over-fetch so we have headroom for relevance reranking + filtering.
+    const fetchCount = Math.min(50, count * 3);
     const url = new URL("https://api.search.brave.com/res/v1/images/search");
     url.searchParams.set("q", augmented);
-    url.searchParams.set("count", String(count));
+    url.searchParams.set("count", String(fetchCount));
     url.searchParams.set("safesearch", "strict");
 
     const r = await fetch(url.toString(), {
@@ -260,27 +268,68 @@ router.post("/sessions/:id/model-assistant/search-model-images", async (req, res
     };
 
     const isHttp = (u: string) => /^https?:\/\//i.test(u);
-    const results = (data.results ?? [])
+
+    // Tokenize the user's query for relevance scoring. Treat letters, digits,
+    // and CJK chars as word chars so Chinese topics also score correctly.
+    const userTerms = rawQuery
+      .toLowerCase()
+      .split(/[^a-z0-9\u4e00-\u9fff]+/i)
+      .map((t) => t.trim())
+      .filter((t) => t.length >= 2);
+
+    const ACADEMIC_DOMAINS = /(researchgate|sciencedirect|springer|link\.springer|semanticscholar|academia\.edu|tandfonline|wiley|onlinelibrary|emerald|emeraldinsight|sagepub|frontiersin|mdpi|nature|arxiv|ieee|acm\.org|jstor|ssrn|biomedcentral|plos|cambridge|oup\.com|nih\.gov|pubmed|ncbi)/i;
+    const FIGURE_HINT = /\b(framework|model|figure|fig\.|diagram|hypothes|conceptual|theoretical|construct|sem |moderat|mediat)/i;
+
+    const scored = (data.results ?? [])
       .map((item) => {
         const sourceUrl = item.url ?? "";
         const thumbnailUrl = item.thumbnail?.src ?? item.properties?.url ?? "";
         if (!sourceUrl || !thumbnailUrl) return null;
         if (!isHttp(sourceUrl) || !isHttp(thumbnailUrl)) return null;
         const fullImage = item.properties?.url && isHttp(item.properties.url) ? item.properties.url : thumbnailUrl;
+        const title = (item.title ?? "").slice(0, 200);
+        const haystack = `${title} ${sourceUrl}`.toLowerCase();
+        let score = 0;
+        let matchedTerms = 0;
+        for (const term of userTerms) {
+          if (haystack.includes(term)) {
+            score += 2;
+            matchedTerms += 1;
+          }
+        }
+        if (FIGURE_HINT.test(title)) score += 1;
+        if (ACADEMIC_DOMAINS.test(sourceUrl)) score += 2;
+        // Penalize obviously generic stock-art / slideshow titles when no user
+        // terms matched.
+        if (matchedTerms === 0 && /\b(example|template|stock|clipart|powerpoint|slide \d)/i.test(title)) {
+          score -= 2;
+        }
         return {
-          title: (item.title ?? "(untitled)").slice(0, 200),
+          title: title || "(untitled)",
           thumbnailUrl,
           imageUrl: fullImage,
           sourceUrl,
           sourceDomain: item.meta_url?.hostname ?? item.source ?? "",
           width: item.properties?.width,
           height: item.properties?.height,
+          _score: score,
+          _matched: matchedTerms,
         };
       })
-      .filter((x): x is NonNullable<typeof x> => x !== null)
-      .slice(0, count);
+      .filter((x): x is NonNullable<typeof x> => x !== null);
 
-    res.json({ query: augmented, results });
+    // If the user typed multiple meaningful terms, drop results that match
+    // ZERO of them — those are almost always off-topic stock framework art.
+    const requireAtLeastOneMatch = userTerms.length >= 2 && !rawMode;
+    const filtered = requireAtLeastOneMatch
+      ? scored.filter((r) => r._matched >= 1 || ACADEMIC_DOMAINS.test(r.sourceUrl))
+      : scored;
+
+    // Stable sort by score desc, then strip internal scoring fields.
+    filtered.sort((a, b) => b._score - a._score);
+    const results = filtered.slice(0, count).map(({ _score, _matched, ...rest }) => rest);
+
+    res.json({ query: augmented, rawQuery, results });
   } catch (err) {
     req.log.error({ err }, "Brave image search threw");
     res.status(502).json({ error: "Image search failed" });

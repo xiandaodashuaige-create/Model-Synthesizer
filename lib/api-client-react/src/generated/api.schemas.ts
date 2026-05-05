@@ -284,13 +284,15 @@ export type ChatModelAssistant200 = {
 };
 
 export type SearchModelImagesBody = {
-  /** Topic / construct to search for. The server will augment it with academic phrasing. */
+  /** Topic / construct to search for. The server will augment it with academic phrasing unless `raw` is true. */
   query: string;
   /**
    * @minimum 1
-   * @maximum 12
+   * @maximum 20
    */
   count?: number;
+  /** When true, skip server-side query augmentation and use the user's text exactly. */
+  raw?: boolean;
 };
 
 export type SearchModelImages200ResultsItem = {
@@ -306,6 +308,8 @@ export type SearchModelImages200ResultsItem = {
 export type SearchModelImages200 = {
   /** The augmented query actually sent to the search provider. */
   query: string;
+  /** The original query the user typed, before augmentation. */
+  rawQuery?: string;
   results: SearchModelImages200ResultsItem[];
 };
 

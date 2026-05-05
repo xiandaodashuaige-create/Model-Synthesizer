@@ -44,21 +44,28 @@ export function ModelAssistantChat({
   const imageSearch = useSearchModelImages();
   const [imgPanelOpen, setImgPanelOpen] = useState(false);
   const [imgQuery, setImgQuery] = useState("");
+  const [imgRawMode, setImgRawMode] = useState(false);
   const [imgResults, setImgResults] = useState<ImageHit[] | null>(null);
+  const [imgActualQuery, setImgActualQuery] = useState<string | null>(null);
   const [imgError, setImgError] = useState<string | null>(null);
   const [lightbox, setLightbox] = useState<ImageHit | null>(null);
 
-  const runImageSearch = (q: string) => {
+  const runImageSearch = (q: string, raw?: boolean) => {
     const trimmed = q.trim();
     if (!trimmed) return;
     setImgQuery(trimmed);
     setImgPanelOpen(true);
     setImgResults(null);
     setImgError(null);
+    setImgActualQuery(null);
+    const useRaw = raw ?? imgRawMode;
     imageSearch.mutate(
-      { id: sessionId, data: { query: trimmed, count: 8 } },
+      { id: sessionId, data: { query: trimmed, count: 12, raw: useRaw } },
       {
-        onSuccess: (resp) => setImgResults((resp.results ?? []) as ImageHit[]),
+        onSuccess: (resp) => {
+          setImgResults((resp.results ?? []) as ImageHit[]);
+          setImgActualQuery((resp as { query?: string }).query ?? null);
+        },
         onError: () => setImgError(t("models.assistant.searchImages.failed" as any)),
       },
     );
@@ -320,6 +327,24 @@ export function ModelAssistantChat({
               {t("models.assistant.searchImages.searchBtn" as any)}
             </button>
           </div>
+          <div className="flex items-center justify-between gap-3 flex-wrap text-[11px] text-sky-800">
+            <label className="inline-flex items-center gap-1.5 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                data-testid="checkbox-raw-mode"
+                checked={imgRawMode}
+                onChange={(e) => setImgRawMode(e.target.checked)}
+                className="rounded border-sky-400"
+              />
+              {t("models.assistant.searchImages.rawMode" as any)}
+            </label>
+            {imgActualQuery && (
+              <span className="text-sky-700 truncate max-w-full" title={imgActualQuery}>
+                {t("models.assistant.searchImages.actualQuery" as any)}: <code className="bg-white border border-sky-200 rounded px-1 py-0.5 font-mono">{imgActualQuery}</code>
+              </span>
+            )}
+          </div>
+          <p className="text-[11px] text-sky-700/90 leading-relaxed">{t("models.assistant.searchImages.tip" as any)}</p>
           {imageSearch.isPending && (
             <div className="text-xs text-sky-800 inline-flex items-center gap-2">
               <Loader2 className="w-3.5 h-3.5 animate-spin" /> {t("models.assistant.searchImages.loading" as any)}
