@@ -1,22 +1,28 @@
 openapi: 3.1.0
 info:
-  # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: Research Model Builder API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: sessions
+    description: Research session management
+  - name: papers
+    description: Paper search and management
+  - name: variables
+    description: Variable extraction
+  - name: models
+    description: Research model generation
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,6 +30,374 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /sessions:
+    get:
+      operationId: listSessions
+      tags: [sessions]
+      summary: List all research sessions
+      responses:
+        "200":
+          description: List of sessions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Session"
+    post:
+      operationId: createSession
+      tags: [sessions]
+      summary: Create a new research session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSessionBody"
+      responses:
+        "201":
+          description: Created session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+
+  /sessions/{id}:
+    get:
+      operationId: getSession
+      tags: [sessions]
+      summary: Get session by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Session detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    patch:
+      operationId: updateSession
+      tags: [sessions]
+      summary: Update session name or topic
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateSessionBody"
+      responses:
+        "200":
+          description: Updated session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: deleteSession
+      tags: [sessions]
+      summary: Delete a session
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /sessions/{id}/summary:
+    get:
+      operationId: getSessionSummary
+      tags: [sessions]
+      summary: Get session statistics summary
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Session summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionSummary"
+
+  /papers/search:
+    post:
+      operationId: searchPapers
+      tags: [papers]
+      summary: Search papers by topic from Semantic Scholar
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SearchPapersBody"
+      responses:
+        "200":
+          description: Search results
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PaperSearchResult"
+
+  /sessions/{id}/papers:
+    get:
+      operationId: listSessionPapers
+      tags: [papers]
+      summary: List papers added to a session
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Papers in session
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Paper"
+    post:
+      operationId: addPaperToSession
+      tags: [papers]
+      summary: Add a paper to a session
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddPaperBody"
+      responses:
+        "201":
+          description: Added paper
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Paper"
+
+  /sessions/{sessionId}/papers/{paperId}:
+    delete:
+      operationId: removePaperFromSession
+      tags: [papers]
+      summary: Remove a paper from a session
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: paperId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Removed
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /sessions/{id}/papers/{paperId}/extract:
+    post:
+      operationId: extractVariables
+      tags: [variables]
+      summary: Extract research variables from a paper using AI
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: paperId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Extracted variables
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Variable"
+
+  /sessions/{id}/variables:
+    get:
+      operationId: listSessionVariables
+      tags: [variables]
+      summary: List all extracted variables for a session
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Variables list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Variable"
+
+  /sessions/{id}/variable-graph:
+    get:
+      operationId: getVariableGraph
+      tags: [variables]
+      summary: Get variable relationship graph data for visualization
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Graph nodes and edges
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VariableGraph"
+
+  /sessions/{id}/models/generate:
+    post:
+      operationId: generateModels
+      tags: [models]
+      summary: Generate new research model combinations using AI
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Generated model combinations
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ResearchModel"
+
+  /sessions/{id}/models:
+    get:
+      operationId: listSessionModels
+      tags: [models]
+      summary: List generated models for a session
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Models list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ResearchModel"
+
+  /models/{id}:
+    get:
+      operationId: getModel
+      tags: [models]
+      summary: Get a specific research model
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Research model detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResearchModel"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /models/{id}/select:
+    post:
+      operationId: selectModel
+      tags: [models]
+      summary: Mark a model as selected by the user
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Updated model
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResearchModel"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +408,391 @@ components:
       required:
         - status
 
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required:
+        - error
+
+    Session:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        topic:
+          type: string
+        status:
+          type: string
+          enum: [searching, extracting, generating, complete]
+        paperCount:
+          type: integer
+        variableCount:
+          type: integer
+        modelCount:
+          type: integer
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+      required:
+        - id
+        - name
+        - topic
+        - status
+        - paperCount
+        - variableCount
+        - modelCount
+        - createdAt
+        - updatedAt
+
+    CreateSessionBody:
+      type: object
+      properties:
+        name:
+          type: string
+        topic:
+          type: string
+      required:
+        - name
+        - topic
+
+    UpdateSessionBody:
+      type: object
+      properties:
+        name:
+          type: string
+        topic:
+          type: string
+
+    SessionSummary:
+      type: object
+      properties:
+        sessionId:
+          type: integer
+        paperCount:
+          type: integer
+        variableCount:
+          type: integer
+        modelCount:
+          type: integer
+        independentVarCount:
+          type: integer
+        mediatorVarCount:
+          type: integer
+        moderatorVarCount:
+          type: integer
+        dependentVarCount:
+          type: integer
+        selectedModelId:
+          type: ["integer", "null"]
+      required:
+        - sessionId
+        - paperCount
+        - variableCount
+        - modelCount
+        - independentVarCount
+        - mediatorVarCount
+        - moderatorVarCount
+        - dependentVarCount
+        - selectedModelId
+
+    SearchPapersBody:
+      type: object
+      properties:
+        query:
+          type: string
+        limit:
+          type: integer
+      required:
+        - query
+
+    PaperSearchResult:
+      type: object
+      properties:
+        externalId:
+          type: string
+        title:
+          type: string
+        abstract:
+          type: ["string", "null"]
+        authors:
+          type: array
+          items:
+            type: string
+        year:
+          type: ["integer", "null"]
+        venue:
+          type: ["string", "null"]
+        citationCount:
+          type: ["integer", "null"]
+        openAccessUrl:
+          type: ["string", "null"]
+        url:
+          type: string
+      required:
+        - externalId
+        - title
+        - authors
+        - url
+
+    Paper:
+      type: object
+      properties:
+        id:
+          type: integer
+        sessionId:
+          type: integer
+        externalId:
+          type: string
+        title:
+          type: string
+        abstract:
+          type: ["string", "null"]
+        authors:
+          type: array
+          items:
+            type: string
+        year:
+          type: ["integer", "null"]
+        venue:
+          type: ["string", "null"]
+        citationCount:
+          type: ["integer", "null"]
+        openAccessUrl:
+          type: ["string", "null"]
+        url:
+          type: string
+        extracted:
+          type: boolean
+        createdAt:
+          type: string
+      required:
+        - id
+        - sessionId
+        - externalId
+        - title
+        - authors
+        - url
+        - extracted
+        - createdAt
+
+    AddPaperBody:
+      type: object
+      properties:
+        externalId:
+          type: string
+        title:
+          type: string
+        abstract:
+          type: ["string", "null"]
+        authors:
+          type: array
+          items:
+            type: string
+        year:
+          type: ["integer", "null"]
+        venue:
+          type: ["string", "null"]
+        citationCount:
+          type: ["integer", "null"]
+        openAccessUrl:
+          type: ["string", "null"]
+        url:
+          type: string
+      required:
+        - externalId
+        - title
+        - authors
+        - url
+
+    Variable:
+      type: object
+      properties:
+        id:
+          type: integer
+        sessionId:
+          type: integer
+        paperId:
+          type: integer
+        paperTitle:
+          type: string
+        paperAuthors:
+          type: array
+          items:
+            type: string
+        paperYear:
+          type: ["integer", "null"]
+        name:
+          type: string
+        type:
+          type: string
+          enum: [independent, mediator, moderator, dependent]
+        definition:
+          type: string
+        citationText:
+          type: string
+        createdAt:
+          type: string
+      required:
+        - id
+        - sessionId
+        - paperId
+        - paperTitle
+        - paperAuthors
+        - name
+        - type
+        - definition
+        - citationText
+        - createdAt
+
+    VariableGraph:
+      type: object
+      properties:
+        nodes:
+          type: array
+          items:
+            $ref: "#/components/schemas/GraphNode"
+        edges:
+          type: array
+          items:
+            $ref: "#/components/schemas/GraphEdge"
+      required:
+        - nodes
+        - edges
+
+    GraphNode:
+      type: object
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        type:
+          type: string
+        paperCount:
+          type: integer
+      required:
+        - id
+        - label
+        - type
+        - paperCount
+
+    GraphEdge:
+      type: object
+      properties:
+        source:
+          type: string
+        target:
+          type: string
+        paperId:
+          type: integer
+        paperTitle:
+          type: string
+      required:
+        - source
+        - target
+        - paperId
+        - paperTitle
+
+    ResearchModel:
+      type: object
+      properties:
+        id:
+          type: integer
+        sessionId:
+          type: integer
+        name:
+          type: string
+        description:
+          type: string
+        rationale:
+          type: string
+        selected:
+          type: boolean
+        nodes:
+          type: array
+          items:
+            $ref: "#/components/schemas/ModelNode"
+        edges:
+          type: array
+          items:
+            $ref: "#/components/schemas/ModelEdge"
+        createdAt:
+          type: string
+      required:
+        - id
+        - sessionId
+        - name
+        - description
+        - rationale
+        - selected
+        - nodes
+        - edges
+        - createdAt
+
+    ModelNode:
+      type: object
+      properties:
+        variableId:
+          type: integer
+        variableName:
+          type: string
+        type:
+          type: string
+        paperId:
+          type: integer
+        paperTitle:
+          type: string
+        paperAuthors:
+          type: array
+          items:
+            type: string
+        paperYear:
+          type: ["integer", "null"]
+      required:
+        - variableId
+        - variableName
+        - type
+        - paperId
+        - paperTitle
+        - paperAuthors
+
+    ModelEdge:
+      type: object
+      properties:
+        fromVariableId:
+          type: integer
+        toVariableId:
+          type: integer
+        fromVariableName:
+          type: string
+        toVariableName:
+          type: string
+        relationship:
+          type: string
+        evidencePaperId:
+          type: integer
+        evidencePaperTitle:
+          type: string
+        evidencePaperAuthors:
+          type: array
+          items:
+            type: string
+        evidencePaperYear:
+          type: ["integer", "null"]
+        evidenceCitationText:
+          type: string
+      required:
+        - fromVariableId
+        - toVariableId
+        - fromVariableName
+        - toVariableName
+        - relationship
+        - evidencePaperId
+        - evidencePaperTitle
+        - evidencePaperAuthors
+        - evidenceCitationText

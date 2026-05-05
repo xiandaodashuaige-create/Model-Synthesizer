@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "Research Model Builder"
+version = "1.0.0"
+id = "artifacts/research-model"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 24554
+
+[services.development]
+run = "pnpm --filter @workspace/research-model run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/research-model", "run", "build" ]
+publicDir = "artifacts/research-model/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "24554"
+BASE_PATH = "/"
