@@ -62,6 +62,11 @@ export interface SearchPapersBody {
   limit?: number;
 }
 
+export interface LookupPaperBody {
+  /** A DOI, OpenAlex ID, arXiv ID, or paper URL */
+  identifier: string;
+}
+
 export interface PaperSearchResult {
   externalId: string;
   title: string;
@@ -196,3 +201,7 @@ export interface ResearchModel {
   edges: ModelEdge[];
   createdAt: string;
 }
+
+export type LookupPaper404 = {
+  error: string;
+};

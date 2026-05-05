@@ -159,7 +159,7 @@ paths:
     post:
       operationId: searchPapers
       tags: [papers]
-      summary: Search papers by topic from Semantic Scholar
+      summary: Search papers by topic from OpenAlex
       requestBody:
         required: true
         content:
@@ -175,6 +175,36 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/PaperSearchResult"
+
+  /papers/lookup:
+    post:
+      operationId: lookupPaper
+      tags: [papers]
+      summary: Look up a paper by DOI, URL, or OpenAlex ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LookupPaperBody"
+      responses:
+        "200":
+          description: Paper found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaperSearchResult"
+        "404":
+          description: Paper not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                required:
+                  - error
 
   /sessions/{id}/papers:
     get:
@@ -509,6 +539,15 @@ components:
           type: integer
       required:
         - query
+
+    LookupPaperBody:
+      type: object
+      properties:
+        identifier:
+          type: string
+          description: A DOI, OpenAlex ID, arXiv ID, or paper URL
+      required:
+        - identifier
 
     PaperSearchResult:
       type: object

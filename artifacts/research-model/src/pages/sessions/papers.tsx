@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { useParams } from "wouter";
 import {
   useSearchPapers,
+  useLookupPaper,
   useListSessionPapers,
   useAddPaperToSession,
   useRemovePaperFromSession,
@@ -12,7 +13,7 @@ import {
   getGetSessionQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Search, Plus, Trash2, Loader2, BookOpen, ExternalLink, CheckCircle, Clock, Info } from "lucide-react";
+import { Search, Plus, Trash2, Loader2, BookOpen, ExternalLink, CheckCircle, Clock, Info, Link2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useT } from "@/lib/i18n";
 import { NextStepHint } from "@/components/onboarding-stepper";
@@ -32,9 +33,11 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
   }>>([]);
 
   const searchPapers = useSearchPapers();
+  const lookupPaper = useLookupPaper();
   const addPaper = useAddPaperToSession();
   const removePaper = useRemovePaperFromSession();
   const extractVariables = useExtractVariables();
+  const [lookupQuery, setLookupQuery] = useState("");
 
   const { data: sessionPapers, isLoading: papersLoading } = useListSessionPapers(sessionId, {
     query: { enabled: !!sessionId, queryKey: getListSessionPapersQueryKey(sessionId) },
@@ -88,6 +91,44 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
             description: t("common.tryAgain" as any),
             variant: "destructive",
           }),
+      },
+    );
+  };
+
+  const handleLookup = () => {
+    const id = lookupQuery.trim();
+    if (!id) return;
+    lookupPaper.mutate(
+      { data: { identifier: id } },
+      {
+        onSuccess: (paper) => {
+          if (addedIds.has(paper.externalId)) {
+            toast({ title: t("papers.lookup.toast.added" as any), description: paper.title.slice(0, 80) });
+            setLookupQuery("");
+            return;
+          }
+          handleAdd(paper);
+          toast({ title: t("papers.lookup.toast.added" as any), description: paper.title.slice(0, 80) });
+          setLookupQuery("");
+        },
+        onError: (err: any) => {
+          // Orval ApiError carries the parsed body on err.data
+          const status = err?.status ?? err?.response?.status;
+          const description = err?.data?.error ?? err?.response?.data?.error ?? "";
+          if (status === 404) {
+            toast({
+              title: t("papers.lookup.toast.notFound" as any),
+              description,
+              variant: "destructive",
+            });
+          } else {
+            toast({
+              title: t("papers.lookup.toast.failed" as any),
+              description,
+              variant: "destructive",
+            });
+          }
+        },
       },
     );
   };
@@ -221,6 +262,42 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
             })}
           </div>
         )}
+      </div>
+
+      {/* Lookup by DOI / URL */}
+      <div className="bg-card border border-border rounded-lg p-6">
+        <h2 className="text-lg font-semibold text-foreground mb-1 flex items-center gap-2">
+          <Link2 className="w-5 h-5 text-primary" /> {t("papers.lookup.title" as any)}
+        </h2>
+        <p className="text-xs text-muted-foreground mb-4">{t("papers.lookup.hint" as any)}</p>
+        <div className="flex gap-3">
+          <input
+            data-testid="input-lookup-paper"
+            type="text"
+            value={lookupQuery}
+            onChange={(e) => setLookupQuery(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleLookup()}
+            placeholder={t("papers.lookup.ph" as any)}
+            className="flex-1 h-10 rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          />
+          <button
+            data-testid="button-lookup"
+            onClick={handleLookup}
+            disabled={lookupPaper.isPending || addPaper.isPending || !lookupQuery.trim()}
+            className="inline-flex items-center justify-center rounded-md text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-5 disabled:opacity-50 disabled:pointer-events-none gap-2"
+          >
+            {lookupPaper.isPending || addPaper.isPending ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Plus className="w-4 h-4" />
+            )}
+            {t("papers.lookup.button" as any)}
+          </button>
+        </div>
+        <div className="mt-3 flex items-start gap-2 p-3 rounded-md bg-muted/50 border border-border">
+          <Info className="w-3.5 h-3.5 text-muted-foreground mt-0.5 shrink-0" />
+          <p className="text-xs text-muted-foreground leading-relaxed">{t("papers.lookup.uniNote" as any)}</p>
+        </div>
       </div>
 
       {/* Next-step hint */}

@@ -108,7 +108,7 @@ export const GetSessionSummaryResponse = zod.object({
 });
 
 /**
- * @summary Search papers by topic from Semantic Scholar
+ * @summary Search papers by topic from OpenAlex
  */
 export const SearchPapersBody = zod.object({
   query: zod.string(),
@@ -127,6 +127,27 @@ export const SearchPapersResponseItem = zod.object({
   url: zod.string(),
 });
 export const SearchPapersResponse = zod.array(SearchPapersResponseItem);
+
+/**
+ * @summary Look up a paper by DOI, URL, or OpenAlex ID
+ */
+export const LookupPaperBody = zod.object({
+  identifier: zod
+    .string()
+    .describe("A DOI, OpenAlex ID, arXiv ID, or paper URL"),
+});
+
+export const LookupPaperResponse = zod.object({
+  externalId: zod.string(),
+  title: zod.string(),
+  abstract: zod.string().nullish(),
+  authors: zod.array(zod.string()),
+  year: zod.number().nullish(),
+  venue: zod.string().nullish(),
+  citationCount: zod.number().nullish(),
+  openAccessUrl: zod.string().nullish(),
+  url: zod.string(),
+});
 
 /**
  * @summary List papers added to a session

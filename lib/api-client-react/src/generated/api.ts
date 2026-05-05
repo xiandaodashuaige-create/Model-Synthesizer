@@ -21,6 +21,8 @@ import type {
   CreateSessionBody,
   ErrorResponse,
   HealthStatus,
+  LookupPaper404,
+  LookupPaperBody,
   Paper,
   PaperSearchResult,
   ResearchModel,
@@ -623,7 +625,7 @@ export function useGetSessionSummary<
 }
 
 /**
- * @summary Search papers by topic from Semantic Scholar
+ * @summary Search papers by topic from OpenAlex
  */
 export const getSearchPapersUrl = () => {
   return `/api/papers/search`;
@@ -686,7 +688,7 @@ export type SearchPapersMutationBody = BodyType<SearchPapersBody>;
 export type SearchPapersMutationError = ErrorType<unknown>;
 
 /**
- * @summary Search papers by topic from Semantic Scholar
+ * @summary Search papers by topic from OpenAlex
  */
 export const useSearchPapers = <
   TError = ErrorType<unknown>,
@@ -706,6 +708,92 @@ export const useSearchPapers = <
   TContext
 > => {
   return useMutation(getSearchPapersMutationOptions(options));
+};
+
+/**
+ * @summary Look up a paper by DOI, URL, or OpenAlex ID
+ */
+export const getLookupPaperUrl = () => {
+  return `/api/papers/lookup`;
+};
+
+export const lookupPaper = async (
+  lookupPaperBody: LookupPaperBody,
+  options?: RequestInit,
+): Promise<PaperSearchResult> => {
+  return customFetch<PaperSearchResult>(getLookupPaperUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(lookupPaperBody),
+  });
+};
+
+export const getLookupPaperMutationOptions = <
+  TError = ErrorType<LookupPaper404>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof lookupPaper>>,
+    TError,
+    { data: BodyType<LookupPaperBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof lookupPaper>>,
+  TError,
+  { data: BodyType<LookupPaperBody> },
+  TContext
+> => {
+  const mutationKey = ["lookupPaper"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof lookupPaper>>,
+    { data: BodyType<LookupPaperBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return lookupPaper(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type LookupPaperMutationResult = NonNullable<
+  Awaited<ReturnType<typeof lookupPaper>>
+>;
+export type LookupPaperMutationBody = BodyType<LookupPaperBody>;
+export type LookupPaperMutationError = ErrorType<LookupPaper404>;
+
+/**
+ * @summary Look up a paper by DOI, URL, or OpenAlex ID
+ */
+export const useLookupPaper = <
+  TError = ErrorType<LookupPaper404>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof lookupPaper>>,
+    TError,
+    { data: BodyType<LookupPaperBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof lookupPaper>>,
+  TError,
+  { data: BodyType<LookupPaperBody> },
+  TContext
+> => {
+  return useMutation(getLookupPaperMutationOptions(options));
 };
 
 /**
