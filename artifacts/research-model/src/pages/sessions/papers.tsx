@@ -3,6 +3,7 @@ import { useParams } from "wouter";
 import {
   useSearchPapers,
   useLookupPaper,
+  useBulkImportPapers,
   useListSessionPapers,
   useAddPaperToSession,
   useRemovePaperFromSession,
@@ -13,7 +14,7 @@ import {
   getGetSessionQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Search, Plus, Trash2, Loader2, BookOpen, ExternalLink, CheckCircle, Clock, Info, Link2 } from "lucide-react";
+import { Search, Plus, Trash2, Loader2, BookOpen, ExternalLink, CheckCircle, Clock, Info, Link2, Upload, FileText } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useT } from "@/lib/i18n";
 import { NextStepHint } from "@/components/onboarding-stepper";
@@ -34,10 +35,16 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
 
   const searchPapers = useSearchPapers();
   const lookupPaper = useLookupPaper();
+  const bulkImport = useBulkImportPapers();
   const addPaper = useAddPaperToSession();
   const removePaper = useRemovePaperFromSession();
   const extractVariables = useExtractVariables();
   const [lookupQuery, setLookupQuery] = useState("");
+  const [bulkText, setBulkText] = useState("");
+  const [bulkResult, setBulkResult] = useState<null | {
+    importedCount: number; skippedCount: number; failedCount: number; totalDois: number;
+    failures: Array<{ identifier: string; reason: string }>;
+  }>(null);
 
   const { data: sessionPapers, isLoading: papersLoading } = useListSessionPapers(sessionId, {
     query: { enabled: !!sessionId, queryKey: getListSessionPapersQueryKey(sessionId) },
@@ -131,6 +138,43 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
         },
       },
     );
+  };
+
+  const handleBulkImport = (content: string) => {
+    if (!content.trim()) return;
+    setBulkResult(null);
+    bulkImport.mutate(
+      { id: sessionId, data: { content } },
+      {
+        onSuccess: (result) => {
+          setBulkResult(result);
+          setBulkText("");
+          queryClient.invalidateQueries({ queryKey: getListSessionPapersQueryKey(sessionId) });
+          queryClient.invalidateQueries({ queryKey: getGetSessionSummaryQueryKey(sessionId) });
+          queryClient.invalidateQueries({ queryKey: getGetSessionQueryKey(sessionId) });
+          toast({
+            title: t("papers.bulk.toast.done" as any),
+            description: t("papers.bulk.toast.summary" as any, {
+              imported: result.importedCount,
+              skipped: result.skippedCount,
+              failed: result.failedCount,
+            }),
+          });
+        },
+        onError: () => {
+          toast({ title: t("papers.bulk.toast.failed" as any), variant: "destructive" });
+        },
+      },
+    );
+  };
+
+  const handleBulkFile = async (file: File) => {
+    if (file.size > 5 * 1024 * 1024) {
+      toast({ title: t("papers.bulk.toast.tooLarge" as any), variant: "destructive" });
+      return;
+    }
+    const text = await file.text();
+    handleBulkImport(text);
   };
 
   const handleRemove = (paperId: number) => {
@@ -300,6 +344,91 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
         </div>
       </div>
 
+      {/* Bulk import (BibTeX / RIS) */}
+      <div className="bg-card border border-border rounded-lg p-6">
+        <h2 className="text-lg font-semibold text-foreground mb-1 flex items-center gap-2">
+          <Upload className="w-5 h-5 text-primary" /> {t("papers.bulk.title" as any)}
+        </h2>
+        <p className="text-xs text-muted-foreground mb-4 leading-relaxed">{t("papers.bulk.hint" as any)}</p>
+
+        <div className="flex flex-wrap items-center gap-3 mb-3">
+          <label
+            className="inline-flex items-center gap-2 cursor-pointer rounded-md border border-input bg-background hover:bg-accent h-10 px-4 text-sm font-medium"
+            data-testid="label-bulk-upload"
+          >
+            <FileText className="w-4 h-4" />
+            {t("papers.bulk.uploadFile" as any)}
+            <input
+              type="file"
+              accept=".bib,.ris,.txt,.enw,.nbib"
+              className="hidden"
+              data-testid="input-bulk-file"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) handleBulkFile(f);
+                e.target.value = "";
+              }}
+            />
+          </label>
+          <span className="text-xs text-muted-foreground">{t("papers.bulk.or" as any)}</span>
+        </div>
+
+        <textarea
+          data-testid="input-bulk-text"
+          value={bulkText}
+          onChange={(e) => setBulkText(e.target.value)}
+          placeholder={t("papers.bulk.ph" as any)}
+          rows={5}
+          className="w-full rounded-md border border-input bg-background px-3 py-2 text-xs font-mono placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        />
+        <div className="mt-3 flex items-center justify-between gap-3 flex-wrap">
+          <p className="text-xs text-muted-foreground">{t("papers.bulk.limit" as any)}</p>
+          <button
+            data-testid="button-bulk-import"
+            onClick={() => handleBulkImport(bulkText)}
+            disabled={bulkImport.isPending || !bulkText.trim()}
+            className="inline-flex items-center gap-2 rounded-md text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-5 disabled:opacity-50 disabled:pointer-events-none"
+          >
+            {bulkImport.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+            {t("papers.bulk.button" as any)}
+          </button>
+        </div>
+
+        {bulkImport.isPending && (
+          <p className="mt-3 text-xs text-muted-foreground">{t("papers.bulk.working" as any)}</p>
+        )}
+
+        {bulkResult && (
+          <div className="mt-4 p-4 rounded-md bg-muted/50 border border-border space-y-2">
+            <p className="text-sm font-medium text-foreground">
+              {t("papers.bulk.result.title" as any, {
+                total: bulkResult.totalDois,
+                imported: bulkResult.importedCount,
+                skipped: bulkResult.skippedCount,
+                failed: bulkResult.failedCount,
+              })}
+            </p>
+            {bulkResult.totalDois === 0 && (
+              <p className="text-xs text-muted-foreground">{t("papers.bulk.result.noDois" as any)}</p>
+            )}
+            {bulkResult.failures.length > 0 && (
+              <details className="text-xs text-muted-foreground">
+                <summary className="cursor-pointer hover:text-foreground">
+                  {t("papers.bulk.result.failuresLabel" as any, { count: bulkResult.failures.length })}
+                </summary>
+                <ul className="mt-2 space-y-0.5 font-mono text-[11px]">
+                  {bulkResult.failures.slice(0, 20).map((f, i) => (
+                    <li key={i}>
+                      <span className="text-foreground/70">{f.identifier}</span> — {f.reason}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
+          </div>
+        )}
+      </div>
+
       {/* Next-step hint */}
       {(sessionPapers?.length ?? 0) > 0 && !allExtracted && (
         <NextStepHint
@@ -356,14 +485,28 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
                         {paper.venue ? `· ${paper.venue}` : ""}
                       </p>
                     </div>
-                    <a
-                      href={paper.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="shrink-0 text-muted-foreground hover:text-primary transition-colors mt-0.5"
-                    >
-                      <ExternalLink className="w-4 h-4" />
-                    </a>
+                    <div className="shrink-0 flex items-center gap-2 mt-0.5">
+                      {paper.openAccessUrl && (
+                        <a
+                          href={paper.openAccessUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          data-testid={`link-oa-${paper.id}`}
+                          className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900 rounded px-1.5 py-0.5 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-colors"
+                          title={paper.openAccessUrl}
+                        >
+                          <FileText className="w-3 h-3" /> {t("papers.oa.badge" as any)}
+                        </a>
+                      )}
+                      <a
+                        href={paper.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-muted-foreground hover:text-primary transition-colors"
+                      >
+                        <ExternalLink className="w-4 h-4" />
+                      </a>
+                    </div>
                   </div>
                   {paper.abstract && (
                     <p className="text-xs text-muted-foreground mt-2 line-clamp-2 leading-relaxed">{paper.abstract}</p>

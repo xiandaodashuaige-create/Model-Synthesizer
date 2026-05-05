@@ -18,6 +18,8 @@ import type {
 
 import type {
   AddPaperBody,
+  BulkImportPapersBody,
+  BulkImportPapersResponse,
   CreateSessionBody,
   ErrorResponse,
   HealthStatus,
@@ -794,6 +796,93 @@ export const useLookupPaper = <
   TContext
 > => {
   return useMutation(getLookupPaperMutationOptions(options));
+};
+
+/**
+ * @summary Bulk-import papers from a BibTeX or RIS export
+ */
+export const getBulkImportPapersUrl = (id: number) => {
+  return `/api/sessions/${id}/papers/bulk-import`;
+};
+
+export const bulkImportPapers = async (
+  id: number,
+  bulkImportPapersBody: BulkImportPapersBody,
+  options?: RequestInit,
+): Promise<BulkImportPapersResponse> => {
+  return customFetch<BulkImportPapersResponse>(getBulkImportPapersUrl(id), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(bulkImportPapersBody),
+  });
+};
+
+export const getBulkImportPapersMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof bulkImportPapers>>,
+    TError,
+    { id: number; data: BodyType<BulkImportPapersBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof bulkImportPapers>>,
+  TError,
+  { id: number; data: BodyType<BulkImportPapersBody> },
+  TContext
+> => {
+  const mutationKey = ["bulkImportPapers"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof bulkImportPapers>>,
+    { id: number; data: BodyType<BulkImportPapersBody> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return bulkImportPapers(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type BulkImportPapersMutationResult = NonNullable<
+  Awaited<ReturnType<typeof bulkImportPapers>>
+>;
+export type BulkImportPapersMutationBody = BodyType<BulkImportPapersBody>;
+export type BulkImportPapersMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Bulk-import papers from a BibTeX or RIS export
+ */
+export const useBulkImportPapers = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof bulkImportPapers>>,
+    TError,
+    { id: number; data: BodyType<BulkImportPapersBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof bulkImportPapers>>,
+  TError,
+  { id: number; data: BodyType<BulkImportPapersBody> },
+  TContext
+> => {
+  return useMutation(getBulkImportPapersMutationOptions(options));
 };
 
 /**

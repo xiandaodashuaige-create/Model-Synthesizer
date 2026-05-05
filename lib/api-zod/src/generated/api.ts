@@ -150,6 +150,34 @@ export const LookupPaperResponse = zod.object({
 });
 
 /**
+ * @summary Bulk-import papers from a BibTeX or RIS export
+ */
+export const BulkImportPapersParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const BulkImportPapersBody = zod.object({
+  content: zod
+    .string()
+    .describe(
+      "Raw BibTeX or RIS file content (as exported from CNKI \/ WoS \/ Scopus \/ Zotero \/ EndNote)",
+    ),
+});
+
+export const BulkImportPapersResponse = zod.object({
+  importedCount: zod.number(),
+  skippedCount: zod.number().describe("Already existed in the session"),
+  failedCount: zod.number(),
+  totalDois: zod.number(),
+  failures: zod.array(
+    zod.object({
+      identifier: zod.string(),
+      reason: zod.string(),
+    }),
+  ),
+});
+
+/**
  * @summary List papers added to a session
  */
 export const ListSessionPapersParams = zod.object({

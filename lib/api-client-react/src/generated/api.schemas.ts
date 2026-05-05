@@ -67,6 +67,25 @@ export interface LookupPaperBody {
   identifier: string;
 }
 
+export interface BulkImportPapersBody {
+  /** Raw BibTeX or RIS file content (as exported from CNKI / WoS / Scopus / Zotero / EndNote) */
+  content: string;
+}
+
+export type BulkImportPapersResponseFailuresItem = {
+  identifier: string;
+  reason: string;
+};
+
+export interface BulkImportPapersResponse {
+  importedCount: number;
+  /** Already existed in the session */
+  skippedCount: number;
+  failedCount: number;
+  totalDois: number;
+  failures: BulkImportPapersResponseFailuresItem[];
+}
+
 export interface PaperSearchResult {
   externalId: string;
   title: string;

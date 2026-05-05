@@ -4,6 +4,7 @@ import { db, papersTable, sessionsTable } from "@workspace/db";
 import {
   SearchPapersBody,
   LookupPaperBody,
+  BulkImportPapersBody,
   ListSessionPapersParams,
   AddPaperToSessionParams,
   AddPaperToSessionBody,
@@ -136,6 +137,10 @@ function buildLookupUrl(identifier: string): string | null {
   return null;
 }
 
+class RateLimitedError extends Error {
+  constructor() { super("OpenAlex rate-limited (429)"); }
+}
+
 async function lookupOnOpenAlex(identifier: string): Promise<PaperResult | null> {
   const lookupUrl = buildLookupUrl(identifier);
   if (!lookupUrl) return null;
@@ -146,10 +151,88 @@ async function lookupOnOpenAlex(identifier: string): Promise<PaperResult | null>
 
   const response = await fetch(url.toString(), { headers: OPENALEX_HEADERS });
   if (response.status === 404) return null;
+  if (response.status === 429) throw new RateLimitedError();
   if (!response.ok) throw new Error(`OpenAlex lookup error: ${response.status}`);
 
   const work = (await response.json()) as OpenAlexWork;
   return workToPaper(work);
+}
+
+/**
+ * Query Unpaywall for a legal open-access PDF URL given a DOI.
+ * Returns null if no DOI, no record, or no OA copy is available.
+ * Unpaywall is a free, legitimate index of OA versions authorized by publishers.
+ */
+async function fetchUnpaywallOaUrl(externalIdOrDoi: string): Promise<string | null> {
+  // Accept either a bare DOI or an OpenAlex W-id from which we can't extract a DOI; bail in the latter case.
+  const doiMatch = externalIdOrDoi.match(/10\.\d{4,9}\/[^\s"'<>?#)\]]+/);
+  if (!doiMatch) return null;
+  const doi = doiMatch[0].replace(/[.,;:)\]]+$/, "");
+
+  try {
+    const resp = await fetch(
+      `https://api.unpaywall.org/v2/${encodeURIComponent(doi)}?email=research@researchmodelbuilder.app`,
+      { headers: { "User-Agent": OPENALEX_HEADERS["User-Agent"] } },
+    );
+    if (!resp.ok) return null;
+    const data = (await resp.json()) as {
+      best_oa_location?: { url_for_pdf?: string | null; url?: string | null } | null;
+    };
+    return data.best_oa_location?.url_for_pdf ?? data.best_oa_location?.url ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Enrich a PaperResult with a legal OA PDF URL from Unpaywall when openAccessUrl is missing.
+ * Best-effort: failures are silently ignored.
+ */
+async function enrichWithUnpaywall(paper: PaperResult): Promise<PaperResult> {
+  if (paper.openAccessUrl) return paper;
+  // Try the OpenAlex landing-page URL first (often a doi.org URL), then externalId.
+  const candidates = [paper.url, paper.externalId];
+  for (const c of candidates) {
+    const oa = await fetchUnpaywallOaUrl(c);
+    if (oa) return { ...paper, openAccessUrl: oa };
+  }
+  return paper;
+}
+
+/**
+ * Extract DOIs from raw BibTeX or RIS file content.
+ * - BibTeX: `doi = {10.xxxx/yyyy}` or `doi = "..."`
+ * - RIS: `DO  - 10.xxxx/yyyy` or `DI  - ...`
+ * - Also catches plain DOIs / doi.org URLs anywhere in the text as a fallback.
+ * Returns deduplicated DOIs in original order.
+ */
+function extractDoisFromCitations(content: string): string[] {
+  const dois = new Set<string>();
+  const ordered: string[] = [];
+  const push = (raw: string) => {
+    const cleaned = raw.replace(/[.,;:)\]}>"']+$/, "").toLowerCase();
+    if (!dois.has(cleaned)) {
+      dois.add(cleaned);
+      ordered.push(cleaned);
+    }
+  };
+
+  // BibTeX / RIS field patterns
+  const fieldPatterns = [
+    /doi\s*=\s*[{"]\s*(10\.\d{4,9}\/[^\s"}{]+)\s*[}"]/gi, // BibTeX
+    /^(?:DO|DI|M3)\s+-\s+(10\.\d{4,9}\/[^\s]+)/gim, // RIS / EndNote
+  ];
+  for (const re of fieldPatterns) {
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(content)) !== null) push(m[1]);
+  }
+
+  // Catch-all: any DOI-shaped substring
+  const plain = /10\.\d{4,9}\/[^\s"'<>?#)\]}]+/g;
+  let m: RegExpExecArray | null;
+  while ((m = plain.exec(content)) !== null) push(m[0]);
+
+  return ordered;
 }
 
 function formatPaper(paper: typeof papersTable.$inferSelect) {
@@ -204,11 +287,136 @@ router.post("/papers/lookup", async (req, res): Promise<void> => {
       });
       return;
     }
-    res.json(result);
+    const enriched = await enrichWithUnpaywall(result);
+    res.json(enriched);
   } catch (err) {
     req.log.error({ err }, "Error looking up paper");
     res.status(502).json({ error: "Failed to look up paper. Please try again." });
   }
+});
+
+router.post("/sessions/:id/papers/bulk-import", async (req, res): Promise<void> => {
+  const params = ListSessionPapersParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: params.error.message });
+    return;
+  }
+  const parsed = BulkImportPapersBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.message });
+    return;
+  }
+
+  // Hard cap the payload size to bound regex CPU even if a client bypasses the UI 5MB limit.
+  const MAX_CONTENT_BYTES = 5 * 1024 * 1024;
+  if (parsed.data.content.length > MAX_CONTENT_BYTES) {
+    res.status(413).json({ error: "Bulk import content exceeds 5MB limit" });
+    return;
+  }
+
+  const sessionId = params.data.id;
+  const [session] = await db.select().from(sessionsTable).where(eq(sessionsTable.id, sessionId));
+  if (!session) {
+    res.status(404).json({ error: "Session not found" });
+    return;
+  }
+
+  const dois = extractDoisFromCitations(parsed.data.content);
+  if (dois.length === 0) {
+    res.json({
+      importedCount: 0,
+      skippedCount: 0,
+      failedCount: 0,
+      totalDois: 0,
+      failures: [],
+    });
+    return;
+  }
+
+  // Cap to a reasonable batch size to avoid hammering OpenAlex / blowing request time.
+  const MAX_BATCH = 50;
+  const limited = dois.slice(0, MAX_BATCH);
+
+  const existing = await db
+    .select({ externalId: papersTable.externalId })
+    .from(papersTable)
+    .where(eq(papersTable.sessionId, sessionId));
+  const existingIds = new Set(existing.map((e) => e.externalId));
+
+  let importedCount = 0;
+  let skippedCount = 0;
+  const failures: Array<{ identifier: string; reason: string }> = [];
+  let rateLimited = false;
+
+  // Process in small parallel batches to stay well under OpenAlex's 10 req/s polite-pool limit
+  // while keeping total wall-clock time within typical proxy timeouts (~30s).
+  const CONCURRENCY = 4;
+  for (let i = 0; i < limited.length && !rateLimited; i += CONCURRENCY) {
+    const slice = limited.slice(i, i + CONCURRENCY);
+    const results = await Promise.all(
+      slice.map(async (doi) => {
+        try {
+          const paper = await lookupOnOpenAlex(doi);
+          if (!paper) return { kind: "notfound" as const, doi };
+          const enriched = await enrichWithUnpaywall(paper);
+          return { kind: "ok" as const, doi, paper: enriched };
+        } catch (err) {
+          if (err instanceof RateLimitedError) return { kind: "ratelimited" as const, doi };
+          req.log.warn({ err, doi }, "Bulk import: failed for one DOI");
+          return { kind: "error" as const, doi };
+        }
+      }),
+    );
+
+    for (const r of results) {
+      if (r.kind === "ratelimited") {
+        rateLimited = true;
+        failures.push({ identifier: r.doi, reason: "Rate limited by OpenAlex; remaining DOIs were skipped" });
+        continue;
+      }
+      if (r.kind === "notfound") {
+        failures.push({ identifier: r.doi, reason: "Not found in OpenAlex" });
+        continue;
+      }
+      if (r.kind === "error") {
+        failures.push({ identifier: r.doi, reason: "Lookup failed" });
+        continue;
+      }
+      const p = r.paper;
+      if (existingIds.has(p.externalId)) {
+        skippedCount++;
+        continue;
+      }
+      try {
+        await db.insert(papersTable).values({
+          sessionId,
+          externalId: p.externalId,
+          title: p.title,
+          abstract: p.abstract ?? null,
+          authors: p.authors,
+          year: p.year ?? null,
+          venue: p.venue ?? null,
+          citationCount: p.citationCount ?? null,
+          openAccessUrl: p.openAccessUrl ?? null,
+          url: p.url,
+          extracted: "false",
+        });
+        existingIds.add(p.externalId);
+        importedCount++;
+      } catch (err) {
+        req.log.warn({ err, doi: r.doi }, "Bulk import: DB insert failed");
+        failures.push({ identifier: r.doi, reason: "Database insert failed" });
+      }
+    }
+  }
+
+  res.json({
+    importedCount,
+    skippedCount,
+    failedCount: failures.length,
+    totalDois: dois.length,
+    failures,
+  });
 });
 
 router.get("/sessions/:id/papers", async (req, res): Promise<void> => {
