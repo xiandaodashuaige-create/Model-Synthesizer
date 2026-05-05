@@ -156,6 +156,9 @@ const dict = {
     "models.assistant.requiredOps": "建议操作子",
     "models.assistant.clear": "清空对话",
     "models.assistant.failed": "助手暂时没法回复",
+    "models.assistant.needsMore.title": "现有文献可能不够",
+    "models.assistant.needsMore.missing": "缺少的关键变量／构念",
+    "models.assistant.needsMore.cta": "去添加更多文献",
 
     "models.custom.title": "自定义生成（可选）",
     "models.custom.promptLabel": "你的研究方向 / 想法 / 约束",
@@ -412,6 +415,9 @@ const dict = {
     "models.assistant.requiredOps": "Suggested operators",
     "models.assistant.clear": "Clear chat",
     "models.assistant.failed": "Assistant couldn't respond right now",
+    "models.assistant.needsMore.title": "Your current literature may not be enough",
+    "models.assistant.needsMore.missing": "Missing key constructs",
+    "models.assistant.needsMore.cta": "Add more papers",
 
     "models.custom.title": "Custom generation (optional)",
     "models.custom.promptLabel": "Your research direction / ideas / constraints",

@@ -435,6 +435,19 @@ paths:
                         type: array
                         items:
                           type: string
+                  needsMorePapers:
+                    type: object
+                    description: Set when the AI judges the existing session materials are insufficient to answer the user's research question.
+                    required: [reason]
+                    properties:
+                      reason:
+                        type: string
+                      searchQuery:
+                        type: string
+                      missingConstructs:
+                        type: array
+                        items:
+                          type: string
 
   /sessions/{id}/models/generate:
     post:

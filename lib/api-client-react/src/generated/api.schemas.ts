@@ -267,9 +267,20 @@ export type ChatModelAssistant200Suggestion = {
   requiredOperators?: string[];
 };
 
+/**
+ * Set when the AI judges the existing session materials are insufficient to answer the user's research question.
+ */
+export type ChatModelAssistant200NeedsMorePapers = {
+  reason: string;
+  searchQuery?: string;
+  missingConstructs?: string[];
+};
+
 export type ChatModelAssistant200 = {
   reply: string;
   suggestion?: ChatModelAssistant200Suggestion;
+  /** Set when the AI judges the existing session materials are insufficient to answer the user's research question. */
+  needsMorePapers?: ChatModelAssistant200NeedsMorePapers;
 };
 
 export type GenerateModelsBody = {

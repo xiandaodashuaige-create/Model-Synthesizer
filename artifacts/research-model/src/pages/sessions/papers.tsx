@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useParams } from "wouter";
 import {
   useSearchPapers,
@@ -26,7 +26,12 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
-  const [searchQuery, setSearchQuery] = useState("");
+  const initialQ = (() => {
+    if (typeof window === "undefined") return "";
+    try { return new URLSearchParams(window.location.search).get("q") ?? ""; } catch { return ""; }
+  })();
+  const [searchQuery, setSearchQuery] = useState(initialQ);
+  const autoSearchedRef = useRef(false);
   const [searchResults, setSearchResults] = useState<Array<{
     externalId: string; title: string; abstract?: string | null; authors: string[];
     year?: number | null; venue?: string | null; citationCount?: number | null;
@@ -72,6 +77,15 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
       },
     );
   };
+
+  useEffect(() => {
+    if (autoSearchedRef.current) return;
+    if (initialQ.trim()) {
+      autoSearchedRef.current = true;
+      handleSearch();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialQ]);
 
   const handleAdd = (paper: typeof searchResults[0]) => {
     addPaper.mutate(

@@ -1,11 +1,12 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useChatModelAssistant } from "@workspace/api-client-react";
-import { Loader2, MessageSquare, Paperclip, Send, Sparkles, Trash2, X } from "lucide-react";
+import { BookPlus, Loader2, MessageSquare, Paperclip, Send, Sparkles, Trash2, X } from "lucide-react";
 import { useT } from "@/lib/i18n";
 
 type Attachment = { name: string; kind: "image" | "text"; data: string };
 type ChatMsg = { role: "user" | "assistant"; content: string; attachments?: Attachment[] };
 type Suggestion = { userPrompt?: string; focusVariableIds?: number[]; requiredOperators?: string[] };
+type NeedsMore = { reason: string; searchQuery?: string; missingConstructs?: string[] };
 
 export function ModelAssistantChat({
   sessionId,
@@ -25,6 +26,7 @@ export function ModelAssistantChat({
   const [input, setInput] = useState("");
   const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([]);
   const [lastSuggestion, setLastSuggestion] = useState<Suggestion | null>(null);
+  const [lastNeedsMore, setLastNeedsMore] = useState<NeedsMore | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -89,6 +91,9 @@ export function ModelAssistantChat({
         if (resp.suggestion && (resp.suggestion.userPrompt || (resp.suggestion.focusVariableIds ?? []).length > 0)) {
           setLastSuggestion(resp.suggestion);
         }
+        if (resp.needsMorePapers && resp.needsMorePapers.reason) {
+          setLastNeedsMore(resp.needsMorePapers as NeedsMore);
+        }
       },
       onError: () => {
         setMessages((cur) => [...cur, { role: "assistant", content: t("models.assistant.failed" as any) }]);
@@ -100,6 +105,7 @@ export function ModelAssistantChat({
     setMessages([{ role: "assistant", content: t("models.assistant.greeting" as any) }]);
     setPendingAttachments([]);
     setLastSuggestion(null);
+    setLastNeedsMore(null);
   };
 
   return (
@@ -151,6 +157,30 @@ export function ModelAssistantChat({
           </div>
         )}
       </div>
+
+      {lastNeedsMore && (
+        <div className="border-t border-amber-200 bg-amber-50/80 px-4 py-3 space-y-2" data-testid="panel-needs-more-papers">
+          <div className="flex items-center gap-1.5 text-xs font-semibold text-amber-900">
+            <BookPlus className="w-3.5 h-3.5" /> {t("models.assistant.needsMore.title" as any)}
+          </div>
+          <p className="text-xs text-amber-900 bg-white/70 rounded p-2 border border-amber-200">{lastNeedsMore.reason}</p>
+          {(lastNeedsMore.missingConstructs ?? []).length > 0 && (
+            <div className="text-xs text-amber-900">
+              <span className="font-medium">{t("models.assistant.needsMore.missing" as any)}:</span>{" "}
+              {(lastNeedsMore.missingConstructs ?? []).map((c) => (
+                <span key={c} className="inline-block bg-white border border-amber-300 rounded px-1.5 py-0.5 mr-1 mb-1">{c}</span>
+              ))}
+            </div>
+          )}
+          <a
+            data-testid="link-add-more-papers"
+            href={`/sessions/${sessionId}/papers${lastNeedsMore.searchQuery ? `?q=${encodeURIComponent(lastNeedsMore.searchQuery)}` : ""}`}
+            className="inline-flex items-center gap-1.5 rounded-md bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold px-3 py-1.5"
+          >
+            <BookPlus className="w-3.5 h-3.5" /> {t("models.assistant.needsMore.cta" as any)}
+          </a>
+        </div>
+      )}
 
       {lastSuggestion && (
         <div className="border-t border-emerald-200 bg-emerald-50/70 px-4 py-3 space-y-2" data-testid="panel-suggestion">

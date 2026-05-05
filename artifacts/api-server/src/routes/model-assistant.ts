@@ -77,6 +77,16 @@ Only emit the suggestion block when you are recommending the user click "套用�
 
 The suggestion will pre-fill the generation form and select variables — keep userPrompt under 600 chars, focusVariableIds 2-6 items, requiredOperators 1-2 items.
 
+5. **CRITICAL — material-sufficiency check**: BEFORE you emit a suggestion block, judge whether the existing papers and variables actually cover the user's research question. If a key construct is missing (e.g. user wants a moderator type that no current paper measures, or wants a context/population not represented), DO NOT pretend — instead emit a needs-more-papers block in fences exactly like:
+\`\`\`needs_more_papers
+{
+  "reason": "<one short Chinese sentence explaining what is missing and why current materials can't cover it>",
+  "searchQuery": "<2-6 word English search query the user can paste into OpenAlex>",
+  "missingConstructs": ["<construct 1>", "<construct 2>"]
+}
+\`\`\`
+You may emit BOTH a suggestion block AND a needs_more_papers block in the same reply if you can give a partial model now but recommend strengthening it with more literature. If materials are clearly sufficient, OMIT the needs_more_papers block entirely.
+
 ================ SESSION CONTEXT ================
 PAPERS (${papers.length}):
 ${paperLines || "  (none)"}
@@ -144,7 +154,6 @@ Be specific. Reference variables and papers BY NAME. Never invent variables that
     if (m) {
       try {
         const parsed = JSON.parse(m[1].trim());
-        // Defensive cleaning.
         const validVarIds = new Set(variables.map((v) => v.id));
         const cleanedFocus = Array.isArray(parsed.focusVariableIds)
           ? parsed.focusVariableIds.filter((x: unknown) => typeof x === "number" && validVarIds.has(x))
@@ -158,13 +167,34 @@ Be specific. Reference variables and papers BY NAME. Never invent variables that
           focusVariableIds: cleanedFocus,
           requiredOperators: cleanedOps,
         };
-        reply = raw.replace(m[0], "").trim();
+        reply = reply.replace(m[0], "").trim();
       } catch (err) {
         req.log.warn({ err, block: m[1] }, "Failed to parse suggestion block");
       }
     }
 
-    res.json({ reply, suggestion });
+    // Extract optional ```needs_more_papers {...}``` block.
+    let needsMorePapers: { reason: string; searchQuery?: string; missingConstructs?: string[] } | undefined;
+    const nm = raw.match(/```needs_more_papers\s*([\s\S]*?)```/i);
+    if (nm) {
+      try {
+        const parsed = JSON.parse(nm[1].trim());
+        if (typeof parsed.reason === "string" && parsed.reason.trim().length > 0) {
+          needsMorePapers = {
+            reason: parsed.reason.slice(0, 400),
+            searchQuery: typeof parsed.searchQuery === "string" ? parsed.searchQuery.slice(0, 120) : undefined,
+            missingConstructs: Array.isArray(parsed.missingConstructs)
+              ? parsed.missingConstructs.filter((x: unknown) => typeof x === "string").slice(0, 6)
+              : undefined,
+          };
+        }
+        reply = reply.replace(nm[0], "").trim();
+      } catch (err) {
+        req.log.warn({ err, block: nm[1] }, "Failed to parse needs_more_papers block");
+      }
+    }
+
+    res.json({ reply, suggestion, needsMorePapers });
   } catch (err) {
     req.log.error({ err }, "Model assistant chat failed");
     res.status(500).json({ error: "Assistant failed to respond" });

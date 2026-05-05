@@ -341,6 +341,16 @@ export const ChatModelAssistantResponse = zod.object({
       requiredOperators: zod.array(zod.string()).optional(),
     })
     .optional(),
+  needsMorePapers: zod
+    .object({
+      reason: zod.string(),
+      searchQuery: zod.string().optional(),
+      missingConstructs: zod.array(zod.string()).optional(),
+    })
+    .optional()
+    .describe(
+      "Set when the AI judges the existing session materials are insufficient to answer the user's research question.",
+    ),
 });
 
 /**
