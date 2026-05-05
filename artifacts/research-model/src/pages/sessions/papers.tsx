@@ -17,7 +17,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Search, Plus, Trash2, Loader2, BookOpen, ExternalLink, CheckCircle, Clock, Info, Link2, Upload, FileText } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useT } from "@/lib/i18n";
-import { NextStepHint } from "@/components/onboarding-stepper";
+import { NextStepHint, BigNextStep } from "@/components/onboarding-stepper";
 
 export default function SessionPapers({ params: routeParams }: { params?: { id?: string } }) {
   const { t } = useT();
@@ -697,6 +697,17 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
           </div>
         )}
       </div>
+
+      {/* Prominent bottom CTA — appears once at least one paper is extracted */}
+      {someExtracted && (
+        <BigNextStep
+          eyebrow={t("nextstep.eyebrow" as any)}
+          title={t("nextstep.papers.title" as any)}
+          body={t("nextstep.papers.body" as any)}
+          href={`/sessions/${sessionId}/variables`}
+          cta={t("nextstep.papers.cta" as any)}
+        />
+      )}
     </div>
   );
 }

@@ -8,7 +8,7 @@ import {
 } from "@workspace/api-client-react";
 import { Loader2, Database, ArrowRight, Quote, BookOpen } from "lucide-react";
 import { useT } from "@/lib/i18n";
-import { NextStepHint } from "@/components/onboarding-stepper";
+import { NextStepHint, BigNextStep } from "@/components/onboarding-stepper";
 
 function useTypeMeta() {
   const { t } = useT();
@@ -150,11 +150,12 @@ export default function SessionVariables({ params: routeParams }: { params?: { i
 
   return (
     <div className="space-y-8">
-      <NextStepHint
-        title={t("vars.tip.next.title" as any)}
-        body={t("vars.tip.next.body" as any)}
+      <BigNextStep
+        eyebrow={t("nextstep.eyebrow" as any)}
+        title={t("nextstep.vars.title" as any)}
+        body={t("nextstep.vars.body" as any)}
         href={`/sessions/${sessionId}/models`}
-        cta={t("vars.goModels" as any)}
+        cta={t("nextstep.vars.cta" as any)}
       />
 
       <VariableGraph sessionId={sessionId} />

@@ -143,6 +143,40 @@ export function OnboardingStepper({
   );
 }
 
+export function BigNextStep({
+  eyebrow,
+  title,
+  body,
+  href,
+  cta,
+}: {
+  eyebrow: string;
+  title: string;
+  body: string;
+  href: string;
+  cta: string;
+}) {
+  return (
+    <div className="mt-8 rounded-xl border-2 border-primary/30 bg-gradient-to-br from-primary/10 via-primary/5 to-background p-8 shadow-lg">
+      <div className="flex flex-col md:flex-row md:items-center gap-6">
+        <div className="flex-1 min-w-0">
+          <p className="text-xs font-bold text-primary uppercase tracking-widest mb-2">{eyebrow}</p>
+          <h3 className="text-2xl font-serif font-bold text-foreground mb-2">{title}</h3>
+          <p className="text-sm text-muted-foreground leading-relaxed max-w-2xl">{body}</p>
+        </div>
+        <Link
+          href={href}
+          data-testid="button-big-next-step"
+          className="shrink-0 inline-flex items-center justify-center gap-2 rounded-lg text-base font-semibold h-14 px-8 bg-primary text-primary-foreground hover:bg-primary/90 transition-colors shadow-md hover:shadow-lg"
+        >
+          {cta}
+          <ArrowRight className="w-5 h-5" />
+        </Link>
+      </div>
+    </div>
+  );
+}
+
 export function NextStepHint({
   title,
   body,
