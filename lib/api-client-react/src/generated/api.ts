@@ -23,6 +23,7 @@ import type {
   CreateSessionBody,
   ErrorResponse,
   GenerateModelsBody,
+  GetSessionLearningStats200,
   HealthStatus,
   LookupPaper404,
   LookupPaperBody,
@@ -32,6 +33,7 @@ import type {
   SearchPapersBody,
   Session,
   SessionSummary,
+  UpdateModelBody,
   UpdateSessionBody,
   Variable,
   VariableGraph,
@@ -1581,6 +1583,185 @@ export function useListSessionModels<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * @summary How many feedback rounds the AI has learned from for this session/global
+ */
+export const getGetSessionLearningStatsUrl = (id: number) => {
+  return `/api/sessions/${id}/learning-stats`;
+};
+
+export const getSessionLearningStats = async (
+  id: number,
+  options?: RequestInit,
+): Promise<GetSessionLearningStats200> => {
+  return customFetch<GetSessionLearningStats200>(
+    getGetSessionLearningStatsUrl(id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetSessionLearningStatsQueryKey = (id: number) => {
+  return [`/api/sessions/${id}/learning-stats`] as const;
+};
+
+export const getGetSessionLearningStatsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getSessionLearningStats>>,
+  TError = ErrorType<unknown>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSessionLearningStats>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetSessionLearningStatsQueryKey(id);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getSessionLearningStats>>
+  > = ({ signal }) =>
+    getSessionLearningStats(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getSessionLearningStats>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetSessionLearningStatsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getSessionLearningStats>>
+>;
+export type GetSessionLearningStatsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary How many feedback rounds the AI has learned from for this session/global
+ */
+
+export function useGetSessionLearningStats<
+  TData = Awaited<ReturnType<typeof getSessionLearningStats>>,
+  TError = ErrorType<unknown>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSessionLearningStats>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetSessionLearningStatsQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Update a model (user edits to name/description/rationale/nodes/edges)
+ */
+export const getUpdateModelUrl = (id: number) => {
+  return `/api/models/${id}`;
+};
+
+export const updateModel = async (
+  id: number,
+  updateModelBody: UpdateModelBody,
+  options?: RequestInit,
+): Promise<ResearchModel> => {
+  return customFetch<ResearchModel>(getUpdateModelUrl(id), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(updateModelBody),
+  });
+};
+
+export const getUpdateModelMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateModel>>,
+    TError,
+    { id: number; data: BodyType<UpdateModelBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateModel>>,
+  TError,
+  { id: number; data: BodyType<UpdateModelBody> },
+  TContext
+> => {
+  const mutationKey = ["updateModel"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateModel>>,
+    { id: number; data: BodyType<UpdateModelBody> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return updateModel(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateModelMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateModel>>
+>;
+export type UpdateModelMutationBody = BodyType<UpdateModelBody>;
+export type UpdateModelMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Update a model (user edits to name/description/rationale/nodes/edges)
+ */
+export const useUpdateModel = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateModel>>,
+    TError,
+    { id: number; data: BodyType<UpdateModelBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateModel>>,
+  TError,
+  { id: number; data: BodyType<UpdateModelBody> },
+  TContext
+> => {
+  return useMutation(getUpdateModelMutationOptions(options));
+};
 
 /**
  * @summary Get a specific research model

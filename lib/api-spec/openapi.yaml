@@ -429,7 +429,72 @@ paths:
                 items:
                   $ref: "#/components/schemas/ResearchModel"
 
+  /sessions/{id}/learning-stats:
+    get:
+      operationId: getSessionLearningStats
+      tags: [models]
+      summary: How many feedback rounds the AI has learned from for this session/global
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Stats
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  totalFeedback:
+                    type: integer
+                  withSelections:
+                    type: integer
+                  withEdits:
+                    type: integer
+                required: [totalFeedback, withSelections, withEdits]
+
   /models/{id}:
+    patch:
+      operationId: updateModel
+      tags: [models]
+      summary: Update a model (user edits to name/description/rationale/nodes/edges)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                description:
+                  type: string
+                rationale:
+                  type: string
+                nodes:
+                  type: array
+                  items:
+                    type: object
+                edges:
+                  type: array
+                  items:
+                    type: object
+      responses:
+        "200":
+          description: Updated model
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResearchModel"
     get:
       operationId: getModel
       tags: [models]

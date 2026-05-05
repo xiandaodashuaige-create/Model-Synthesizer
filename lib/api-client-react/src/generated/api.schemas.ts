@@ -237,3 +237,21 @@ export type GenerateModelsBody = {
   /** Variable IDs the user wants the AI to prioritize including */
   focusVariableIds?: number[];
 };
+
+export type GetSessionLearningStats200 = {
+  totalFeedback: number;
+  withSelections: number;
+  withEdits: number;
+};
+
+export type UpdateModelBodyNodesItem = { [key: string]: unknown };
+
+export type UpdateModelBodyEdgesItem = { [key: string]: unknown };
+
+export type UpdateModelBody = {
+  name?: string;
+  description?: string;
+  rationale?: string;
+  nodes?: UpdateModelBodyNodesItem[];
+  edges?: UpdateModelBodyEdgesItem[];
+};

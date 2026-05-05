@@ -4,9 +4,11 @@ import {
   useListSessionModels,
   useGenerateModels,
   useSelectModel,
+  useGetSessionLearningStats,
   getListSessionModelsQueryKey,
   getGetSessionSummaryQueryKey,
   getGetSessionQueryKey,
+  getGetSessionLearningStatsQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Loader2, Share2, Sparkles, CheckCircle, ArrowRight, BookOpen, Wand2 } from "lucide-react";
@@ -26,73 +28,104 @@ function ModelGraph({ nodes, edges, paperTagById }: {
   paperTagById: Map<number, string>;
 }) {
   if (!nodes.length) return null;
-  const WIDTH = 540;
-  const HEIGHT = 220;
-  const NODE_W = 130;
-  const NODE_H = 44;
+  const NODE_W = 140;
+  const NODE_H = 50;
+  const ROW_GAP = 26;
+  const COL_GAP = 70;
+  const PAD_X = 20;
+  const PAD_Y = 20;
 
   const typeOrder = ["independent", "mediator", "moderator", "dependent"];
   const grouped: Record<string, typeof nodes> = {};
   for (const n of nodes) {
-    if (!grouped[n.type]) grouped[n.type] = [];
-    grouped[n.type].push(n);
+    (grouped[n.type] ??= []).push(n);
   }
   const cols = typeOrder.filter((t) => grouped[t]?.length);
+
+  // Dynamic SVG height = max column height
+  const maxRows = Math.max(1, ...cols.map((c) => grouped[c].length));
+  const HEIGHT = PAD_Y * 2 + maxRows * NODE_H + (maxRows - 1) * ROW_GAP;
+  const WIDTH = PAD_X * 2 + cols.length * NODE_W + (cols.length - 1) * COL_GAP;
+
   const positions = new Map<number, { x: number; y: number }>();
   cols.forEach((type, colIdx) => {
     const ns = grouped[type] ?? [];
-    const colX = ((colIdx + 0.5) / cols.length) * WIDTH;
+    const colX = PAD_X + colIdx * (NODE_W + COL_GAP) + NODE_W / 2;
+    const totalH = ns.length * NODE_H + (ns.length - 1) * ROW_GAP;
+    const startY = (HEIGHT - totalH) / 2;
     ns.forEach((node, rowIdx) => {
-      const totalH = ns.length * (NODE_H + 14) - 14;
-      const startY = (HEIGHT - totalH) / 2;
-      positions.set(node.variableId, { x: colX, y: startY + rowIdx * (NODE_H + 14) + NODE_H / 2 });
+      positions.set(node.variableId, { x: colX, y: startY + rowIdx * (NODE_H + ROW_GAP) + NODE_H / 2 });
     });
   });
 
+  // Group edges that share the same (from,to) so labels stack instead of overlapping.
+  const edgeGroups = new Map<string, Array<{ edge: typeof edges[number]; idx: number }>>();
+  edges.forEach((edge, i) => {
+    const k = `${edge.fromVariableId}->${edge.toVariableId}`;
+    (edgeGroups.get(k) ?? edgeGroups.set(k, []).get(k)!).push({ edge, idx: i });
+  });
+
   return (
-    <svg width="100%" viewBox={`0 0 ${WIDTH} ${HEIGHT}`} className="overflow-visible">
+    <svg width="100%" viewBox={`0 0 ${WIDTH} ${HEIGHT}`} className="overflow-visible" style={{ minHeight: HEIGHT }}>
       <defs>
         <marker id="arr-m" markerWidth="7" markerHeight="7" refX="6" refY="3" orient="auto">
-          <path d="M0,0 L0,6 L7,3 z" fill="currentColor" opacity={0.4} />
+          <path d="M0,0 L0,6 L7,3 z" fill="currentColor" opacity={0.5} />
         </marker>
       </defs>
-      {edges.map((edge, i) => {
-        const from = positions.get(edge.fromVariableId);
-        const to = positions.get(edge.toVariableId);
+
+      {[...edgeGroups.values()].map((group) => {
+        const first = group[0].edge;
+        const from = positions.get(first.fromVariableId);
+        const to = positions.get(first.toVariableId);
         if (!from || !to) return null;
-        const fromX = from.x + NODE_W / 2 - 2;
-        const toX = to.x - NODE_W / 2 + 2;
+        const fromX = from.x + NODE_W / 2;
+        const toX = to.x - NODE_W / 2;
+        const dx = toX - fromX;
+        const dy = to.y - from.y;
+        const len = Math.max(1, Math.hypot(dx, dy));
+        // Perpendicular unit vector for label offset.
+        const nx = -dy / len;
+        const ny = dx / len;
         const midX = (fromX + toX) / 2;
         const midY = (from.y + to.y) / 2;
-        const tag = paperTagById.get(edge.evidencePaperId);
         return (
-          <g key={i}>
+          <g key={`${first.fromVariableId}->${first.toVariableId}`}>
             <line x1={fromX} y1={from.y} x2={toX} y2={to.y}
-              stroke="currentColor" strokeOpacity={0.25} strokeWidth={1.5}
+              stroke="currentColor" strokeOpacity={0.3} strokeWidth={1.5}
               markerEnd="url(#arr-m)" />
-            {tag && (
-              <g transform={`translate(${midX - 12}, ${midY - 7})`}>
-                <rect width={24} height={14} rx={3} fill="white" stroke="currentColor" strokeOpacity={0.3} strokeWidth={0.8} />
-                <text x={12} y={10} textAnchor="middle" fontSize={8} fontWeight={700} fill="#555">{tag}</text>
-              </g>
-            )}
+            {group.map(({ edge }, gi) => {
+              const tag = paperTagById.get(edge.evidencePaperId);
+              if (!tag) return null;
+              // Stack labels along the perpendicular direction so they don't overlap each other or the edge.
+              const offset = 12 + gi * 16;
+              const lx = midX + nx * offset;
+              const ly = midY + ny * offset;
+              return (
+                <g key={gi} transform={`translate(${lx - 14}, ${ly - 7})`}>
+                  <rect width={28} height={14} rx={3} fill="white" stroke="currentColor" strokeOpacity={0.4} strokeWidth={0.8} />
+                  <text x={14} y={10} textAnchor="middle" fontSize={9} fontWeight={700} fill="#444">{tag}</text>
+                </g>
+              );
+            })}
           </g>
         );
       })}
+
       {nodes.map((node) => {
         const pos = positions.get(node.variableId);
         if (!pos) return null;
         const color = TYPE_COLORS[node.type] ?? "#888";
         const tag = paperTagById.get(node.paperId);
+        const label = node.variableName.length > 18 ? node.variableName.slice(0, 17) + "…" : node.variableName;
         return (
           <g key={node.variableId} transform={`translate(${pos.x - NODE_W / 2}, ${pos.y - NODE_H / 2})`}>
-            <rect width={NODE_W} height={NODE_H} rx={5} fill={color} fillOpacity={0.1} stroke={color} strokeOpacity={0.4} strokeWidth={1.5} />
-            <text x={NODE_W / 2} y={NODE_H / 2 - 2} textAnchor="middle" fontSize={9} fontWeight={600} fill={color}>
-              {node.variableName.length > 18 ? node.variableName.slice(0, 17) + "…" : node.variableName}
+            <rect width={NODE_W} height={NODE_H} rx={6} fill={color} fillOpacity={0.1} stroke={color} strokeOpacity={0.45} strokeWidth={1.5} />
+            <text x={NODE_W / 2} y={NODE_H / 2 - 2} textAnchor="middle" fontSize={10} fontWeight={600} fill={color}>
+              {label}
             </text>
             {tag && (
               <g transform={`translate(${NODE_W / 2 - 14}, ${NODE_H - 14})`}>
-                <rect width={28} height={11} rx={2} fill={color} fillOpacity={0.85} />
+                <rect width={28} height={11} rx={2} fill={color} fillOpacity={0.9} />
                 <text x={14} y={8.5} textAnchor="middle" fontSize={7} fontWeight={700} fill="white">{tag}</text>
               </g>
             )}
@@ -131,6 +164,9 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
 
   const { data: models, isLoading } = useListSessionModels(sessionId, {
     query: { enabled: !!sessionId, queryKey: getListSessionModelsQueryKey(sessionId) },
+  });
+  const { data: learningStats } = useGetSessionLearningStats(sessionId, {
+    query: { enabled: !!sessionId, queryKey: getGetSessionLearningStatsQueryKey(sessionId) },
   });
 
   const [userPrompt, setUserPrompt] = useState("");
@@ -176,9 +212,23 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
     });
   };
 
+  const learnedRounds = (learningStats?.withSelections ?? 0) + (learningStats?.withEdits ?? 0);
+
   return (
     <div className="space-y-6">
-      <p className="text-sm text-muted-foreground max-w-2xl">{t("models.intro" as any)}</p>
+      <div className="flex items-start justify-between flex-wrap gap-3">
+        <p className="text-sm text-muted-foreground max-w-2xl">{t("models.intro" as any)}</p>
+        {learnedRounds > 0 && (
+          <span
+            data-testid="badge-learning"
+            title={t("models.learning.tip" as any)}
+            className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full"
+          >
+            <Sparkles className="w-3 h-3" />
+            {t("models.learning.badge" as any, { n: learnedRounds })}
+          </span>
+        )}
+      </div>
 
       {/* Custom prompt panel */}
       <div className="bg-card border border-border rounded-lg p-5 space-y-4">

@@ -1,4 +1,4 @@
-import { pgTable, text, serial, timestamp, integer } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, timestamp, integer, jsonb } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -29,6 +29,7 @@ export const papersTable = pgTable("papers", {
   url: text("url").notNull(),
   fullText: text("full_text"),
   extracted: text("extracted").notNull().default("false"),
+  researchModel: jsonb("research_model"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

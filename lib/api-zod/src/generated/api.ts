@@ -413,6 +413,69 @@ export const ListSessionModelsResponse = zod.array(
 );
 
 /**
+ * @summary How many feedback rounds the AI has learned from for this session/global
+ */
+export const GetSessionLearningStatsParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const GetSessionLearningStatsResponse = zod.object({
+  totalFeedback: zod.number(),
+  withSelections: zod.number(),
+  withEdits: zod.number(),
+});
+
+/**
+ * @summary Update a model (user edits to name/description/rationale/nodes/edges)
+ */
+export const UpdateModelParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const UpdateModelBody = zod.object({
+  name: zod.string().optional(),
+  description: zod.string().optional(),
+  rationale: zod.string().optional(),
+  nodes: zod.array(zod.object({}).passthrough()).optional(),
+  edges: zod.array(zod.object({}).passthrough()).optional(),
+});
+
+export const UpdateModelResponse = zod.object({
+  id: zod.number(),
+  sessionId: zod.number(),
+  name: zod.string(),
+  description: zod.string(),
+  rationale: zod.string(),
+  selected: zod.boolean(),
+  nodes: zod.array(
+    zod.object({
+      variableId: zod.number(),
+      variableName: zod.string(),
+      type: zod.string(),
+      paperId: zod.number(),
+      paperTitle: zod.string(),
+      paperAuthors: zod.array(zod.string()),
+      paperYear: zod.number().nullish(),
+    }),
+  ),
+  edges: zod.array(
+    zod.object({
+      fromVariableId: zod.number(),
+      toVariableId: zod.number(),
+      fromVariableName: zod.string(),
+      toVariableName: zod.string(),
+      relationship: zod.string(),
+      evidencePaperId: zod.number(),
+      evidencePaperTitle: zod.string(),
+      evidencePaperAuthors: zod.array(zod.string()),
+      evidencePaperYear: zod.number().nullish(),
+      evidenceCitationText: zod.string(),
+    }),
+  ),
+  createdAt: zod.string(),
+});
+
+/**
  * @summary Get a specific research model
  */
 export const GetModelParams = zod.object({
