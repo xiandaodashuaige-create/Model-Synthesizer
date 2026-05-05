@@ -144,20 +144,29 @@ export function ModelAssistantChat({
 
   return (
     <div className="bg-card border border-border rounded-lg overflow-hidden flex flex-col" data-testid="panel-assistant">
-      <div className="flex items-center justify-between px-4 py-2.5 border-b border-border bg-muted/30">
-        <div className="flex items-center gap-2">
-          <MessageSquare className="w-4 h-4 text-primary" />
-          <h3 className="text-sm font-semibold">{t("models.assistant.title" as any)}</h3>
+      <div className="flex items-center justify-between px-4 py-2.5 border-b border-border bg-muted/30 gap-3 flex-wrap">
+        <div className="flex items-center gap-2 min-w-0">
+          <MessageSquare className="w-4 h-4 text-primary shrink-0" />
+          <h3 className="text-sm font-semibold truncate">{t("models.assistant.title" as any)}</h3>
         </div>
-        {messages.length > 1 && (
+        <div className="flex items-center gap-2">
           <button
-            onClick={clear}
-            data-testid="button-clear-chat"
-            className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+            onClick={() => { setImgPanelOpen((v) => !v); }}
+            data-testid="button-toggle-image-search"
+            className="inline-flex items-center gap-1.5 text-xs font-semibold rounded-md border border-sky-300 bg-sky-50 hover:bg-sky-100 text-sky-800 px-2.5 py-1.5"
           >
-            <Trash2 className="w-3 h-3" /> {t("models.assistant.clear" as any)}
+            <ImageIcon className="w-3.5 h-3.5" /> {t("models.assistant.searchImages.cta" as any)}
           </button>
-        )}
+          {messages.length > 1 && (
+            <button
+              onClick={clear}
+              data-testid="button-clear-chat"
+              className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+            >
+              <Trash2 className="w-3 h-3" /> {t("models.assistant.clear" as any)}
+            </button>
+          )}
+        </div>
       </div>
 
       <div ref={scrollRef} className="px-4 py-3 max-h-[420px] overflow-y-auto space-y-3 bg-background/50">
@@ -275,11 +284,10 @@ export function ModelAssistantChat({
       )}
 
       {imgPanelOpen && (
-        <div className="border-t border-sky-200 bg-sky-50/60 px-4 py-3 space-y-2" data-testid="panel-image-search">
+        <div className="border-t-2 border-sky-300 bg-sky-50/60 px-4 py-3 space-y-2" data-testid="panel-image-search">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1.5 text-xs font-semibold text-sky-900">
               <ImageIcon className="w-3.5 h-3.5" /> {t("models.assistant.searchImages.title" as any)}
-              {imgQuery && <span className="font-normal text-sky-700">— "{imgQuery}"</span>}
             </div>
             <button
               type="button"
@@ -289,6 +297,27 @@ export function ModelAssistantChat({
               title={t("models.assistant.searchImages.close" as any)}
             >
               <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              data-testid="input-image-search-query"
+              value={imgQuery}
+              onChange={(e) => setImgQuery(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); runImageSearch(imgQuery); } }}
+              placeholder={t("models.assistant.searchImages.placeholder" as any)}
+              className="flex-1 text-sm rounded-md border border-sky-300 bg-white px-3 py-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+            />
+            <button
+              type="button"
+              data-testid="button-run-image-search"
+              onClick={() => runImageSearch(imgQuery)}
+              disabled={!imgQuery.trim() || imageSearch.isPending}
+              className="inline-flex items-center gap-1.5 rounded-md bg-sky-600 hover:bg-sky-700 text-white text-xs font-semibold px-3 py-1.5 disabled:opacity-50"
+            >
+              {imageSearch.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
+              {t("models.assistant.searchImages.searchBtn" as any)}
             </button>
           </div>
           {imageSearch.isPending && (
