@@ -10,15 +10,21 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { Loader2, ArrowLeft, CheckCircle, BookOpen, Quote, Share2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useT } from "@/lib/i18n";
 
-const TYPE_META: Record<string, { label: string; color: string; bg: string; border: string; dot: string }> = {
-  independent: { label: "Independent", color: "text-blue-700 dark:text-blue-300", bg: "bg-blue-50 dark:bg-blue-950/40", border: "border-blue-200 dark:border-blue-800", dot: "bg-blue-500" },
-  mediator: { label: "Mediator", color: "text-amber-700 dark:text-amber-300", bg: "bg-amber-50 dark:bg-amber-950/40", border: "border-amber-200 dark:border-amber-800", dot: "bg-amber-500" },
-  moderator: { label: "Moderator", color: "text-purple-700 dark:text-purple-300", bg: "bg-purple-50 dark:bg-purple-950/40", border: "border-purple-200 dark:border-purple-800", dot: "bg-purple-500" },
-  dependent: { label: "Dependent", color: "text-green-700 dark:text-green-300", bg: "bg-green-50 dark:bg-green-950/40", border: "border-green-200 dark:border-green-800", dot: "bg-green-500" },
-};
+function useTypeMeta() {
+  const { t } = useT();
+  return {
+    independent: { label: t("vars.type.independent" as any), color: "text-blue-700 dark:text-blue-300", bg: "bg-blue-50 dark:bg-blue-950/40", border: "border-blue-200 dark:border-blue-800", dot: "bg-blue-500" },
+    mediator: { label: t("vars.type.mediator" as any), color: "text-amber-700 dark:text-amber-300", bg: "bg-amber-50 dark:bg-amber-950/40", border: "border-amber-200 dark:border-amber-800", dot: "bg-amber-500" },
+    moderator: { label: t("vars.type.moderator" as any), color: "text-purple-700 dark:text-purple-300", bg: "bg-purple-50 dark:bg-purple-950/40", border: "border-purple-200 dark:border-purple-800", dot: "bg-purple-500" },
+    dependent: { label: t("vars.type.dependent" as any), color: "text-green-700 dark:text-green-300", bg: "bg-green-50 dark:bg-green-950/40", border: "border-green-200 dark:border-green-800", dot: "bg-green-500" },
+  } as Record<string, { label: string; color: string; bg: string; border: string; dot: string }>;
+}
 
 export default function SessionModelDetail({ params: routeParams }: { params?: { id?: string; modelId?: string } }) {
+  const { t } = useT();
+  const TYPE_META = useTypeMeta();
   const params = useParams<{ id: string; modelId: string }>();
   const sessionId = parseInt(routeParams?.id ?? params.id ?? "0", 10);
   const modelId = parseInt(routeParams?.modelId ?? params.modelId ?? "0", 10);
@@ -27,7 +33,7 @@ export default function SessionModelDetail({ params: routeParams }: { params?: {
 
   const selectModel = useSelectModel();
   const { data: model, isLoading } = useGetModel(modelId, {
-    query: { enabled: !!modelId, queryKey: getGetModelQueryKey(modelId) }
+    query: { enabled: !!modelId, queryKey: getGetModelQueryKey(modelId) },
   });
 
   const handleSelect = () => {
@@ -37,7 +43,10 @@ export default function SessionModelDetail({ params: routeParams }: { params?: {
         queryClient.invalidateQueries({ queryKey: getGetModelQueryKey(modelId) });
         queryClient.invalidateQueries({ queryKey: getListSessionModelsQueryKey(sessionId) });
         queryClient.invalidateQueries({ queryKey: getGetSessionSummaryQueryKey(sessionId) });
-        toast({ title: "Model selected", description: `"${model.name}" is now your selected research model.` });
+        toast({
+          title: t("models.toast.selected" as any),
+          description: t("models.toast.selectedDesc" as any, { name: model.name }),
+        });
       },
     });
   };
@@ -45,8 +54,8 @@ export default function SessionModelDetail({ params: routeParams }: { params?: {
   if (isLoading) return <div className="flex justify-center py-16"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
   if (!model) return (
     <div className="text-center py-16">
-      <p className="text-muted-foreground">Model not found.</p>
-      <Link href={`/sessions/${sessionId}/models`} className="text-primary hover:underline text-sm mt-2 inline-block">Back to Models</Link>
+      <p className="text-muted-foreground">{t("md.notFound" as any)}</p>
+      <Link href={`/sessions/${sessionId}/models`} className="text-primary hover:underline text-sm mt-2 inline-block">{t("md.backToList" as any)}</Link>
     </div>
   );
 
@@ -62,7 +71,7 @@ export default function SessionModelDetail({ params: routeParams }: { params?: {
     <div className="max-w-4xl mx-auto space-y-8">
       <div className="flex items-start gap-4">
         <Link href={`/sessions/${sessionId}/models`} className="mt-1 inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors shrink-0">
-          <ArrowLeft className="w-4 h-4" /> Back
+          <ArrowLeft className="w-4 h-4" /> {t("md.back" as any)}
         </Link>
         <div className="flex-1">
           <div className="flex items-center gap-2 mb-2">
@@ -80,25 +89,23 @@ export default function SessionModelDetail({ params: routeParams }: { params?: {
             className="shrink-0 inline-flex items-center gap-2 rounded-md text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-5 disabled:opacity-50"
           >
             {selectModel.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-            Select This Model
+            {t("md.select" as any)}
           </button>
         )}
         {model.selected && (
           <span className="shrink-0 inline-flex items-center gap-2 rounded-md text-sm font-medium bg-primary/10 text-primary border border-primary/20 h-10 px-4">
-            <CheckCircle className="w-4 h-4" /> Selected
+            <CheckCircle className="w-4 h-4" /> {t("md.selected" as any)}
           </span>
         )}
       </div>
 
-      {/* Rationale */}
       <div className="bg-card border border-border rounded-lg p-6">
-        <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-3">Theoretical Rationale</h2>
+        <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-3">{t("md.rationale" as any)}</h2>
         <p className="text-sm text-foreground leading-relaxed">{model.rationale}</p>
       </div>
 
-      {/* Variables */}
       <div>
-        <h2 className="text-lg font-semibold text-foreground mb-4">Model Variables</h2>
+        <h2 className="text-lg font-semibold text-foreground mb-4">{t("md.variables" as any)}</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           {typeOrder.filter((t) => nodesByType[t]?.length).map((type) => {
             const meta = TYPE_META[type]!;
@@ -123,10 +130,9 @@ export default function SessionModelDetail({ params: routeParams }: { params?: {
         </div>
       </div>
 
-      {/* Relationships with Evidence */}
       {(model.edges ?? []).length > 0 && (
         <div>
-          <h2 className="text-lg font-semibold text-foreground mb-4">Variable Relationships & Evidence</h2>
+          <h2 className="text-lg font-semibold text-foreground mb-4">{t("md.relations" as any)}</h2>
           <div className="space-y-4">
             {(model.edges ?? []).map((edge, i) => (
               <div key={i} data-testid={`card-model-edge-${i}`} className="bg-card border border-border rounded-lg p-5">

@@ -7,17 +7,24 @@ import {
   getGetVariableGraphQueryKey,
 } from "@workspace/api-client-react";
 import { Loader2, Database, ArrowRight, Quote, BookOpen } from "lucide-react";
+import { useT } from "@/lib/i18n";
+import { NextStepHint } from "@/components/onboarding-stepper";
 
-const TYPE_META: Record<string, { label: string; color: string; bg: string; border: string }> = {
-  independent: { label: "Independent", color: "text-blue-700 dark:text-blue-300", bg: "bg-blue-50 dark:bg-blue-950/40", border: "border-blue-200 dark:border-blue-800" },
-  mediator: { label: "Mediator", color: "text-amber-700 dark:text-amber-300", bg: "bg-amber-50 dark:bg-amber-950/40", border: "border-amber-200 dark:border-amber-800" },
-  moderator: { label: "Moderator", color: "text-purple-700 dark:text-purple-300", bg: "bg-purple-50 dark:bg-purple-950/40", border: "border-purple-200 dark:border-purple-800" },
-  dependent: { label: "Dependent", color: "text-green-700 dark:text-green-300", bg: "bg-green-50 dark:bg-green-950/40", border: "border-green-200 dark:border-green-800" },
-};
+function useTypeMeta() {
+  const { t } = useT();
+  return {
+    independent: { label: t("vars.type.independent" as any), color: "text-blue-700 dark:text-blue-300", bg: "bg-blue-50 dark:bg-blue-950/40", border: "border-blue-200 dark:border-blue-800" },
+    mediator: { label: t("vars.type.mediator" as any), color: "text-amber-700 dark:text-amber-300", bg: "bg-amber-50 dark:bg-amber-950/40", border: "border-amber-200 dark:border-amber-800" },
+    moderator: { label: t("vars.type.moderator" as any), color: "text-purple-700 dark:text-purple-300", bg: "bg-purple-50 dark:bg-purple-950/40", border: "border-purple-200 dark:border-purple-800" },
+    dependent: { label: t("vars.type.dependent" as any), color: "text-green-700 dark:text-green-300", bg: "bg-green-50 dark:bg-green-950/40", border: "border-green-200 dark:border-green-800" },
+  } as Record<string, { label: string; color: string; bg: string; border: string }>;
+}
 
 function VariableGraph({ sessionId }: { sessionId: number }) {
+  const { t } = useT();
+  const TYPE_META = useTypeMeta();
   const { data: graph, isLoading } = useGetVariableGraph(sessionId, {
-    query: { enabled: !!sessionId, queryKey: getGetVariableGraphQueryKey(sessionId) }
+    query: { enabled: !!sessionId, queryKey: getGetVariableGraphQueryKey(sessionId) },
   });
 
   if (isLoading) return <div className="flex justify-center py-8"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>;
@@ -53,7 +60,7 @@ function VariableGraph({ sessionId }: { sessionId: number }) {
 
   return (
     <div className="bg-card border border-border rounded-lg p-5">
-      <h3 className="text-sm font-semibold text-foreground mb-4">Variable Relationship Graph</h3>
+      <h3 className="text-sm font-semibold text-foreground mb-4">{t("vars.graph.title" as any)}</h3>
       <div className="overflow-x-auto">
         <svg width={WIDTH} height={HEIGHT} viewBox={`0 0 ${WIDTH} ${HEIGHT}`} className="text-foreground">
           <defs>
@@ -87,7 +94,7 @@ function VariableGraph({ sessionId }: { sessionId: number }) {
                   {node.label.length > 18 ? node.label.slice(0, 17) + "…" : node.label}
                 </text>
                 <text x={NODE_W / 2} y={NODE_H / 2 + 10} textAnchor="middle" fontSize={9} fill={color} opacity={0.7}>
-                  {node.paperCount} paper{node.paperCount !== 1 ? "s" : ""}
+                  {node.paperCount}
                 </text>
               </g>
             );
@@ -109,11 +116,13 @@ function VariableGraph({ sessionId }: { sessionId: number }) {
 }
 
 export default function SessionVariables({ params: routeParams }: { params?: { id?: string } }) {
+  const { t } = useT();
+  const TYPE_META = useTypeMeta();
   const params = useParams<{ id: string }>();
   const sessionId = parseInt(routeParams?.id ?? params.id ?? "0", 10);
 
   const { data: variables, isLoading } = useListSessionVariables(sessionId, {
-    query: { enabled: !!sessionId, queryKey: getListSessionVariablesQueryKey(sessionId) }
+    query: { enabled: !!sessionId, queryKey: getListSessionVariablesQueryKey(sessionId) },
   });
 
   if (isLoading) return <div className="flex justify-center py-16"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
@@ -122,10 +131,10 @@ export default function SessionVariables({ params: routeParams }: { params?: { i
     return (
       <div className="bg-card border border-dashed border-border rounded-lg p-12 text-center">
         <Database className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
-        <h3 className="font-semibold text-foreground mb-1">No Variables Extracted Yet</h3>
-        <p className="text-sm text-muted-foreground mb-4">Go to the Papers tab and extract variables from added papers using AI.</p>
+        <h3 className="font-semibold text-foreground mb-1">{t("vars.empty.title" as any)}</h3>
+        <p className="text-sm text-muted-foreground mb-4">{t("vars.empty.body" as any)}</p>
         <Link href={`/sessions/${sessionId}/papers`} className="inline-flex items-center gap-1.5 text-sm text-primary hover:underline font-medium">
-          Go to Papers <ArrowRight className="w-4 h-4" />
+          {t("vars.empty.cta" as any)} <ArrowRight className="w-4 h-4" />
         </Link>
       </div>
     );
@@ -141,6 +150,13 @@ export default function SessionVariables({ params: routeParams }: { params?: { i
 
   return (
     <div className="space-y-8">
+      <NextStepHint
+        title={t("vars.tip.next.title" as any)}
+        body={t("vars.tip.next.body" as any)}
+        href={`/sessions/${sessionId}/models`}
+        cta={t("vars.goModels" as any)}
+      />
+
       <VariableGraph sessionId={sessionId} />
 
       <div className="space-y-8">
@@ -150,8 +166,10 @@ export default function SessionVariables({ params: routeParams }: { params?: { i
             <div key={type}>
               <h2 className={`text-sm font-semibold uppercase tracking-wider mb-3 flex items-center gap-2 ${meta.color}`}>
                 <span className={`w-2 h-2 rounded-full inline-block ${meta.bg} border ${meta.border}`} />
-                {meta.label} Variables
-                <span className="font-normal text-muted-foreground normal-case tracking-normal">({grouped[type].length})</span>
+                {meta.label}
+                <span className="font-normal text-muted-foreground normal-case tracking-normal">
+                  {t("vars.type.suffix" as any, { n: grouped[type].length })}
+                </span>
               </h2>
               <div className="space-y-3">
                 {grouped[type].map((v) => (

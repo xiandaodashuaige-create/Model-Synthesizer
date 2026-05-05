@@ -1,8 +1,42 @@
 import React from "react";
 import { Link } from "wouter";
-import { BookOpen, Activity, LayoutDashboard, Settings } from "lucide-react";
+import { Activity, LayoutDashboard, Languages } from "lucide-react";
+import { useT } from "@/lib/i18n";
+import { cn } from "@/lib/utils";
+
+function LangSwitch() {
+  const { lang, setLang, t } = useT();
+  return (
+    <div className="inline-flex items-center rounded-md border border-border bg-background p-0.5 text-xs font-medium">
+      <Languages className="w-3.5 h-3.5 ml-2 text-muted-foreground" />
+      <button
+        type="button"
+        onClick={() => setLang("zh")}
+        data-testid="lang-zh"
+        className={cn(
+          "px-2.5 py-1 rounded transition-colors",
+          lang === "zh" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground",
+        )}
+      >
+        {t("nav.lang.zh" as any)}
+      </button>
+      <button
+        type="button"
+        onClick={() => setLang("en")}
+        data-testid="lang-en"
+        className={cn(
+          "px-2.5 py-1 rounded transition-colors",
+          lang === "en" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground",
+        )}
+      >
+        {t("nav.lang.en" as any)}
+      </button>
+    </div>
+  );
+}
 
 export function Layout({ children }: { children: React.ReactNode }) {
+  const { t } = useT();
   return (
     <div className="min-h-screen bg-background flex flex-col">
       <header className="border-b border-border bg-card px-6 py-4 flex items-center justify-between sticky top-0 z-10 shadow-sm">
@@ -10,22 +44,17 @@ export function Layout({ children }: { children: React.ReactNode }) {
           <div className="w-8 h-8 rounded bg-primary flex items-center justify-center text-primary-foreground">
             <Activity className="w-5 h-5" />
           </div>
-          <span className="font-serif font-bold text-xl text-foreground">Research Model Builder</span>
+          <span className="font-serif font-bold text-xl text-foreground">{t("brand.name" as any)}</span>
         </Link>
-        <nav className="flex items-center gap-6 text-sm font-medium text-muted-foreground">
+        <nav className="flex items-center gap-4 text-sm font-medium text-muted-foreground">
           <Link href="/" className="flex items-center gap-2 hover:text-foreground transition-colors">
             <LayoutDashboard className="w-4 h-4" />
-            Sessions
+            {t("nav.sessions" as any)}
           </Link>
-          <a href="#" className="flex items-center gap-2 hover:text-foreground transition-colors">
-            <Settings className="w-4 h-4" />
-            Settings
-          </a>
+          <LangSwitch />
         </nav>
       </header>
-      <main className="flex-1 max-w-7xl w-full mx-auto p-6 md:p-8">
-        {children}
-      </main>
+      <main className="flex-1 max-w-7xl w-full mx-auto p-6 md:p-8">{children}</main>
     </div>
   );
 }

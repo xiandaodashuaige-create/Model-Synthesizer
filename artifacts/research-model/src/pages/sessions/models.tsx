@@ -11,6 +11,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { Loader2, Share2, Sparkles, CheckCircle, ArrowRight, BookOpen } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useT } from "@/lib/i18n";
 
 const TYPE_COLORS: Record<string, string> = {
   independent: "#2563eb",
@@ -84,6 +85,7 @@ function ModelGraph({ nodes, edges }: {
 }
 
 export default function SessionModels({ params: routeParams }: { params?: { id?: string } }) {
+  const { t } = useT();
   const params = useParams<{ id: string }>();
   const sessionId = parseInt(routeParams?.id ?? params.id ?? "0", 10);
   const queryClient = useQueryClient();
@@ -93,7 +95,7 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
   const selectModel = useSelectModel();
 
   const { data: models, isLoading } = useListSessionModels(sessionId, {
-    query: { enabled: !!sessionId, queryKey: getListSessionModelsQueryKey(sessionId) }
+    query: { enabled: !!sessionId, queryKey: getListSessionModelsQueryKey(sessionId) },
   });
 
   const handleGenerate = () => {
@@ -102,11 +104,17 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
         queryClient.invalidateQueries({ queryKey: getListSessionModelsQueryKey(sessionId) });
         queryClient.invalidateQueries({ queryKey: getGetSessionSummaryQueryKey(sessionId) });
         queryClient.invalidateQueries({ queryKey: getGetSessionQueryKey(sessionId) });
-        toast({ title: "Models generated", description: `${result.length} new research models generated.` });
+        toast({
+          title: t("models.toast.generated" as any),
+          description: t("models.toast.generatedDesc" as any, { count: result.length }),
+        });
       },
-      onError: (err: any) => {
-        const msg = err?.error ?? "Failed to generate models. Make sure you have extracted variables first.";
-        toast({ title: "Generation failed", description: msg, variant: "destructive" });
+      onError: () => {
+        toast({
+          title: t("models.toast.failed" as any),
+          description: t("models.toast.failedDesc" as any),
+          variant: "destructive",
+        });
       },
     });
   };
@@ -116,17 +124,18 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
       onSuccess: () => {
         queryClient.invalidateQueries({ queryKey: getListSessionModelsQueryKey(sessionId) });
         queryClient.invalidateQueries({ queryKey: getGetSessionSummaryQueryKey(sessionId) });
-        toast({ title: "Model selected", description: `"${name}" is now your selected research model.` });
+        toast({
+          title: t("models.toast.selected" as any),
+          description: t("models.toast.selectedDesc" as any, { name }),
+        });
       },
     });
   };
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-sm text-muted-foreground">Generate novel research model combinations from your extracted variables using AI.</p>
-        </div>
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <p className="text-sm text-muted-foreground max-w-2xl">{t("models.intro" as any)}</p>
         <button
           data-testid="button-generate-models"
           onClick={handleGenerate}
@@ -134,9 +143,9 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
           className="inline-flex items-center gap-2 rounded-md text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-5 disabled:opacity-50 disabled:pointer-events-none transition-colors"
         >
           {generateModels.isPending ? (
-            <><Loader2 className="w-4 h-4 animate-spin" /> Generating... (this may take ~20s)</>
+            <><Loader2 className="w-4 h-4 animate-spin" /> {t("models.generating" as any)}</>
           ) : (
-            <><Sparkles className="w-4 h-4" /> Generate Models</>
+            <><Sparkles className="w-4 h-4" /> {t("models.generate" as any)}</>
           )}
         </button>
       </div>
@@ -146,8 +155,8 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
       ) : !models || models.length === 0 ? (
         <div className="bg-card border border-dashed border-border rounded-lg p-12 text-center">
           <Share2 className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
-          <h3 className="font-semibold text-foreground mb-1">No Models Generated Yet</h3>
-          <p className="text-sm text-muted-foreground">Extract variables from papers first, then generate model combinations.</p>
+          <h3 className="font-semibold text-foreground mb-1">{t("models.empty.title" as any)}</h3>
+          <p className="text-sm text-muted-foreground">{t("models.empty.body" as any)}</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-6">
@@ -164,7 +173,7 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
                 <div className="flex gap-2 shrink-0">
                   <Link href={`/sessions/${sessionId}/models/${model.id}`}
                     className="inline-flex items-center gap-1.5 rounded-md text-xs font-medium h-8 px-3 bg-secondary text-secondary-foreground hover:bg-accent transition-colors">
-                    View Details <ArrowRight className="w-3.5 h-3.5" />
+                    {t("common.viewDetails" as any)} <ArrowRight className="w-3.5 h-3.5" />
                   </Link>
                   {!model.selected && (
                     <button
@@ -173,7 +182,7 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
                       disabled={selectModel.isPending}
                       className="inline-flex items-center gap-1.5 rounded-md text-xs font-medium h-8 px-3 bg-primary/10 text-primary hover:bg-primary/20 transition-colors disabled:opacity-50"
                     >
-                      Select
+                      {t("common.select" as any)}
                     </button>
                   )}
                 </div>
@@ -184,13 +193,13 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
               </div>
 
               <div className="border-t border-border pt-4">
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Rationale</p>
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">{t("common.rationale" as any)}</p>
                 <p className="text-sm text-muted-foreground leading-relaxed">{model.rationale}</p>
               </div>
 
               {(model.edges ?? []).length > 0 && (
                 <div className="border-t border-border pt-4 mt-4">
-                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">Evidence Sources</p>
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">{t("models.evidence.title" as any)}</p>
                   <div className="space-y-2">
                     {(model.edges ?? []).slice(0, 3).map((edge, i) => (
                       <div key={i} className="flex items-start gap-2 text-xs text-muted-foreground">
@@ -206,7 +215,7 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
                     ))}
                     {(model.edges ?? []).length > 3 && (
                       <Link href={`/sessions/${sessionId}/models/${model.id}`} className="text-xs text-primary hover:underline">
-                        +{(model.edges ?? []).length - 3} more evidence sources
+                        {t("models.evidence.more" as any, { n: (model.edges ?? []).length - 3 })}
                       </Link>
                     )}
                   </div>
