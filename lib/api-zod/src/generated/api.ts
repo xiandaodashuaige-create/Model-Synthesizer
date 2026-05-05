@@ -391,6 +391,10 @@ export const SearchModelImagesResponse = zod.object({
     .describe(
       "AI-expanded English academic queries that were actually searched.",
     ),
+  provider: zod
+    .enum(["serpapi", "brave"])
+    .optional()
+    .describe("Which upstream image search provider was actually used."),
   results: zod.array(
     zod.object({
       title: zod.string(),
@@ -400,6 +404,53 @@ export const SearchModelImagesResponse = zod.object({
       sourceDomain: zod.string(),
       width: zod.number().optional(),
       height: zod.number().optional(),
+    }),
+  ),
+});
+
+/**
+ * @summary Search OpenAlex for papers likely to contain a conceptual model figure on the topic. Returns paper cards plus an AI-judged "model figure likelihood" so the user can quickly find papers worth opening to look at the model diagram inside.
+ */
+export const SearchModelPapersParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const searchModelPapersBodyCountMax = 20;
+
+export const SearchModelPapersBody = zod.object({
+  query: zod
+    .string()
+    .describe(
+      "Topic \/ construct to search for. The server will translate Chinese \/ rough English into precise academic queries unless `raw` is true.",
+    ),
+  count: zod.number().min(1).max(searchModelPapersBodyCountMax).optional(),
+  raw: zod.boolean().optional().describe("When true, skip AI query expansion."),
+});
+
+export const SearchModelPapersResponse = zod.object({
+  query: zod.string(),
+  rawQuery: zod.string().optional(),
+  expandedQueries: zod.array(zod.string()).optional(),
+  papers: zod.array(
+    zod.object({
+      externalId: zod.string(),
+      title: zod.string(),
+      abstract: zod.string().nullish(),
+      authors: zod.array(zod.string()),
+      year: zod.number().nullish(),
+      venue: zod.string().nullish(),
+      citationCount: zod.number().nullish(),
+      openAccessUrl: zod.string().nullish(),
+      url: zod.string(),
+      modelFigureLikelihood: zod
+        .enum(["high", "medium", "low"])
+        .describe(
+          "AI-judged likelihood that the paper contains a conceptual \/ SEM model figure.",
+        ),
+      modelFigureReason: zod
+        .string()
+        .optional()
+        .describe("Short justification for the likelihood rating."),
     }),
   ),
 });

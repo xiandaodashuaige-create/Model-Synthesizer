@@ -498,6 +498,10 @@ paths:
                     items:
                       type: string
                     description: AI-expanded English academic queries that were actually searched.
+                  provider:
+                    type: string
+                    enum: [serpapi, brave]
+                    description: Which upstream image search provider was actually used.
                   results:
                     type: array
                     items:
@@ -520,6 +524,92 @@ paths:
                           type: integer
         "503":
           description: Search provider unavailable or not configured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /sessions/{id}/model-assistant/search-model-papers:
+    post:
+      operationId: searchModelPapers
+      tags: [models]
+      summary: Search OpenAlex for papers likely to contain a conceptual model figure on the topic. Returns paper cards plus an AI-judged "model figure likelihood" so the user can quickly find papers worth opening to look at the model diagram inside.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [query]
+              properties:
+                query:
+                  type: string
+                  description: Topic / construct to search for. The server will translate Chinese / rough English into precise academic queries unless `raw` is true.
+                count:
+                  type: integer
+                  minimum: 1
+                  maximum: 20
+                raw:
+                  type: boolean
+                  description: When true, skip AI query expansion.
+      responses:
+        "200":
+          description: Paper search results with model-figure likelihood
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [papers, query]
+                properties:
+                  query:
+                    type: string
+                  rawQuery:
+                    type: string
+                  expandedQueries:
+                    type: array
+                    items:
+                      type: string
+                  papers:
+                    type: array
+                    items:
+                      type: object
+                      required: [externalId, title, authors, url, modelFigureLikelihood]
+                      properties:
+                        externalId:
+                          type: string
+                        title:
+                          type: string
+                        abstract:
+                          type: ["string", "null"]
+                        authors:
+                          type: array
+                          items:
+                            type: string
+                        year:
+                          type: ["integer", "null"]
+                        venue:
+                          type: ["string", "null"]
+                        citationCount:
+                          type: ["integer", "null"]
+                        openAccessUrl:
+                          type: ["string", "null"]
+                        url:
+                          type: string
+                        modelFigureLikelihood:
+                          type: string
+                          enum: [high, medium, low]
+                          description: AI-judged likelihood that the paper contains a conceptual / SEM model figure.
+                        modelFigureReason:
+                          type: string
+                          description: Short justification for the likelihood rating.
+        "502":
+          description: Upstream search failed
           content:
             application/json:
               schema:

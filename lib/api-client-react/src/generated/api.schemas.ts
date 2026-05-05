@@ -295,6 +295,17 @@ export type SearchModelImagesBody = {
   raw?: boolean;
 };
 
+/**
+ * Which upstream image search provider was actually used.
+ */
+export type SearchModelImages200Provider =
+  (typeof SearchModelImages200Provider)[keyof typeof SearchModelImages200Provider];
+
+export const SearchModelImages200Provider = {
+  serpapi: "serpapi",
+  brave: "brave",
+} as const;
+
 export type SearchModelImages200ResultsItem = {
   title: string;
   thumbnailUrl: string;
@@ -312,7 +323,61 @@ export type SearchModelImages200 = {
   rawQuery?: string;
   /** AI-expanded English academic queries that were actually searched. */
   expandedQueries?: string[];
+  /** Which upstream image search provider was actually used. */
+  provider?: SearchModelImages200Provider;
   results: SearchModelImages200ResultsItem[];
+};
+
+export type SearchModelPapersBody = {
+  /** Topic / construct to search for. The server will translate Chinese / rough English into precise academic queries unless `raw` is true. */
+  query: string;
+  /**
+   * @minimum 1
+   * @maximum 20
+   */
+  count?: number;
+  /** When true, skip AI query expansion. */
+  raw?: boolean;
+};
+
+/**
+ * AI-judged likelihood that the paper contains a conceptual / SEM model figure.
+ */
+export type SearchModelPapers200PapersItemModelFigureLikelihood =
+  (typeof SearchModelPapers200PapersItemModelFigureLikelihood)[keyof typeof SearchModelPapers200PapersItemModelFigureLikelihood];
+
+export const SearchModelPapers200PapersItemModelFigureLikelihood = {
+  high: "high",
+  medium: "medium",
+  low: "low",
+} as const;
+
+export type SearchModelPapers200PapersItem = {
+  externalId: string;
+  title: string;
+  /** @nullable */
+  abstract?: string | null;
+  authors: string[];
+  /** @nullable */
+  year?: number | null;
+  /** @nullable */
+  venue?: string | null;
+  /** @nullable */
+  citationCount?: number | null;
+  /** @nullable */
+  openAccessUrl?: string | null;
+  url: string;
+  /** AI-judged likelihood that the paper contains a conceptual / SEM model figure. */
+  modelFigureLikelihood: SearchModelPapers200PapersItemModelFigureLikelihood;
+  /** Short justification for the likelihood rating. */
+  modelFigureReason?: string;
+};
+
+export type SearchModelPapers200 = {
+  query: string;
+  rawQuery?: string;
+  expandedQueries?: string[];
+  papers: SearchModelPapers200PapersItem[];
 };
 
 export type GenerateModelsBody = {

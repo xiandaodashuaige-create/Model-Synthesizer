@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
-import { useChatModelAssistant, useSearchModelImages } from "@workspace/api-client-react";
-import { BookPlus, ExternalLink, Image as ImageIcon, Loader2, MessageSquare, Paperclip, Search, Send, Sparkles, Trash2, X } from "lucide-react";
+import { useChatModelAssistant, useSearchModelImages, useSearchModelPapers } from "@workspace/api-client-react";
+import { BookOpen, BookPlus, Download, ExternalLink, FileText, Image as ImageIcon, Loader2, MessageSquare, Paperclip, Search, Send, Sparkles, Trash2, X } from "lucide-react";
 import { useT } from "@/lib/i18n";
 
 type ImageHit = {
@@ -12,6 +12,22 @@ type ImageHit = {
   width?: number;
   height?: number;
 };
+
+type PaperHit = {
+  externalId: string;
+  title: string;
+  abstract?: string | null;
+  authors: string[];
+  year?: number | null;
+  venue?: string | null;
+  citationCount?: number | null;
+  openAccessUrl?: string | null;
+  url: string;
+  modelFigureLikelihood: "high" | "medium" | "low";
+  modelFigureReason?: string;
+};
+
+type SearchMode = "images" | "papers";
 
 type Attachment = { name: string; kind: "image" | "text"; data: string };
 type ChatMsg = { role: "user" | "assistant"; content: string; attachments?: Attachment[] };
@@ -40,26 +56,35 @@ export function ModelAssistantChat({
   const fileRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Image search state
+  // Image / paper search state
   const imageSearch = useSearchModelImages();
+  const paperSearch = useSearchModelPapers();
   const [imgPanelOpen, setImgPanelOpen] = useState(false);
+  const [searchMode, setSearchMode] = useState<SearchMode>("images");
   const [imgQuery, setImgQuery] = useState("");
   const [imgRawMode, setImgRawMode] = useState(false);
   const [imgResults, setImgResults] = useState<ImageHit[] | null>(null);
+  const [imgProvider, setImgProvider] = useState<string | null>(null);
   const [imgActualQuery, setImgActualQuery] = useState<string | null>(null);
   const [imgExpandedQueries, setImgExpandedQueries] = useState<string[]>([]);
   const [imgError, setImgError] = useState<string | null>(null);
   const [lightbox, setLightbox] = useState<ImageHit | null>(null);
+
+  const [paperResults, setPaperResults] = useState<PaperHit[] | null>(null);
+  const [paperError, setPaperError] = useState<string | null>(null);
+  const [paperExpandedQueries, setPaperExpandedQueries] = useState<string[]>([]);
 
   const runImageSearch = (q: string, raw?: boolean) => {
     const trimmed = q.trim();
     if (!trimmed) return;
     setImgQuery(trimmed);
     setImgPanelOpen(true);
+    setSearchMode("images");
     setImgResults(null);
     setImgError(null);
     setImgActualQuery(null);
     setImgExpandedQueries([]);
+    setImgProvider(null);
     const useRaw = raw ?? imgRawMode;
     imageSearch.mutate(
       { id: sessionId, data: { query: trimmed, count: 12, raw: useRaw } },
@@ -68,10 +93,38 @@ export function ModelAssistantChat({
           setImgResults((resp.results ?? []) as ImageHit[]);
           setImgActualQuery((resp as { query?: string }).query ?? null);
           setImgExpandedQueries(((resp as { expandedQueries?: string[] }).expandedQueries ?? []));
+          setImgProvider((resp as { provider?: string }).provider ?? null);
         },
         onError: () => setImgError(t("models.assistant.searchImages.failed" as any)),
       },
     );
+  };
+
+  const runPaperSearch = (q: string, raw?: boolean) => {
+    const trimmed = q.trim();
+    if (!trimmed) return;
+    setImgQuery(trimmed);
+    setImgPanelOpen(true);
+    setSearchMode("papers");
+    setPaperResults(null);
+    setPaperError(null);
+    setPaperExpandedQueries([]);
+    const useRaw = raw ?? imgRawMode;
+    paperSearch.mutate(
+      { id: sessionId, data: { query: trimmed, count: 10, raw: useRaw } },
+      {
+        onSuccess: (resp) => {
+          setPaperResults((resp.papers ?? []) as PaperHit[]);
+          setPaperExpandedQueries(((resp as { expandedQueries?: string[] }).expandedQueries ?? []));
+        },
+        onError: () => setPaperError(t("models.assistant.searchPapers.failed" as any)),
+      },
+    );
+  };
+
+  const runActiveSearch = (q: string, raw?: boolean) => {
+    if (searchMode === "papers") runPaperSearch(q, raw);
+    else runImageSearch(q, raw);
   };
 
   useEffect(() => {
@@ -297,11 +350,13 @@ export function ModelAssistantChat({
         <div className="border-t-2 border-sky-300 bg-sky-50/60 px-4 py-3 space-y-2" data-testid="panel-image-search">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1.5 text-xs font-semibold text-sky-900">
-              <ImageIcon className="w-3.5 h-3.5" /> {t("models.assistant.searchImages.title" as any)}
+              {searchMode === "papers"
+                ? (<><BookOpen className="w-3.5 h-3.5" /> {t("models.assistant.searchPapers.title" as any)}</>)
+                : (<><ImageIcon className="w-3.5 h-3.5" /> {t("models.assistant.searchImages.title" as any)}</>)}
             </div>
             <button
               type="button"
-              onClick={() => { setImgPanelOpen(false); setImgResults(null); setImgError(null); }}
+              onClick={() => { setImgPanelOpen(false); setImgResults(null); setImgError(null); setPaperResults(null); setPaperError(null); }}
               data-testid="button-close-image-search"
               className="text-sky-700 hover:text-sky-900"
               title={t("models.assistant.searchImages.close" as any)}
@@ -309,24 +364,51 @@ export function ModelAssistantChat({
               <X className="w-3.5 h-3.5" />
             </button>
           </div>
+
+          {/* Mode tabs */}
+          <div className="flex bg-white border border-sky-200 rounded-md p-0.5 text-xs font-medium">
+            <button
+              type="button"
+              data-testid="tab-search-images"
+              onClick={() => setSearchMode("images")}
+              className={
+                "flex-1 inline-flex items-center justify-center gap-1.5 px-2 py-1.5 rounded transition " +
+                (searchMode === "images" ? "bg-sky-600 text-white" : "text-sky-800 hover:bg-sky-50")
+              }
+            >
+              <ImageIcon className="w-3.5 h-3.5" /> {t("models.assistant.tab.images" as any)}
+            </button>
+            <button
+              type="button"
+              data-testid="tab-search-papers"
+              onClick={() => setSearchMode("papers")}
+              className={
+                "flex-1 inline-flex items-center justify-center gap-1.5 px-2 py-1.5 rounded transition " +
+                (searchMode === "papers" ? "bg-sky-600 text-white" : "text-sky-800 hover:bg-sky-50")
+              }
+            >
+              <BookOpen className="w-3.5 h-3.5" /> {t("models.assistant.tab.papers" as any)}
+            </button>
+          </div>
+
           <div className="flex gap-2">
             <input
               type="text"
               data-testid="input-image-search-query"
               value={imgQuery}
               onChange={(e) => setImgQuery(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); runImageSearch(imgQuery); } }}
-              placeholder={t("models.assistant.searchImages.placeholder" as any)}
+              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); runActiveSearch(imgQuery); } }}
+              placeholder={t((searchMode === "papers" ? "models.assistant.searchPapers.placeholder" : "models.assistant.searchImages.placeholder") as any)}
               className="flex-1 text-sm rounded-md border border-sky-300 bg-white px-3 py-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
             />
             <button
               type="button"
               data-testid="button-run-image-search"
-              onClick={() => runImageSearch(imgQuery)}
-              disabled={!imgQuery.trim() || imageSearch.isPending}
+              onClick={() => runActiveSearch(imgQuery)}
+              disabled={!imgQuery.trim() || imageSearch.isPending || paperSearch.isPending}
               className="inline-flex items-center gap-1.5 rounded-md bg-sky-600 hover:bg-sky-700 text-white text-xs font-semibold px-3 py-1.5 disabled:opacity-50"
             >
-              {imageSearch.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
+              {(imageSearch.isPending || paperSearch.isPending) ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
               {t("models.assistant.searchImages.searchBtn" as any)}
             </button>
           </div>
@@ -341,69 +423,178 @@ export function ModelAssistantChat({
               />
               {t("models.assistant.searchImages.rawMode" as any)}
             </label>
+            {searchMode === "images" && imgProvider && (
+              <span className="inline-flex items-center gap-1 text-[10px] bg-white border border-sky-200 rounded px-1.5 py-0.5">
+                {t("models.assistant.searchImages.providerLabel" as any)}:{" "}
+                <strong className="text-sky-900">
+                  {imgProvider === "serpapi"
+                    ? t("models.assistant.searchImages.providerSerp" as any)
+                    : t("models.assistant.searchImages.providerBrave" as any)}
+                </strong>
+              </span>
+            )}
           </div>
-          {imgExpandedQueries.length > 0 && !imgRawMode && (
-            <div className="bg-white border border-sky-200 rounded p-2 space-y-1">
-              <div className="text-[11px] font-medium text-sky-800">{t("models.assistant.searchImages.expandedTitle" as any)}</div>
-              <ul className="text-[11px] text-sky-900 space-y-0.5 list-disc list-inside">
-                {imgExpandedQueries.map((q, i) => (
-                  <li key={i}><code className="font-mono">{q}</code></li>
-                ))}
-              </ul>
-            </div>
-          )}
-          {imgRawMode && imgActualQuery && (
+
+          {/* Expanded queries (shared between modes; uses correct list) */}
+          {(() => {
+            const list = searchMode === "papers" ? paperExpandedQueries : imgExpandedQueries;
+            if (list.length === 0 || imgRawMode) return null;
+            return (
+              <div className="bg-white border border-sky-200 rounded p-2 space-y-1">
+                <div className="text-[11px] font-medium text-sky-800">{t("models.assistant.searchImages.expandedTitle" as any)}</div>
+                <ul className="text-[11px] text-sky-900 space-y-0.5 list-disc list-inside">
+                  {list.map((q, i) => (
+                    <li key={i}><code className="font-mono">{q}</code></li>
+                  ))}
+                </ul>
+              </div>
+            );
+          })()}
+          {searchMode === "images" && imgRawMode && imgActualQuery && (
             <span className="text-[11px] text-sky-700 truncate max-w-full block" title={imgActualQuery}>
               {t("models.assistant.searchImages.actualQuery" as any)}: <code className="bg-white border border-sky-200 rounded px-1 py-0.5 font-mono">{imgActualQuery}</code>
             </span>
           )}
-          <p className="text-[11px] text-sky-700/90 leading-relaxed">{t("models.assistant.searchImages.tip" as any)}</p>
-          {imageSearch.isPending && (
-            <div className="text-xs text-sky-800 inline-flex items-center gap-2">
-              <Loader2 className="w-3.5 h-3.5 animate-spin" /> {t("models.assistant.searchImages.loading" as any)}
-            </div>
-          )}
-          {imgError && <div className="text-xs text-red-700 bg-white rounded p-2 border border-red-200">{imgError}</div>}
-          {imgResults && imgResults.length === 0 && !imageSearch.isPending && (
-            <div className="text-xs text-sky-800">{t("models.assistant.searchImages.empty" as any)}</div>
-          )}
-          {imgResults && imgResults.length > 0 && (
+          <p className="text-[11px] text-sky-700/90 leading-relaxed">
+            {t((searchMode === "papers" ? "models.assistant.searchPapers.tip" : "models.assistant.searchImages.tip") as any)}
+          </p>
+
+          {/* IMAGES mode */}
+          {searchMode === "images" && (
             <>
-              <p className="text-[11px] text-sky-700">{t("models.assistant.searchImages.hint" as any)}</p>
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
-                {imgResults.map((r, i) => (
-                  <div key={i} data-testid={`image-result-${i}`} className="bg-white border border-sky-200 rounded-md overflow-hidden flex flex-col">
-                    <button
-                      type="button"
-                      onClick={() => setLightbox(r)}
-                      className="block w-full aspect-[4/3] bg-muted overflow-hidden"
-                    >
-                      <img
-                        src={r.thumbnailUrl}
-                        alt={r.title}
-                        loading="lazy"
-                        referrerPolicy="no-referrer"
-                        className="w-full h-full object-cover hover:scale-105 transition-transform"
-                      />
-                    </button>
-                    <div className="p-1.5 flex flex-col gap-1 min-h-0">
-                      <div className="text-[11px] leading-tight line-clamp-2 text-foreground" title={r.title}>{r.title}</div>
-                      <div className="flex items-center justify-between gap-1">
-                        <span className="text-[10px] text-muted-foreground truncate" title={r.sourceDomain}>{r.sourceDomain}</span>
-                        <a
-                          href={r.sourceUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          data-testid={`link-image-source-${i}`}
-                          className="inline-flex items-center gap-0.5 text-[10px] text-sky-700 hover:text-sky-900 font-semibold whitespace-nowrap"
+              {imageSearch.isPending && (
+                <div className="text-xs text-sky-800 inline-flex items-center gap-2">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" /> {t("models.assistant.searchImages.loading" as any)}
+                </div>
+              )}
+              {imgError && <div className="text-xs text-red-700 bg-white rounded p-2 border border-red-200">{imgError}</div>}
+              {imgResults && imgResults.length === 0 && !imageSearch.isPending && (
+                <div className="text-xs text-sky-800">{t("models.assistant.searchImages.empty" as any)}</div>
+              )}
+              {imgResults && imgResults.length > 0 && (
+                <>
+                  <p className="text-[11px] text-sky-700">{t("models.assistant.searchImages.hint" as any)}</p>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+                    {imgResults.map((r, i) => (
+                      <div key={i} data-testid={`image-result-${i}`} className="bg-white border border-sky-200 rounded-md overflow-hidden flex flex-col">
+                        <button
+                          type="button"
+                          onClick={() => setLightbox(r)}
+                          className="block w-full aspect-[4/3] bg-muted overflow-hidden"
                         >
-                          {t("models.assistant.searchImages.openSource" as any)} <ExternalLink className="w-2.5 h-2.5" />
-                        </a>
+                          <img
+                            src={r.thumbnailUrl}
+                            alt={r.title}
+                            loading="lazy"
+                            referrerPolicy="no-referrer"
+                            className="w-full h-full object-cover hover:scale-105 transition-transform"
+                          />
+                        </button>
+                        <div className="p-1.5 flex flex-col gap-1 min-h-0">
+                          <div className="text-[11px] leading-tight line-clamp-2 text-foreground" title={r.title}>{r.title}</div>
+                          <div className="flex items-center justify-between gap-1">
+                            <span className="text-[10px] text-muted-foreground truncate" title={r.sourceDomain}>{r.sourceDomain}</span>
+                            <a
+                              href={r.sourceUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              data-testid={`link-image-source-${i}`}
+                              className="inline-flex items-center gap-0.5 text-[10px] text-sky-700 hover:text-sky-900 font-semibold whitespace-nowrap"
+                            >
+                              {t("models.assistant.searchImages.openSource" as any)} <ExternalLink className="w-2.5 h-2.5" />
+                            </a>
+                          </div>
+                        </div>
                       </div>
-                    </div>
+                    ))}
                   </div>
-                ))}
-              </div>
+                </>
+              )}
+            </>
+          )}
+
+          {/* PAPERS mode */}
+          {searchMode === "papers" && (
+            <>
+              {paperSearch.isPending && (
+                <div className="text-xs text-sky-800 inline-flex items-center gap-2">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" /> {t("models.assistant.searchPapers.loading" as any)}
+                </div>
+              )}
+              {paperError && <div className="text-xs text-red-700 bg-white rounded p-2 border border-red-200">{paperError}</div>}
+              {paperResults && paperResults.length === 0 && !paperSearch.isPending && (
+                <div className="text-xs text-sky-800">{t("models.assistant.searchPapers.empty" as any)}</div>
+              )}
+              {paperResults && paperResults.length > 0 && (
+                <div className="space-y-2 max-h-[480px] overflow-y-auto">
+                  {paperResults.map((p, i) => {
+                    const lkClass =
+                      p.modelFigureLikelihood === "high"
+                        ? "bg-emerald-100 text-emerald-900 border-emerald-300"
+                        : p.modelFigureLikelihood === "medium"
+                          ? "bg-amber-100 text-amber-900 border-amber-300"
+                          : "bg-slate-100 text-slate-700 border-slate-300";
+                    const lkLabel = t((`models.assistant.searchPapers.likelihood.${p.modelFigureLikelihood}`) as any);
+                    return (
+                      <div
+                        key={p.externalId}
+                        data-testid={`paper-result-${i}`}
+                        className="bg-white border border-sky-200 rounded-md p-2.5 flex flex-col gap-1.5"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <h4 className="text-[13px] font-semibold leading-snug text-foreground flex-1" title={p.title}>
+                            {p.title}
+                          </h4>
+                          <span
+                            className={`shrink-0 inline-flex items-center gap-1 text-[10px] font-semibold rounded border px-1.5 py-0.5 ${lkClass}`}
+                            title={p.modelFigureReason || ""}
+                          >
+                            <FileText className="w-2.5 h-2.5" /> {lkLabel}
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-muted-foreground flex flex-wrap gap-x-2">
+                          {p.authors.length > 0 && <span className="truncate max-w-[55%]">{p.authors.slice(0, 3).join(", ")}{p.authors.length > 3 ? " et al." : ""}</span>}
+                          {p.year && <span>· {p.year}</span>}
+                          {p.venue && <span className="truncate max-w-[40%]">· {p.venue}</span>}
+                          {typeof p.citationCount === "number" && p.citationCount > 0 && (
+                            <span>· {t("models.assistant.searchPapers.cited" as any)} {p.citationCount}</span>
+                          )}
+                        </div>
+                        {p.modelFigureReason && (
+                          <p className="text-[11px] text-sky-900 bg-sky-50 border border-sky-100 rounded px-1.5 py-1 leading-snug">
+                            <span className="font-medium">{t("models.assistant.searchPapers.likelihood" as any)}:</span> {p.modelFigureReason}
+                          </p>
+                        )}
+                        {p.abstract && (
+                          <p className="text-[11px] text-foreground/80 line-clamp-3 leading-relaxed">{p.abstract}</p>
+                        )}
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <a
+                            href={p.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            data-testid={`link-paper-${i}`}
+                            className="inline-flex items-center gap-1 text-[11px] font-semibold text-sky-700 hover:text-sky-900"
+                          >
+                            <ExternalLink className="w-3 h-3" /> {t("models.assistant.searchPapers.openPaper" as any)}
+                          </a>
+                          {p.openAccessUrl && (
+                            <a
+                              href={p.openAccessUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              data-testid={`link-paper-pdf-${i}`}
+                              className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 hover:text-emerald-900"
+                            >
+                              <Download className="w-3 h-3" /> {t("models.assistant.searchPapers.openPdf" as any)}
+                            </a>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </>
           )}
         </div>

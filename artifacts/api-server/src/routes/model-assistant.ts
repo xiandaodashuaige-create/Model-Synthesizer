@@ -378,6 +378,74 @@ Rules:
   }
 }
 
+// SerpApi → Google Images. Higher-quality results than Brave (Google's index is
+// ~10x larger). Returns the same normalized shape as braveImageSearch.
+async function serpApiImageSearch(
+  query: string,
+  apiKey: string,
+  count: number,
+  log: { warn: (o: object, m: string) => void },
+): Promise<Array<{ raw: any; title: string; sourceUrl: string; thumbnailUrl: string; fullImage: string; sourceDomain: string; width?: number; height?: number }>> {
+  const isHttp = (u: string) => /^https?:\/\//i.test(u);
+  const url = new URL("https://serpapi.com/search.json");
+  url.searchParams.set("engine", "google_images");
+  url.searchParams.set("q", query);
+  url.searchParams.set("num", String(Math.min(count, 100)));
+  url.searchParams.set("api_key", apiKey);
+  url.searchParams.set("safe", "active");
+  // tbs=isz:m biases toward medium+ images (filters tiny icons/logos)
+  url.searchParams.set("tbs", "isz:m");
+
+  const r = await fetch(url.toString(), {
+    headers: { Accept: "application/json" },
+  });
+  if (!r.ok) {
+    log.warn({ status: r.status, query }, "SerpApi image search failed for one query");
+    return [];
+  }
+  const data = (await r.json()) as {
+    error?: string;
+    images_results?: Array<{
+      position?: number;
+      title?: string;
+      link?: string; // page URL
+      source?: string;
+      original?: string; // full image URL
+      original_width?: number;
+      original_height?: number;
+      thumbnail?: string;
+      thumbnail_width?: number;
+      thumbnail_height?: number;
+    }>;
+  };
+  if (data.error) {
+    log.warn({ error: data.error, query }, "SerpApi returned an error");
+    return [];
+  }
+  return (data.images_results ?? [])
+    .map((item) => {
+      const sourceUrl = item.link ?? "";
+      const thumbnailUrl = item.thumbnail ?? "";
+      const fullImage = item.original && isHttp(item.original) ? item.original : thumbnailUrl;
+      if (!sourceUrl || !thumbnailUrl || !isHttp(sourceUrl) || !isHttp(thumbnailUrl)) return null;
+      let domain = item.source ?? "";
+      if (!domain) {
+        try { domain = new URL(sourceUrl).hostname; } catch { /* ignore */ }
+      }
+      return {
+        raw: item,
+        title: (item.title ?? "").slice(0, 200),
+        sourceUrl,
+        thumbnailUrl,
+        fullImage,
+        sourceDomain: domain,
+        width: item.original_width,
+        height: item.original_height,
+      };
+    })
+    .filter((x): x is NonNullable<typeof x> => x !== null);
+}
+
 async function braveImageSearch(
   query: string,
   apiKey: string,
@@ -441,9 +509,10 @@ router.post("/sessions/:id/model-assistant/search-model-images", async (req, res
   const count = Math.min(20, Math.max(1, Number(req.body?.count) || 12));
   const rawMode = req.body?.raw === true;
 
-  const apiKey = process.env.BRAVE_API_KEY;
-  if (!apiKey) {
-    res.status(503).json({ error: "Image search is not configured (missing BRAVE_API_KEY)" });
+  const serpKey = process.env.SERPAPI_API_KEY;
+  const braveKey = process.env.BRAVE_API_KEY;
+  if (!serpKey && !braveKey) {
+    res.status(503).json({ error: "Image search is not configured (missing SERPAPI_API_KEY or BRAVE_API_KEY)" });
     return;
   }
 
@@ -469,27 +538,46 @@ router.post("/sessions/:id/model-assistant/search-model-images", async (req, res
       if (expandedQueries.length === 0) expandedQueries = [quoted];
     }
 
-    // ---- Stage 2: run one Brave image search per expanded query ----------
+    // ---- Stage 2: run image search per expanded query --------------------
+    // Provider priority: SerpApi (Google Images, ~10x larger index) → Brave.
     // Each query is appended with " conceptual model figure" to bias toward
-    // research figures. Brave's image API does NOT support `site:` OR-lists
-    // (returns 422), so we rely on academic-domain SCORING (Stage 4) instead
-    // of pre-filtering.
-    // Over-fetch heavily so the AI relevance gate has plenty of candidates
-    // to choose from. Brave allows up to 100 per call.
+    // research figures. Over-fetch so the AI relevance gate has plenty of
+    // candidates.
     const perQueryFetch = 30;
+    let provider: "serpapi" | "brave" = "brave";
+    let allItems: Array<{ raw: any; title: string; sourceUrl: string; thumbnailUrl: string; fullImage: string; sourceDomain: string; width?: number; height?: number; _query: string }> = [];
+    let anyOk = false;
 
-    const allBraveCalls = expandedQueries.map((q) =>
-      braveImageSearch(`${q} conceptual model figure`, apiKey, perQueryFetch, req.log).then((items) =>
-        items.map((it) => ({ ...it, _query: q })),
-      ),
-    );
+    if (serpKey) {
+      const calls = expandedQueries.map((q) =>
+        serpApiImageSearch(`${q} conceptual model figure`, serpKey, perQueryFetch, req.log).then((items) =>
+          items.map((it) => ({ ...it, _query: q })),
+        ),
+      );
+      const settled = await Promise.allSettled(calls);
+      const items = settled.flatMap((s) => (s.status === "fulfilled" ? s.value : []));
+      const ok = settled.some((s) => s.status === "fulfilled" && s.value.length > 0);
+      if (ok) {
+        provider = "serpapi";
+        allItems = items;
+        anyOk = true;
+      } else {
+        req.log.warn({}, "SerpApi returned no results for any query — falling back to Brave");
+      }
+    }
 
-    const settled = await Promise.allSettled(allBraveCalls);
-    const allItems = settled.flatMap((s) => (s.status === "fulfilled" ? s.value : []));
+    if (!anyOk && braveKey) {
+      const calls = expandedQueries.map((q) =>
+        braveImageSearch(`${q} conceptual model figure`, braveKey, perQueryFetch, req.log).then((items) =>
+          items.map((it) => ({ ...it, _query: q })),
+        ),
+      );
+      const settled = await Promise.allSettled(calls);
+      allItems = settled.flatMap((s) => (s.status === "fulfilled" ? s.value : []));
+      anyOk = settled.some((s) => s.status === "fulfilled");
+      if (anyOk) provider = "brave";
+    }
 
-    // If every Brave call failed (rate-limit / network / 422), surface a real
-    // error rather than silently returning an empty result set.
-    const anyOk = settled.some((s) => s.status === "fulfilled");
     if (!anyOk) {
       res.status(502).json({ error: "All image search queries failed" });
       return;
@@ -552,23 +640,21 @@ router.post("/sessions/:id/model-assistant/search-model-images", async (req, res
       };
     });
 
-    // ---- Stage 5: filter & rank -----------------------------------------
-    // Default mode: STRICT — only academic hosts.
-    // Raw mode: looser — academic hosts OR ≥1 topic-token match.
-    const academicFiltered = rawMode
-      ? scored.filter((r) => r._academic || r._matched >= 1)
-      : scored.filter((r) => r._academic);
-    academicFiltered.sort((a, b) => b._score - a._score);
+    // ---- Stage 5: rank (broader mode — no strict academic filter) -------
+    // Academic hosts get a scoring boost (Stage 4) but non-academic hosts
+    // are NOT dropped here. This keeps high-quality model figures from
+    // SlideShare, conference posters, ResearchGate blog mirrors, lecture
+    // PDFs, etc. that Google routinely surfaces above raw journal hits.
+    scored.sort((a, b) => b._score - a._score);
+    const ranked = scored;
 
     // ---- Stage 6: AI relevance gate -------------------------------------
-    // Even after the academic filter, results may include figures from real
-    // papers that are about a totally different topic (neural-net diagrams,
-    // chemistry, journal logos). Send the top ~30 candidates' titles to GPT
-    // and let it drop the off-topic ones. Falls back to academicFiltered if
-    // the AI call fails or hits an edge case.
-    let finalList = academicFiltered;
-    if (!rawMode && academicFiltered.length > 0) {
-      const candidates = academicFiltered.slice(0, 30);
+    // Send the top ~30 candidates' titles to GPT and let it drop the
+    // off-topic ones (neural-net diagrams, journal logos, etc.). Falls back
+    // to the un-gated list if the AI call fails or hits an edge case.
+    let finalList = ranked;
+    if (!rawMode && ranked.length > 0) {
+      const candidates = ranked.slice(0, 30);
       const keep = await aiRelevanceFilter(
         rawQuery,
         expandedQueries,
@@ -586,11 +672,240 @@ router.post("/sessions/:id/model-assistant/search-model-images", async (req, res
       query: expandedQueries.join(" | "),
       rawQuery,
       expandedQueries,
+      provider,
       results,
     });
   } catch (err) {
     req.log.error({ err }, "Image search threw");
     res.status(502).json({ error: "Image search failed" });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Paper search with model-figure detection.
+//
+// Strategy:
+//  1. AI-expand the user's (often Chinese / rough) topic into 2-3 precise
+//     English academic queries (reuses expandQueriesWithAI).
+//  2. Run OpenAlex `title_and_abstract.search` for each query in parallel,
+//     merge & dedupe by externalId, sort by citation count.
+//  3. AI-classify each paper's abstract: how likely is it to contain a
+//     conceptual / SEM / hypothesized-relationships FIGURE? Returns
+//     "high" | "medium" | "low" + a one-sentence reason.
+// ---------------------------------------------------------------------------
+type OpenAlexLite = {
+  id: string;
+  title: string;
+  authorships?: Array<{ author?: { display_name?: string } }>;
+  publication_year?: number | null;
+  cited_by_count?: number | null;
+  primary_location?: {
+    landing_page_url?: string;
+    pdf_url?: string | null;
+    source?: { display_name?: string };
+  } | null;
+  abstract_inverted_index?: Record<string, number[]> | null;
+};
+
+function reconstructAbstractLite(inv: Record<string, number[]> | null | undefined): string | null {
+  if (!inv || Object.keys(inv).length === 0) return null;
+  const positions: [number, string][] = [];
+  for (const [w, idxs] of Object.entries(inv)) for (const i of idxs) positions.push([i, w]);
+  positions.sort((a, b) => a[0] - b[0]);
+  return positions.map(([, w]) => w).join(" ");
+}
+
+async function fetchPapersFromOpenAlex(query: string, perPage: number): Promise<OpenAlexLite[]> {
+  const safe = query.replace(/["',:|]+/g, " ").replace(/\s+/g, " ").trim();
+  if (!safe) return [];
+  const url = new URL("https://api.openalex.org/works");
+  url.searchParams.set("filter", `title_and_abstract.search:${safe},is_paratext:false,has_abstract:true`);
+  url.searchParams.set("per-page", String(Math.min(perPage, 50)));
+  url.searchParams.set("sort", "relevance_score:desc");
+  url.searchParams.set(
+    "select",
+    "id,title,authorships,publication_year,cited_by_count,primary_location,abstract_inverted_index",
+  );
+  url.searchParams.set("mailto", "research@researchmodelbuilder.app");
+  const r = await fetch(url.toString(), {
+    headers: { "User-Agent": "ResearchModelBuilder/1.0 (mailto:research@researchmodelbuilder.app)" },
+  });
+  if (!r.ok) return [];
+  const data = (await r.json()) as { results?: OpenAlexLite[] };
+  return data.results ?? [];
+}
+
+type ModelFigureRating = { likelihood: "high" | "medium" | "low"; reason: string };
+
+async function aiRateModelFigureLikelihood(
+  rawQuery: string,
+  papers: Array<{ title: string; abstract: string | null }>,
+): Promise<Array<ModelFigureRating | null>> {
+  if (papers.length === 0) return [];
+  try {
+    const list = papers
+      .map((p, i) => {
+        const abs = (p.abstract ?? "").slice(0, 700).replace(/\s+/g, " ");
+        return `${i}. TITLE: ${p.title.slice(0, 200)}\n   ABSTRACT: ${abs || "(no abstract)"}`;
+      })
+      .join("\n\n");
+    const completion = await openai.chat.completions.create({
+      model: "gpt-5.4",
+      max_completion_tokens: 1200,
+      messages: [
+        {
+          role: "system",
+          content: `You are screening academic papers to predict which ones likely contain a CONCEPTUAL MODEL / THEORETICAL FRAMEWORK / SEM / hypothesized-relationships FIGURE inside (the kind of "boxes-and-arrows" diagram researchers want to look at).
+
+Strong signals (→ "high"):
+- abstract proposes / tests / develops a "model", "framework", "theoretical model", "conceptual model"
+- abstract uses SEM / PLS-SEM / structural equation modeling / path analysis / hypothesis H1...Hn
+- abstract uses "mediating role", "moderating role", "antecedents", "we propose", "we develop"
+
+Weak signals (→ "medium"):
+- empirical study testing relationships between specific constructs but no explicit "model" wording
+- meta-analysis / review that may or may not have a summary framework figure
+
+Negative signals (→ "low"):
+- pure qualitative / case study with no quantitative model
+- methodology / scale validation paper
+- experimental study with no theoretical framework figure
+- literature review with no synthesis diagram
+
+Return ONLY JSON: {"ratings":[{"i":0,"likelihood":"high|medium|low","reason":"≤20-word Chinese explanation"}, ...]} — one entry per input paper, indices 0..N-1.`,
+        },
+        {
+          role: "user",
+          content: `User's research topic: ${rawQuery}\n\nPapers:\n${list}`,
+        },
+      ],
+    });
+    const txt = completion.choices[0]?.message?.content ?? "";
+    const m = txt.match(/\{[\s\S]*\}/);
+    if (!m) return papers.map(() => null);
+    const parsed = JSON.parse(m[0]) as { ratings?: Array<{ i?: number; likelihood?: string; reason?: string }> };
+    if (!Array.isArray(parsed.ratings)) return papers.map(() => null);
+    const out: Array<ModelFigureRating | null> = papers.map(() => null);
+    for (const r of parsed.ratings) {
+      if (typeof r.i !== "number" || r.i < 0 || r.i >= papers.length) continue;
+      const lk = r.likelihood;
+      if (lk !== "high" && lk !== "medium" && lk !== "low") continue;
+      out[r.i] = { likelihood: lk, reason: typeof r.reason === "string" ? r.reason.slice(0, 200) : "" };
+    }
+    return out;
+  } catch {
+    return papers.map(() => null);
+  }
+}
+
+router.post("/sessions/:id/model-assistant/search-model-papers", async (req, res) => {
+  const params = ChatModelAssistantParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: "Invalid session id" });
+    return;
+  }
+  const rawQuery = typeof req.body?.query === "string" ? req.body.query.trim() : "";
+  if (!rawQuery) {
+    res.status(400).json({ error: "Missing query" });
+    return;
+  }
+  const count = Math.min(20, Math.max(1, Number(req.body?.count) || 10));
+  const rawMode = req.body?.raw === true;
+
+  try {
+    // ---- Stage 1: expanded queries (reuse image-search expansion) -------
+    let expandedQueries: string[] = [];
+    if (rawMode) {
+      expandedQueries = [rawQuery];
+    } else {
+      const aiQueries = await expandQueriesWithAI(rawQuery);
+      expandedQueries = [...aiQueries, rawQuery];
+      const seen = new Set<string>();
+      expandedQueries = expandedQueries.filter((q) => {
+        const k = q.toLowerCase();
+        if (seen.has(k)) return false;
+        seen.add(k);
+        return true;
+      });
+      if (expandedQueries.length === 0) expandedQueries = [rawQuery];
+    }
+
+    // ---- Stage 2: parallel OpenAlex queries ------------------------------
+    const perQuery = 25;
+    const settled = await Promise.allSettled(
+      expandedQueries.map((q) => fetchPapersFromOpenAlex(q, perQuery)),
+    );
+    const all = settled.flatMap((s) => (s.status === "fulfilled" ? s.value : []));
+    if (all.length === 0) {
+      res.status(502).json({ error: "OpenAlex returned no results" });
+      return;
+    }
+
+    // Dedupe by externalId; prefer first occurrence (earlier queries weighted higher)
+    const byId = new Map<string, OpenAlexLite>();
+    for (const w of all) {
+      if (!w.id) continue;
+      if (!byId.has(w.id)) byId.set(w.id, w);
+    }
+    const deduped = Array.from(byId.values());
+
+    // Sort by citation count desc as a quality prior, then trim to a working
+    // set we'll send to the AI rater. Keep up to 2x the requested count so
+    // we can still hit `count` after low-likelihood papers are filtered out.
+    deduped.sort((a, b) => (b.cited_by_count ?? 0) - (a.cited_by_count ?? 0));
+    const workingSet = deduped.slice(0, Math.min(20, count * 2));
+
+    // ---- Stage 3: AI rate model-figure likelihood -----------------------
+    const ratingInput = workingSet.map((w) => ({
+      title: w.title ?? "",
+      abstract: reconstructAbstractLite(w.abstract_inverted_index),
+    }));
+    const ratings = await aiRateModelFigureLikelihood(rawQuery, ratingInput);
+
+    // Build response. Sort by likelihood (high → medium → low → unrated),
+    // breaking ties by citation count.
+    const rank: Record<string, number> = { high: 0, medium: 1, low: 2 };
+    const enriched = workingSet.map((w, i) => {
+      const externalId = w.id.replace("https://openalex.org/", "");
+      const authors = (w.authorships ?? [])
+        .map((a) => a.author?.display_name)
+        .filter((s): s is string => !!s);
+      const venue = w.primary_location?.source?.display_name ?? null;
+      const openAccessUrl = w.primary_location?.pdf_url ?? null;
+      const url = w.primary_location?.landing_page_url ?? `https://openalex.org/${externalId}`;
+      const abstract = reconstructAbstractLite(w.abstract_inverted_index);
+      const r = ratings[i];
+      return {
+        externalId,
+        title: w.title ?? "",
+        abstract,
+        authors,
+        year: w.publication_year ?? null,
+        venue,
+        citationCount: w.cited_by_count ?? null,
+        openAccessUrl,
+        url,
+        modelFigureLikelihood: (r?.likelihood ?? "medium") as "high" | "medium" | "low",
+        modelFigureReason: r?.reason ?? "",
+      };
+    });
+
+    enriched.sort((a, b) => {
+      const ra = rank[a.modelFigureLikelihood] ?? 99;
+      const rb = rank[b.modelFigureLikelihood] ?? 99;
+      if (ra !== rb) return ra - rb;
+      return (b.citationCount ?? 0) - (a.citationCount ?? 0);
+    });
+
+    res.json({
+      query: expandedQueries.join(" | "),
+      rawQuery,
+      expandedQueries,
+      papers: enriched.slice(0, count),
+    });
+  } catch (err) {
+    req.log.error({ err }, "Paper search threw");
+    res.status(502).json({ error: "Paper search failed" });
   }
 });
 
