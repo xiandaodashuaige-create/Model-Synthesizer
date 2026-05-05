@@ -367,6 +367,75 @@ paths:
               schema:
                 $ref: "#/components/schemas/VariableGraph"
 
+  /sessions/{id}/model-assistant:
+    post:
+      operationId: chatModelAssistant
+      tags: [models]
+      summary: Conversational assistant that helps the user shape model-generation directives based on their notes, files, and the session's papers/variables.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [messages]
+              properties:
+                messages:
+                  type: array
+                  items:
+                    type: object
+                    required: [role, content]
+                    properties:
+                      role:
+                        type: string
+                        enum: [user, assistant]
+                      content:
+                        type: string
+                      attachments:
+                        type: array
+                        items:
+                          type: object
+                          required: [name, kind, data]
+                          properties:
+                            name:
+                              type: string
+                            kind:
+                              type: string
+                              enum: [image, text]
+                              description: image = base64 data URL; text = plain text (e.g. extracted from a PDF client-side)
+                            data:
+                              type: string
+      responses:
+        "200":
+          description: Assistant reply, with optional one-click generation directive
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [reply]
+                properties:
+                  reply:
+                    type: string
+                  suggestion:
+                    type: object
+                    properties:
+                      userPrompt:
+                        type: string
+                      focusVariableIds:
+                        type: array
+                        items:
+                          type: integer
+                      requiredOperators:
+                        type: array
+                        items:
+                          type: string
+
   /sessions/{id}/models/generate:
     post:
       operationId: generateModels

@@ -6,11 +6,14 @@ import {
   useGenerateModels,
   useSelectModel,
   useGetSessionLearningStats,
+  useListSessionVariables,
   getListSessionModelsQueryKey,
   getGetSessionSummaryQueryKey,
   getGetSessionQueryKey,
   getGetSessionLearningStatsQueryKey,
+  getListSessionVariablesQueryKey,
 } from "@workspace/api-client-react";
+import { ModelAssistantChat } from "@/components/model-assistant-chat";
 import { useQueryClient } from "@tanstack/react-query";
 import { Loader2, Share2, Sparkles, CheckCircle, ArrowRight, BookOpen, Wand2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
@@ -208,9 +211,42 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
   const { data: learningStats } = useGetSessionLearningStats(sessionId, {
     query: { enabled: !!sessionId, queryKey: getGetSessionLearningStatsQueryKey(sessionId) },
   });
+  const { data: variables } = useListSessionVariables(sessionId, {
+    query: { enabled: !!sessionId, queryKey: getListSessionVariablesQueryKey(sessionId) },
+  });
 
   const [userPrompt, setUserPrompt] = useState("");
   const [numModels, setNumModels] = useState(3);
+  const [focusVariableIds, setFocusVariableIds] = useState<number[]>([]);
+
+  const variableNameById = useMemo(() => {
+    const m = new Map<number, string>();
+    for (const v of variables ?? []) m.set(v.id, v.name);
+    return m;
+  }, [variables]);
+
+  const handleApplySuggestion = (s: { userPrompt: string; focusVariableIds: number[] }) => {
+    setUserPrompt(s.userPrompt);
+    setFocusVariableIds(s.focusVariableIds);
+    // Trigger generation immediately with the suggested params.
+    generateModels.mutate({
+      id: sessionId,
+      data: { userPrompt: s.userPrompt || undefined, numModels, focusVariableIds: s.focusVariableIds.length ? s.focusVariableIds : undefined },
+    }, {
+      onSuccess: (result) => {
+        queryClient.invalidateQueries({ queryKey: getListSessionModelsQueryKey(sessionId) });
+        queryClient.invalidateQueries({ queryKey: getGetSessionSummaryQueryKey(sessionId) });
+        queryClient.invalidateQueries({ queryKey: getGetSessionQueryKey(sessionId) });
+        toast({
+          title: t("models.toast.generated" as any),
+          description: t("models.toast.generatedDesc" as any, { count: result.length }),
+        });
+      },
+      onError: () => {
+        toast({ title: t("models.toast.failed" as any), description: t("models.toast.failedDesc" as any), variant: "destructive" });
+      },
+    });
+  };
 
   const handleGenerate = () => {
     generateModels.mutate({
@@ -218,6 +254,7 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
       data: {
         userPrompt: userPrompt.trim() || undefined,
         numModels,
+        focusVariableIds: focusVariableIds.length ? focusVariableIds : undefined,
       },
     }, {
       onSuccess: (result) => {
@@ -269,6 +306,13 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
           </span>
         )}
       </div>
+
+      {/* AI assistant chat */}
+      <ModelAssistantChat
+        sessionId={sessionId}
+        variableNameById={variableNameById}
+        onApplySuggestion={handleApplySuggestion}
+      />
 
       {/* Custom prompt panel */}
       <div className="bg-card border border-border rounded-lg p-5 space-y-4">

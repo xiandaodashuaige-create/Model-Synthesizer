@@ -225,6 +225,53 @@ export type LookupPaper404 = {
   error: string;
 };
 
+export type ChatModelAssistantBodyMessagesItemRole =
+  (typeof ChatModelAssistantBodyMessagesItemRole)[keyof typeof ChatModelAssistantBodyMessagesItemRole];
+
+export const ChatModelAssistantBodyMessagesItemRole = {
+  user: "user",
+  assistant: "assistant",
+} as const;
+
+/**
+ * image = base64 data URL; text = plain text (e.g. extracted from a PDF client-side)
+ */
+export type ChatModelAssistantBodyMessagesItemAttachmentsItemKind =
+  (typeof ChatModelAssistantBodyMessagesItemAttachmentsItemKind)[keyof typeof ChatModelAssistantBodyMessagesItemAttachmentsItemKind];
+
+export const ChatModelAssistantBodyMessagesItemAttachmentsItemKind = {
+  image: "image",
+  text: "text",
+} as const;
+
+export type ChatModelAssistantBodyMessagesItemAttachmentsItem = {
+  name: string;
+  /** image = base64 data URL; text = plain text (e.g. extracted from a PDF client-side) */
+  kind: ChatModelAssistantBodyMessagesItemAttachmentsItemKind;
+  data: string;
+};
+
+export type ChatModelAssistantBodyMessagesItem = {
+  role: ChatModelAssistantBodyMessagesItemRole;
+  content: string;
+  attachments?: ChatModelAssistantBodyMessagesItemAttachmentsItem[];
+};
+
+export type ChatModelAssistantBody = {
+  messages: ChatModelAssistantBodyMessagesItem[];
+};
+
+export type ChatModelAssistant200Suggestion = {
+  userPrompt?: string;
+  focusVariableIds?: number[];
+  requiredOperators?: string[];
+};
+
+export type ChatModelAssistant200 = {
+  reply: string;
+  suggestion?: ChatModelAssistant200Suggestion;
+};
+
 export type GenerateModelsBody = {
   /** Optional user-supplied direction/constraints/research focus to steer the AI */
   userPrompt?: string;

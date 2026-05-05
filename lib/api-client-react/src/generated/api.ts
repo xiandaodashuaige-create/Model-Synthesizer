@@ -20,6 +20,8 @@ import type {
   AddPaperBody,
   BulkImportPapersBody,
   BulkImportPapersResponse,
+  ChatModelAssistant200,
+  ChatModelAssistantBody,
   CreateSessionBody,
   ErrorResponse,
   GenerateModelsBody,
@@ -1409,6 +1411,93 @@ export function useGetVariableGraph<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * @summary Conversational assistant that helps the user shape model-generation directives based on their notes, files, and the session's papers/variables.
+ */
+export const getChatModelAssistantUrl = (id: number) => {
+  return `/api/sessions/${id}/model-assistant`;
+};
+
+export const chatModelAssistant = async (
+  id: number,
+  chatModelAssistantBody: ChatModelAssistantBody,
+  options?: RequestInit,
+): Promise<ChatModelAssistant200> => {
+  return customFetch<ChatModelAssistant200>(getChatModelAssistantUrl(id), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(chatModelAssistantBody),
+  });
+};
+
+export const getChatModelAssistantMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof chatModelAssistant>>,
+    TError,
+    { id: number; data: BodyType<ChatModelAssistantBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof chatModelAssistant>>,
+  TError,
+  { id: number; data: BodyType<ChatModelAssistantBody> },
+  TContext
+> => {
+  const mutationKey = ["chatModelAssistant"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof chatModelAssistant>>,
+    { id: number; data: BodyType<ChatModelAssistantBody> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return chatModelAssistant(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ChatModelAssistantMutationResult = NonNullable<
+  Awaited<ReturnType<typeof chatModelAssistant>>
+>;
+export type ChatModelAssistantMutationBody = BodyType<ChatModelAssistantBody>;
+export type ChatModelAssistantMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Conversational assistant that helps the user shape model-generation directives based on their notes, files, and the session's papers/variables.
+ */
+export const useChatModelAssistant = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof chatModelAssistant>>,
+    TError,
+    { id: number; data: BodyType<ChatModelAssistantBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof chatModelAssistant>>,
+  TError,
+  { id: number; data: BodyType<ChatModelAssistantBody> },
+  TContext
+> => {
+  return useMutation(getChatModelAssistantMutationOptions(options));
+};
 
 /**
  * @summary Generate new research model combinations using AI

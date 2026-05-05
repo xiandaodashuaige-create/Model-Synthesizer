@@ -304,6 +304,46 @@ export const GetVariableGraphResponse = zod.object({
 });
 
 /**
+ * @summary Conversational assistant that helps the user shape model-generation directives based on their notes, files, and the session's papers/variables.
+ */
+export const ChatModelAssistantParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const ChatModelAssistantBody = zod.object({
+  messages: zod.array(
+    zod.object({
+      role: zod.enum(["user", "assistant"]),
+      content: zod.string(),
+      attachments: zod
+        .array(
+          zod.object({
+            name: zod.string(),
+            kind: zod
+              .enum(["image", "text"])
+              .describe(
+                "image = base64 data URL; text = plain text (e.g. extracted from a PDF client-side)",
+              ),
+            data: zod.string(),
+          }),
+        )
+        .optional(),
+    }),
+  ),
+});
+
+export const ChatModelAssistantResponse = zod.object({
+  reply: zod.string(),
+  suggestion: zod
+    .object({
+      userPrompt: zod.string().optional(),
+      focusVariableIds: zod.array(zod.number()).optional(),
+      requiredOperators: zod.array(zod.string()).optional(),
+    })
+    .optional(),
+});
+
+/**
  * @summary Generate new research model combinations using AI
  */
 export const GenerateModelsParams = zod.object({
