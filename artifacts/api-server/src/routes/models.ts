@@ -334,7 +334,7 @@ router.post("/sessions/:id/models/generate", async (req, res): Promise<void> => 
   // Synthesis prompt: explicit STRUCTURAL OPERATORS + theory backbones.
   const prompt = `You are a senior researcher in academic methodology and structural equation modeling.
 
-Your task: produce ${numModels} *novel* and theoretically coherent research model proposals by RECOMBINING the source papers' own research models below using EXPLICIT STRUCTURAL OPERATORS. Each output model MUST be the result of applying ONE named operator to ONE OR MORE of the original models.
+Your task: produce ${numModels} *novel* and theoretically coherent research model proposals by RECOMBINING the source papers' own research models below using EXPLICIT STRUCTURAL OPERATORS. Each output model MUST be the result of applying TWO chained operators (a primary then a different secondary) to AT LEAST THREE of the original models.
 
 ================================================================
 PAPER REFERENCES (use exact tags when citing):
@@ -355,26 +355,28 @@ CLASSICAL THEORY BACKBONES you may graft onto (operator THEORY_GRAFT):
 ${backbonesAsPromptBlock()}
 
 ================================================================
-STRUCTURAL OPERATORS (every output model must be tagged with exactly one):
+STRUCTURAL OPERATORS (each output model must use TWO of these — a primary and a different secondary — applied in sequence):
 ${operatorsAsPromptBlock()}
 ${userBlock}${focusBlock}${learnedBlock}
 
 ================================================================
 HARD RULES (violations = invalid output):
-1. **Operator-driven**: each model MUST start its rationale with "[OPERATOR: <ID>] [BASE: <Pn>(+<Pm>...)] [BACKBONE: <id or NONE>]" so the recombination logic is auditable.
-2. **Distinct operators**: the ${numModels} models must use ${Math.min(numModels, 4)} *different* operators if possible. Do not output two models with the same (operator, base papers) pair.
-3. **Respect original directions**: when an edge connects two variables that already appeared together in a paper's hypothesis, use the SAME direction and sign that paper proposed. Do not flip causality unless explicitly justified in the rationale.
-4. **Cross-paper synthesis**: each model MUST include nodes from ≥ 2 different source papers (THEORY_GRAFT must include nodes from ≥ 2 different papers AND match a backbone).
-5. **Citation grounding**: every "evidenceCitationText" MUST be a verbatim sentence either from the variable's "Citation" field or from the paper graph's "evidence" field above. If you cannot find such a sentence, omit that edge.
-6. **Layout discipline**: order nodes Independent → Mediator → Moderator → Dependent. Never put a dependent left of an independent.
-7. **Size**: 4–7 nodes and 3–6 edges per model.
-8. **Variety**: each model must have a clearly different theoretical focus (different DV, different mediator chain, or different moderator).
+1. **Operator-driven**: each model MUST start its rationale with "[OPERATOR: <PRIMARY>+<SECONDARY>] [BASE: <Pn>+<Pm>(+<Pk>...)] [BACKBONE: <id or NONE>]" so the recombination logic is auditable.
+2. **Chained operators (CRITICAL)**: each model MUST apply TWO operators in sequence — a PRIMARY operator that defines the spine of the model, then a SECONDARY operator (must be different from the primary) that enriches it (e.g. INSERT_MODERATOR after EXTEND, PARALLEL_MEDIATORS after THEORY_GRAFT). Single-operator models are too weak and will be rejected.
+3. **Distinct operator pairs**: across the ${numModels} models, no two models may use the same (primary, secondary) operator pair OR the same base paper set.
+4. **Cross-paper synthesis (CRITICAL)**: each model MUST include nodes from ≥ 3 DIFFERENT source papers (not 2). The whole point is multi-paper recombination — a model that only fuses 2 papers is a weak combination and will be rejected.
+5. **Respect original directions**: when an edge connects two variables that already appeared together in a paper's hypothesis, use the SAME direction and sign that paper proposed. Do not flip causality unless explicitly justified in the rationale.
+6. **Citation grounding**: every "evidenceCitationText" MUST be a verbatim sentence either from the variable's "Citation" field or from the paper graph's "evidence" field above. If you cannot find such a sentence, omit that edge.
+7. **Layout discipline**: order nodes Independent → Mediator → Moderator → Dependent. Never put a dependent left of an independent.
+8. **Size**: 5–8 nodes and 4–8 edges per model. Smaller is too thin to count as a real recombination.
+9. **Variety**: each model must have a clearly different theoretical focus (different DV, different mediator chain, or different moderator).
 
 OUTPUT FORMAT — return ONLY a JSON array, no markdown:
 [
   {
     "operator": "EXTEND|INSERT_MODERATOR|PARALLEL_MEDIATORS|SWAP_MEDIATOR|THEORY_GRAFT",
-    "basePaperTags": ["P1", "P2"],
+    "secondaryOperator": "EXTEND|INSERT_MODERATOR|PARALLEL_MEDIATORS|SWAP_MEDIATOR|THEORY_GRAFT (must differ from operator)",
+    "basePaperTags": ["P1", "P2", "P3"],
     "backbone": "SOR|TAM|UTAUT|ELM|TPB|TRUST_TRANSFER|PARASOCIAL|FLOW|NONE",
     "name": "concise model name",
     "description": "1-2 sentences",
@@ -396,7 +398,7 @@ OUTPUT FORMAT — return ONLY a JSON array, no markdown:
     });
 
     const content = completion.choices[0]?.message?.content ?? "[]";
-    let generated: Array<{ operator?: string; basePaperTags?: string[]; backbone?: string; name: string; description: string; rationale: string; nodes: ModelNode[]; edges: ModelEdge[] }> = [];
+    let generated: Array<{ operator?: string; secondaryOperator?: string; basePaperTags?: string[]; backbone?: string; name: string; description: string; rationale: string; nodes: ModelNode[]; edges: ModelEdge[] }> = [];
 
     try {
       const cleaned = content.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
@@ -466,20 +468,25 @@ OUTPUT FORMAT — return ONLY a JSON array, no markdown:
     const validVarIds = new Set(variables.map((v) => v.id));
     const validPaperIds = new Set(papers.map((p) => p.id));
 
-    function validate(m: typeof generated[number]): { ok: true } | { ok: false; reason: string } {
+    const minDistinctPapers = Math.min(3, papers.length);
+    const minNodes = papers.length >= 3 ? 5 : 4;
+
+    function validate(m: typeof generated[number] & { secondaryOperator?: string }): { ok: true } | { ok: false; reason: string } {
       if (!m || typeof m.name !== "string" || !Array.isArray(m.nodes) || !Array.isArray(m.edges)) return { ok: false, reason: "missing required fields" };
       if (!m.operator || !ALLOWED_OPERATORS.has(m.operator)) return { ok: false, reason: `invalid operator: ${m.operator}` };
+      if (!m.secondaryOperator || !ALLOWED_OPERATORS.has(m.secondaryOperator)) return { ok: false, reason: `missing/invalid secondaryOperator: ${m.secondaryOperator}` };
+      if (m.secondaryOperator === m.operator) return { ok: false, reason: "secondaryOperator must differ from primary operator" };
       if (m.backbone && !ALLOWED_BACKBONES.has(m.backbone)) return { ok: false, reason: `invalid backbone: ${m.backbone}` };
-      if (m.nodes.length < 3 || m.nodes.length > 8) return { ok: false, reason: `node count out of range (${m.nodes.length})` };
-      if (m.edges.length < 2 || m.edges.length > 8) return { ok: false, reason: `edge count out of range (${m.edges.length})` };
+      if (m.nodes.length < minNodes || m.nodes.length > 8) return { ok: false, reason: `node count out of range (${m.nodes.length}, need ≥${minNodes})` };
+      if (m.edges.length < 4 || m.edges.length > 8) return { ok: false, reason: `edge count out of range (${m.edges.length}, need ≥4)` };
       // every node references a real variable from this session
       for (const n of m.nodes) {
         if (!validVarIds.has(n.variableId)) return { ok: false, reason: `unknown variableId ${n.variableId}` };
         if (!validPaperIds.has(n.paperId)) return { ok: false, reason: `unknown paperId ${n.paperId}` };
       }
-      // cross-paper synthesis: ≥ 2 distinct source papers in nodes
+      // cross-paper synthesis: ≥ N distinct source papers in nodes
       const distinctPapers = new Set(m.nodes.map((n) => n.paperId));
-      if (distinctPapers.size < 2) return { ok: false, reason: "requires nodes from ≥ 2 different papers" };
+      if (distinctPapers.size < minDistinctPapers) return { ok: false, reason: `requires nodes from ≥ ${minDistinctPapers} different papers (got ${distinctPapers.size})` };
       const nodeIds = new Set(m.nodes.map((n) => n.variableId));
       // every edge references a node that exists, and has non-empty evidence
       for (const e of m.edges) {
@@ -490,11 +497,32 @@ OUTPUT FORMAT — return ONLY a JSON array, no markdown:
       return { ok: true };
     }
 
-    const validated = generated.map((m) => ({ m, v: validate(m) }));
-    const accepted = validated.filter((x) => x.v.ok).map((x) => x.m);
-    const rejected = validated.filter((x) => !x.v.ok);
+    const accepted: typeof generated = [];
+    const rejected: Array<{ m: typeof generated[number]; v: { reason: string } }> = [];
+    const seenOpPairs = new Set<string>();
+    const seenBaseSets = new Set<string>();
+    for (const m of generated) {
+      const v = validate(m);
+      if (!v.ok) {
+        rejected.push({ m, v: { reason: v.reason } });
+        continue;
+      }
+      const opPair = `${m.operator}+${m.secondaryOperator}`;
+      const baseSet = [...new Set(m.nodes.map((n) => n.paperId))].sort((a, b) => a - b).join(",");
+      if (seenOpPairs.has(opPair)) {
+        rejected.push({ m, v: { reason: `duplicate operator pair across models: ${opPair}` } });
+        continue;
+      }
+      if (seenBaseSets.has(baseSet)) {
+        rejected.push({ m, v: { reason: `duplicate base-paper set across models: [${baseSet}]` } });
+        continue;
+      }
+      seenOpPairs.add(opPair);
+      seenBaseSets.add(baseSet);
+      accepted.push(m);
+    }
     if (rejected.length > 0) {
-      req.log.warn({ rejected: rejected.map((r) => ({ name: r.m?.name, reason: (r.v as { reason: string }).reason })) }, "Some generated models rejected by validator");
+      req.log.warn({ rejected: rejected.map((r) => ({ name: r.m?.name, reason: r.v.reason })) }, "Some generated models rejected by validator");
     }
     if (accepted.length === 0) {
       res.status(502).json({
@@ -508,8 +536,11 @@ OUTPUT FORMAT — return ONLY a JSON array, no markdown:
 
     const inserted = await Promise.all(
       accepted.map((m) => {
-        const tagPrefix = `[OPERATOR: ${m.operator}] [BASE: ${(m.basePaperTags ?? []).join("+") || "?"}] [BACKBONE: ${m.backbone ?? "NONE"}]`;
-        const rationale = m.rationale?.startsWith("[OPERATOR:") ? m.rationale : `${tagPrefix}\n${m.rationale ?? ""}`;
+        const opTag = `${m.operator}+${m.secondaryOperator}`;
+        const tagPrefix = `[OPERATOR: ${opTag}] [BASE: ${(m.basePaperTags ?? []).join("+") || "?"}] [BACKBONE: ${m.backbone ?? "NONE"}]`;
+        // Always normalize: strip any pre-existing [OPERATOR:...] [BASE:...] [BACKBONE:...] header so the persisted prefix is canonical.
+        const stripped = (m.rationale ?? "").replace(/^\s*\[OPERATOR:[^\]]*\]\s*(\[BASE:[^\]]*\])?\s*(\[BACKBONE:[^\]]*\])?\s*/i, "").trim();
+        const rationale = `${tagPrefix} ${stripped}`;
         return db.insert(researchModelsTable).values({
           sessionId,
           name: m.name,

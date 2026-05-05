@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from "react";
 import { useParams, Link } from "wouter";
+import dagre from "@dagrejs/dagre";
 import {
   useListSessionModels,
   useGenerateModels,
@@ -22,88 +23,128 @@ const TYPE_COLORS: Record<string, string> = {
   dependent: "#16a34a",
 };
 
+const REL_STYLE: Record<string, { dash?: string; color?: string }> = {
+  positive: {},
+  negative: { color: "#dc2626" },
+  moderates: { dash: "5 4", color: "#7c3aed" },
+  mediates: {},
+};
+
 function ModelGraph({ nodes, edges, paperTagById }: {
   nodes: Array<{ variableId: number; variableName: string; type: string; paperId: number }>;
   edges: Array<{ fromVariableId: number; toVariableId: number; relationship: string; evidencePaperId: number }>;
   paperTagById: Map<number, string>;
 }) {
-  if (!nodes.length) return null;
-  const NODE_W = 140;
-  const NODE_H = 50;
-  const ROW_GAP = 26;
-  const COL_GAP = 70;
-  const PAD_X = 20;
-  const PAD_Y = 20;
+  const layout = useMemo(() => {
+    if (!nodes.length) return null;
+    const NODE_W = 160;
+    const NODE_H = 56;
+    const PAD = 24;
 
-  const typeOrder = ["independent", "mediator", "moderator", "dependent"];
-  const grouped: Record<string, typeof nodes> = {};
-  for (const n of nodes) {
-    (grouped[n.type] ??= []).push(n);
-  }
-  const cols = typeOrder.filter((t) => grouped[t]?.length);
-
-  // Dynamic SVG height = max column height
-  const maxRows = Math.max(1, ...cols.map((c) => grouped[c].length));
-  const HEIGHT = PAD_Y * 2 + maxRows * NODE_H + (maxRows - 1) * ROW_GAP;
-  const WIDTH = PAD_X * 2 + cols.length * NODE_W + (cols.length - 1) * COL_GAP;
-
-  const positions = new Map<number, { x: number; y: number }>();
-  cols.forEach((type, colIdx) => {
-    const ns = grouped[type] ?? [];
-    const colX = PAD_X + colIdx * (NODE_W + COL_GAP) + NODE_W / 2;
-    const totalH = ns.length * NODE_H + (ns.length - 1) * ROW_GAP;
-    const startY = (HEIGHT - totalH) / 2;
-    ns.forEach((node, rowIdx) => {
-      positions.set(node.variableId, { x: colX, y: startY + rowIdx * (NODE_H + ROW_GAP) + NODE_H / 2 });
+    // Group multiple edges between the same (from,to) so dagre treats them as one path.
+    const edgeGroups = new Map<string, typeof edges>();
+    edges.forEach((e) => {
+      const k = `${e.fromVariableId}->${e.toVariableId}`;
+      if (!edgeGroups.has(k)) edgeGroups.set(k, []);
+      edgeGroups.get(k)!.push(e);
     });
-  });
 
-  // Group edges that share the same (from,to) so labels stack instead of overlapping.
-  const edgeGroups = new Map<string, Array<{ edge: typeof edges[number]; idx: number }>>();
-  edges.forEach((edge, i) => {
-    const k = `${edge.fromVariableId}->${edge.toVariableId}`;
-    (edgeGroups.get(k) ?? edgeGroups.set(k, []).get(k)!).push({ edge, idx: i });
-  });
+    const typeRank: Record<string, number> = { independent: 0, mediator: 1, moderator: 2, dependent: 3 };
+    const g = new dagre.graphlib.Graph();
+    g.setGraph({ rankdir: "LR", nodesep: 36, ranksep: 90, marginx: PAD, marginy: PAD, ranker: "network-simplex" });
+    g.setDefaultEdgeLabel(() => ({}));
+
+    for (const n of nodes) {
+      g.setNode(String(n.variableId), { width: NODE_W, height: NODE_H, _node: n, rank: typeRank[n.type] });
+    }
+    for (const [k, group] of edgeGroups) {
+      const [from, to] = k.split("->");
+      g.setEdge(from, to, { _group: group, weight: group[0].relationship === "moderates" ? 1 : 3 });
+    }
+
+    dagre.layout(g);
+
+    const { width, height } = g.graph() as { width: number; height: number };
+    const positionedNodes = nodes.map((n) => {
+      const dn = g.node(String(n.variableId)) as { x: number; y: number } | undefined;
+      return dn ? { ...n, x: dn.x, y: dn.y, w: NODE_W, h: NODE_H } : null;
+    }).filter((x): x is NonNullable<typeof x> => !!x);
+
+    const positionedEdges = [...edgeGroups.entries()].map(([k, group]) => {
+      const [from, to] = k.split("->");
+      const de = g.edge(from, to) as { points: Array<{ x: number; y: number }> } | undefined;
+      if (!de || !de.points || de.points.length < 2) return null;
+      return { key: k, group, points: de.points };
+    }).filter((x): x is NonNullable<typeof x> => !!x);
+
+    return { width, height, nodes: positionedNodes, edges: positionedEdges };
+  }, [nodes, edges]);
+
+  if (!layout) return null;
+  const { width, height } = layout;
+
+  // Build a smooth Catmull-Rom-ish path through the dagre points (curve avoids straight overlaps).
+  const pathFromPoints = (pts: Array<{ x: number; y: number }>) => {
+    if (pts.length === 2) return `M ${pts[0].x} ${pts[0].y} L ${pts[1].x} ${pts[1].y}`;
+    let d = `M ${pts[0].x} ${pts[0].y}`;
+    for (let i = 1; i < pts.length - 1; i++) {
+      const c = pts[i];
+      const n = pts[i + 1];
+      const midX = (c.x + n.x) / 2;
+      const midY = (c.y + n.y) / 2;
+      d += ` Q ${c.x} ${c.y} ${midX} ${midY}`;
+    }
+    const last = pts[pts.length - 1];
+    d += ` T ${last.x} ${last.y}`;
+    return d;
+  };
 
   return (
-    <svg width="100%" viewBox={`0 0 ${WIDTH} ${HEIGHT}`} className="overflow-visible" style={{ minHeight: HEIGHT }}>
+    <svg width="100%" viewBox={`0 0 ${width} ${height}`} className="overflow-visible" style={{ minHeight: height }} preserveAspectRatio="xMidYMid meet">
       <defs>
-        <marker id="arr-m" markerWidth="7" markerHeight="7" refX="6" refY="3" orient="auto">
-          <path d="M0,0 L0,6 L7,3 z" fill="currentColor" opacity={0.5} />
+        <marker id="arr-default" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+          <path d="M0,0 L0,6 L8,3 z" fill="#444" opacity={0.7} />
+        </marker>
+        <marker id="arr-neg" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+          <path d="M0,0 L0,6 L8,3 z" fill="#dc2626" opacity={0.85} />
+        </marker>
+        <marker id="arr-mod" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+          <path d="M0,0 L0,6 L8,3 z" fill="#7c3aed" opacity={0.85} />
         </marker>
       </defs>
 
-      {[...edgeGroups.values()].map((group) => {
-        const first = group[0].edge;
-        const from = positions.get(first.fromVariableId);
-        const to = positions.get(first.toVariableId);
-        if (!from || !to) return null;
-        const fromX = from.x + NODE_W / 2;
-        const toX = to.x - NODE_W / 2;
-        const dx = toX - fromX;
-        const dy = to.y - from.y;
-        const len = Math.max(1, Math.hypot(dx, dy));
-        // Perpendicular unit vector for label offset.
-        const nx = -dy / len;
-        const ny = dx / len;
-        const midX = (fromX + toX) / 2;
-        const midY = (from.y + to.y) / 2;
+      {layout.edges.map(({ key, group, points }) => {
+        const rel = group[0].relationship;
+        const style = REL_STYLE[rel] ?? {};
+        const stroke = style.color ?? "#444";
+        const dash = style.dash;
+        const marker = rel === "negative" ? "url(#arr-neg)" : rel === "moderates" ? "url(#arr-mod)" : "url(#arr-default)";
+        const d = pathFromPoints(points);
+
+        // Midpoint for label placement (use middle dagre point or interpolated).
+        const midIdx = Math.floor(points.length / 2);
+        const mid = points[midIdx];
+        const before = points[Math.max(0, midIdx - 1)];
+        const dxL = mid.x - before.x;
+        const dyL = mid.y - before.y;
+        const lenL = Math.max(1, Math.hypot(dxL, dyL));
+        const perpX = -dyL / lenL;
+        const perpY = dxL / lenL;
+
         return (
-          <g key={`${first.fromVariableId}->${first.toVariableId}`}>
-            <line x1={fromX} y1={from.y} x2={toX} y2={to.y}
-              stroke="currentColor" strokeOpacity={0.3} strokeWidth={1.5}
-              markerEnd="url(#arr-m)" />
-            {group.map(({ edge }, gi) => {
+          <g key={key}>
+            <path d={d} fill="none" stroke={stroke} strokeOpacity={0.55} strokeWidth={1.8} strokeDasharray={dash} markerEnd={marker} />
+            {group.map((edge, gi) => {
               const tag = paperTagById.get(edge.evidencePaperId);
               if (!tag) return null;
-              // Stack labels along the perpendicular direction so they don't overlap each other or the edge.
-              const offset = 12 + gi * 16;
-              const lx = midX + nx * offset;
-              const ly = midY + ny * offset;
+              // Stack labels perpendicular to the curve at its midpoint.
+              const offset = 14 + gi * 18;
+              const lx = mid.x + perpX * offset;
+              const ly = mid.y + perpY * offset;
               return (
-                <g key={gi} transform={`translate(${lx - 14}, ${ly - 7})`}>
-                  <rect width={28} height={14} rx={3} fill="white" stroke="currentColor" strokeOpacity={0.4} strokeWidth={0.8} />
-                  <text x={14} y={10} textAnchor="middle" fontSize={9} fontWeight={700} fill="#444">{tag}</text>
+                <g key={gi} transform={`translate(${lx - 16}, ${ly - 8})`}>
+                  <rect width={32} height={16} rx={3} fill="white" stroke="#999" strokeOpacity={0.5} strokeWidth={0.8} />
+                  <text x={16} y={11.5} textAnchor="middle" fontSize={10} fontWeight={700} fill="#444">{tag}</text>
                 </g>
               );
             })}
@@ -111,22 +152,21 @@ function ModelGraph({ nodes, edges, paperTagById }: {
         );
       })}
 
-      {nodes.map((node) => {
-        const pos = positions.get(node.variableId);
-        if (!pos) return null;
+      {layout.nodes.map((node) => {
         const color = TYPE_COLORS[node.type] ?? "#888";
         const tag = paperTagById.get(node.paperId);
-        const label = node.variableName.length > 18 ? node.variableName.slice(0, 17) + "…" : node.variableName;
+        const maxChars = 20;
+        const label = node.variableName.length > maxChars ? node.variableName.slice(0, maxChars - 1) + "…" : node.variableName;
         return (
-          <g key={node.variableId} transform={`translate(${pos.x - NODE_W / 2}, ${pos.y - NODE_H / 2})`}>
-            <rect width={NODE_W} height={NODE_H} rx={6} fill={color} fillOpacity={0.1} stroke={color} strokeOpacity={0.45} strokeWidth={1.5} />
-            <text x={NODE_W / 2} y={NODE_H / 2 - 2} textAnchor="middle" fontSize={10} fontWeight={600} fill={color}>
+          <g key={node.variableId} transform={`translate(${node.x - node.w / 2}, ${node.y - node.h / 2})`}>
+            <rect width={node.w} height={node.h} rx={8} fill={color} fillOpacity={0.12} stroke={color} strokeOpacity={0.55} strokeWidth={1.6} />
+            <text x={node.w / 2} y={node.h / 2 - 1} textAnchor="middle" fontSize={11} fontWeight={600} fill={color}>
               {label}
             </text>
             {tag && (
-              <g transform={`translate(${NODE_W / 2 - 14}, ${NODE_H - 14})`}>
-                <rect width={28} height={11} rx={2} fill={color} fillOpacity={0.9} />
-                <text x={14} y={8.5} textAnchor="middle" fontSize={7} fontWeight={700} fill="white">{tag}</text>
+              <g transform={`translate(${node.w / 2 - 16}, ${node.h - 14})`}>
+                <rect width={32} height={12} rx={2} fill={color} fillOpacity={0.95} />
+                <text x={16} y={9} textAnchor="middle" fontSize={8} fontWeight={700} fill="white">{tag}</text>
               </g>
             )}
           </g>
