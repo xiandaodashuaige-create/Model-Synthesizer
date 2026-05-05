@@ -475,6 +475,11 @@ paths:
                   type: integer
                   minimum: 1
                   maximum: 20
+                page:
+                  type: integer
+                  minimum: 1
+                  maximum: 10
+                  description: 1-indexed page number for "换一批 / load more". Defaults to 1.
                 raw:
                   type: boolean
                   description: When true, skip server-side query augmentation and use the user's text exactly.
@@ -502,6 +507,12 @@ paths:
                     type: string
                     enum: [serpapi, brave]
                     description: Which upstream image search provider was actually used.
+                  page:
+                    type: integer
+                    description: Echoes the page number that was actually served.
+                  hasMore:
+                    type: boolean
+                    description: True if the upstream returned a full result set, suggesting more pages may exist.
                   results:
                     type: array
                     items:
@@ -555,6 +566,11 @@ paths:
                   type: integer
                   minimum: 1
                   maximum: 20
+                page:
+                  type: integer
+                  minimum: 1
+                  maximum: 10
+                  description: 1-indexed page number for "换一批 / load more". Defaults to 1.
                 raw:
                   type: boolean
                   description: When true, skip AI query expansion.
@@ -575,6 +591,10 @@ paths:
                     type: array
                     items:
                       type: string
+                  page:
+                    type: integer
+                  hasMore:
+                    type: boolean
                   papers:
                     type: array
                     items:

@@ -291,6 +291,12 @@ export type SearchModelImagesBody = {
    * @maximum 20
    */
   count?: number;
+  /**
+   * 1-indexed page number for "换一批 / load more". Defaults to 1.
+   * @minimum 1
+   * @maximum 10
+   */
+  page?: number;
   /** When true, skip server-side query augmentation and use the user's text exactly. */
   raw?: boolean;
 };
@@ -325,6 +331,10 @@ export type SearchModelImages200 = {
   expandedQueries?: string[];
   /** Which upstream image search provider was actually used. */
   provider?: SearchModelImages200Provider;
+  /** Echoes the page number that was actually served. */
+  page?: number;
+  /** True if the upstream returned a full result set, suggesting more pages may exist. */
+  hasMore?: boolean;
   results: SearchModelImages200ResultsItem[];
 };
 
@@ -336,6 +346,12 @@ export type SearchModelPapersBody = {
    * @maximum 20
    */
   count?: number;
+  /**
+   * 1-indexed page number for "换一批 / load more". Defaults to 1.
+   * @minimum 1
+   * @maximum 10
+   */
+  page?: number;
   /** When true, skip AI query expansion. */
   raw?: boolean;
 };
@@ -377,6 +393,8 @@ export type SearchModelPapers200 = {
   query: string;
   rawQuery?: string;
   expandedQueries?: string[];
+  page?: number;
+  hasMore?: boolean;
   papers: SearchModelPapers200PapersItem[];
 };
 

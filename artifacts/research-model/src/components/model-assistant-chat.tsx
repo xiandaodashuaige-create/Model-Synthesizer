@@ -1,6 +1,6 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useChatModelAssistant, useSearchModelImages, useSearchModelPapers } from "@workspace/api-client-react";
-import { BookOpen, BookPlus, Download, ExternalLink, FileText, Image as ImageIcon, Loader2, MessageSquare, Paperclip, Search, Send, Sparkles, Trash2, X } from "lucide-react";
+import { BookOpen, BookPlus, ChevronDown, ChevronUp, Download, ExternalLink, FileText, Heart, Image as ImageIcon, LayoutGrid, Loader2, MessageSquare, Paperclip, RefreshCw, Search, Send, Sparkles, Trash2, X } from "lucide-react";
 import { useT } from "@/lib/i18n";
 
 type ImageHit = {
@@ -27,7 +27,12 @@ type PaperHit = {
   modelFigureReason?: string;
 };
 
-type SearchMode = "images" | "papers";
+type SearchMode = "images" | "papers" | "all";
+
+type SavedImage = { kind: "image"; id: string; data: ImageHit; query: string; addedAt: number };
+type SavedPaper = { kind: "paper"; id: string; data: PaperHit; query: string; addedAt: number };
+type SavedItem = SavedImage | SavedPaper;
+const SAVED_KEY = (sid: number) => `model-refs-saved-${sid}`;
 
 type Attachment = { name: string; kind: "image" | "text"; data: string };
 type ChatMsg = { role: "user" | "assistant"; content: string; attachments?: Attachment[] };
@@ -68,64 +73,193 @@ export function ModelAssistantChat({
   const [imgActualQuery, setImgActualQuery] = useState<string | null>(null);
   const [imgExpandedQueries, setImgExpandedQueries] = useState<string[]>([]);
   const [imgError, setImgError] = useState<string | null>(null);
+  const [imgPage, setImgPage] = useState(1);
+  const [imgHasMore, setImgHasMore] = useState(false);
   const [lightbox, setLightbox] = useState<ImageHit | null>(null);
 
   const [paperResults, setPaperResults] = useState<PaperHit[] | null>(null);
   const [paperError, setPaperError] = useState<string | null>(null);
   const [paperExpandedQueries, setPaperExpandedQueries] = useState<string[]>([]);
+  const [paperPage, setPaperPage] = useState(1);
+  const [paperHasMore, setPaperHasMore] = useState(false);
 
-  const runImageSearch = (q: string, raw?: boolean) => {
+  // Saved collection (per session, persisted in localStorage)
+  const [saved, setSaved] = useState<SavedItem[]>([]);
+  const [savedOpen, setSavedOpen] = useState(false);
+  // Hydrate from localStorage on mount / sessionId change
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(SAVED_KEY(sessionId));
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) setSaved(parsed as SavedItem[]);
+        else setSaved([]);
+      } else setSaved([]);
+    } catch { setSaved([]); }
+  }, [sessionId]);
+  // Persist on change
+  useEffect(() => {
+    try { localStorage.setItem(SAVED_KEY(sessionId), JSON.stringify(saved)); } catch { /* quota */ }
+  }, [saved, sessionId]);
+
+  const savedIds = useMemo(() => new Set(saved.map((s) => `${s.kind}:${s.id}`)), [saved]);
+  const isSaved = (kind: "image" | "paper", id: string) => savedIds.has(`${kind}:${id}`);
+  const toggleSavedImage = (img: ImageHit) => {
+    const id = img.sourceUrl;
+    setSaved((cur) => {
+      if (cur.some((s) => s.kind === "image" && s.id === id)) {
+        return cur.filter((s) => !(s.kind === "image" && s.id === id));
+      }
+      return [...cur, { kind: "image", id, data: img, query: imgQuery, addedAt: Date.now() }];
+    });
+  };
+  const toggleSavedPaper = (p: PaperHit) => {
+    const id = p.externalId;
+    setSaved((cur) => {
+      if (cur.some((s) => s.kind === "paper" && s.id === id)) {
+        return cur.filter((s) => !(s.kind === "paper" && s.id === id));
+      }
+      return [...cur, { kind: "paper", id, data: p, query: imgQuery, addedAt: Date.now() }];
+    });
+  };
+  const clearSaved = () => {
+    if (saved.length === 0) return;
+    if (window.confirm(t("models.assistant.saved.clearConfirm" as any))) setSaved([]);
+  };
+  const exportSaved = () => {
+    const imgs = saved.filter((s): s is SavedImage => s.kind === "image");
+    const papers = saved.filter((s): s is SavedPaper => s.kind === "paper");
+    const lines: string[] = ["# 收藏的研究模型参考资料 / Saved model references", ""];
+    if (imgs.length > 0) {
+      lines.push("## 收藏的图片 / Saved images", "");
+      for (const it of imgs) {
+        lines.push(`- **${it.data.title || "(untitled)"}** — [${it.data.sourceDomain}](${it.data.sourceUrl})  `);
+        lines.push(`  ![](${it.data.thumbnailUrl})  `);
+        if (it.query) lines.push(`  _搜索词 / query_: ${it.query}`);
+        lines.push("");
+      }
+    }
+    if (papers.length > 0) {
+      lines.push("## 收藏的论文 / Saved papers", "");
+      for (const it of papers) {
+        const p = it.data;
+        const meta = [p.authors.slice(0, 3).join(", "), p.year, p.venue].filter(Boolean).join(" · ");
+        lines.push(`- **${p.title}**`);
+        if (meta) lines.push(`  ${meta}`);
+        lines.push(`  Likelihood: **${p.modelFigureLikelihood}** — ${p.modelFigureReason ?? ""}`);
+        lines.push(`  [打开论文 / Open paper](${p.url})${p.openAccessUrl ? ` · [PDF](${p.openAccessUrl})` : ""}`);
+        lines.push("");
+      }
+    }
+    const blob = new Blob([lines.join("\n")], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `saved-model-refs-session-${sessionId}.md`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  // Request sequencing — ignore stale onSuccess responses if a newer request was issued.
+  const imgReqRef = useRef(0);
+  const paperReqRef = useRef(0);
+
+  const runImageSearch = (q: string, opts?: { raw?: boolean; page?: number; mode?: SearchMode }) => {
     const trimmed = q.trim();
     if (!trimmed) return;
     setImgQuery(trimmed);
     setImgPanelOpen(true);
-    setSearchMode("images");
-    setImgResults(null);
+    if (opts?.mode) setSearchMode(opts.mode); else setSearchMode("images");
+    const page = opts?.page ?? 1;
+    // Only clear visible results on a fresh (page=1) query so pagination keeps the
+    // previous batch visible until the new one arrives or fails. Do NOT optimistically
+    // change imgPage/imgHasMore — those should only commit on success.
+    if (page === 1) { setImgResults(null); setImgPage(1); setImgHasMore(false); }
     setImgError(null);
     setImgActualQuery(null);
     setImgExpandedQueries([]);
     setImgProvider(null);
-    const useRaw = raw ?? imgRawMode;
+    const useRaw = opts?.raw ?? imgRawMode;
+    const reqId = ++imgReqRef.current;
     imageSearch.mutate(
-      { id: sessionId, data: { query: trimmed, count: 12, raw: useRaw } },
+      { id: sessionId, data: { query: trimmed, count: 12, raw: useRaw, page } },
       {
         onSuccess: (resp) => {
+          if (reqId !== imgReqRef.current) return; // stale
           setImgResults((resp.results ?? []) as ImageHit[]);
           setImgActualQuery((resp as { query?: string }).query ?? null);
           setImgExpandedQueries(((resp as { expandedQueries?: string[] }).expandedQueries ?? []));
           setImgProvider((resp as { provider?: string }).provider ?? null);
+          setImgHasMore(Boolean((resp as { hasMore?: boolean }).hasMore));
+          setImgPage(Number((resp as { page?: number }).page) || page);
         },
-        onError: () => setImgError(t("models.assistant.searchImages.failed" as any)),
+        onError: () => {
+          if (reqId !== imgReqRef.current) return;
+          setImgError(t("models.assistant.searchImages.failed" as any));
+          // Preserve previous imgPage/imgHasMore so user can retry next batch.
+        },
       },
     );
   };
 
-  const runPaperSearch = (q: string, raw?: boolean) => {
+  const runPaperSearch = (q: string, opts?: { raw?: boolean; page?: number; mode?: SearchMode }) => {
     const trimmed = q.trim();
     if (!trimmed) return;
     setImgQuery(trimmed);
     setImgPanelOpen(true);
-    setSearchMode("papers");
-    setPaperResults(null);
+    if (opts?.mode) setSearchMode(opts.mode); else setSearchMode("papers");
+    const page = opts?.page ?? 1;
+    if (page === 1) { setPaperResults(null); setPaperPage(1); setPaperHasMore(false); }
     setPaperError(null);
     setPaperExpandedQueries([]);
-    const useRaw = raw ?? imgRawMode;
+    const useRaw = opts?.raw ?? imgRawMode;
+    const reqId = ++paperReqRef.current;
     paperSearch.mutate(
-      { id: sessionId, data: { query: trimmed, count: 10, raw: useRaw } },
+      { id: sessionId, data: { query: trimmed, count: 10, raw: useRaw, page } },
       {
         onSuccess: (resp) => {
+          if (reqId !== paperReqRef.current) return;
           setPaperResults((resp.papers ?? []) as PaperHit[]);
           setPaperExpandedQueries(((resp as { expandedQueries?: string[] }).expandedQueries ?? []));
+          setPaperHasMore(Boolean((resp as { hasMore?: boolean }).hasMore));
+          setPaperPage(Number((resp as { page?: number }).page) || page);
         },
-        onError: () => setPaperError(t("models.assistant.searchPapers.failed" as any)),
+        onError: () => {
+          if (reqId !== paperReqRef.current) return;
+          setPaperError(t("models.assistant.searchPapers.failed" as any));
+        },
       },
     );
   };
 
-  const runActiveSearch = (q: string, raw?: boolean) => {
-    if (searchMode === "papers") runPaperSearch(q, raw);
-    else runImageSearch(q, raw);
+  // "全部" mode runs both in parallel (each updates its own state).
+  const runAllSearch = (q: string, opts?: { raw?: boolean; page?: number }) => {
+    runImageSearch(q, { ...opts, mode: "all" });
+    runPaperSearch(q, { ...opts, mode: "all" });
   };
+
+  const runActiveSearch = (q: string, opts?: { raw?: boolean; page?: number }) => {
+    if (searchMode === "papers") runPaperSearch(q, opts);
+    else if (searchMode === "all") runAllSearch(q, opts);
+    else runImageSearch(q, opts);
+  };
+
+  const nextBatch = () => {
+    if (searchMode === "papers") runPaperSearch(imgQuery, { page: paperPage + 1 });
+    else if (searchMode === "all") runAllSearch(imgQuery, { page: Math.max(imgPage, paperPage) + 1 });
+    else runImageSearch(imgQuery, { page: imgPage + 1 });
+  };
+
+  const showImagesSection = searchMode === "images" || searchMode === "all";
+  const showPapersSection = searchMode === "papers" || searchMode === "all";
+  const isAnyPending = imageSearch.isPending || paperSearch.isPending;
+  const canShowNextBatch = searchMode === "papers"
+    ? Boolean(paperResults) && paperHasMore && !isAnyPending
+    : searchMode === "all"
+      ? Boolean(imgResults || paperResults) && (imgHasMore || paperHasMore) && !isAnyPending
+      : Boolean(imgResults) && imgHasMore && !isAnyPending;
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
@@ -220,6 +354,16 @@ export function ModelAssistantChat({
           >
             <ImageIcon className="w-3.5 h-3.5" /> {t("models.assistant.searchImages.cta" as any)}
           </button>
+          {saved.length > 0 && (
+            <button
+              onClick={() => { setImgPanelOpen(true); setSavedOpen((v) => !v); }}
+              data-testid="button-toggle-saved"
+              title={t("models.assistant.saved.expand" as any)}
+              className="inline-flex items-center gap-1.5 text-xs font-semibold rounded-md border border-pink-300 bg-pink-50 hover:bg-pink-100 text-pink-800 px-2.5 py-1.5"
+            >
+              <Heart className="w-3.5 h-3.5 fill-pink-500 text-pink-500" /> {t("models.assistant.saved.title" as any)} ({saved.length})
+            </button>
+          )}
           {messages.length > 1 && (
             <button
               onClick={clear}
@@ -352,11 +496,13 @@ export function ModelAssistantChat({
             <div className="flex items-center gap-1.5 text-xs font-semibold text-sky-900">
               {searchMode === "papers"
                 ? (<><BookOpen className="w-3.5 h-3.5" /> {t("models.assistant.searchPapers.title" as any)}</>)
-                : (<><ImageIcon className="w-3.5 h-3.5" /> {t("models.assistant.searchImages.title" as any)}</>)}
+                : searchMode === "all"
+                  ? (<><LayoutGrid className="w-3.5 h-3.5" /> {t("models.assistant.tab.all" as any)}</>)
+                  : (<><ImageIcon className="w-3.5 h-3.5" /> {t("models.assistant.searchImages.title" as any)}</>)}
             </div>
             <button
               type="button"
-              onClick={() => { setImgPanelOpen(false); setImgResults(null); setImgError(null); setPaperResults(null); setPaperError(null); }}
+              onClick={() => { setImgPanelOpen(false); setImgResults(null); setImgError(null); setPaperResults(null); setPaperError(null); setSavedOpen(false); }}
               data-testid="button-close-image-search"
               className="text-sky-700 hover:text-sky-900"
               title={t("models.assistant.searchImages.close" as any)}
@@ -365,14 +511,113 @@ export function ModelAssistantChat({
             </button>
           </div>
 
-          {/* Mode tabs */}
+          {/* Saved collection drawer (collapsible) */}
+          {(saved.length > 0 || savedOpen) && (
+            <div className="bg-white border border-pink-200 rounded-md">
+              <div className="flex items-center justify-between gap-2 px-2 py-1.5">
+                <button
+                  type="button"
+                  onClick={() => setSavedOpen((v) => !v)}
+                  data-testid="button-saved-toggle-collapse"
+                  className="inline-flex items-center gap-1.5 text-xs font-semibold text-pink-800"
+                >
+                  <Heart className="w-3.5 h-3.5 fill-pink-500 text-pink-500" />
+                  {t("models.assistant.saved.title" as any)} ({saved.length})
+                  {savedOpen ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                </button>
+                {savedOpen && saved.length > 0 && (
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={exportSaved}
+                      data-testid="button-saved-export"
+                      className="text-[11px] text-pink-700 hover:text-pink-900 inline-flex items-center gap-1"
+                    >
+                      <Download className="w-3 h-3" /> {t("models.assistant.saved.export" as any)}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={clearSaved}
+                      data-testid="button-saved-clear"
+                      className="text-[11px] text-red-600 hover:text-red-800 inline-flex items-center gap-1"
+                    >
+                      <Trash2 className="w-3 h-3" /> {t("models.assistant.saved.clear" as any)}
+                    </button>
+                  </div>
+                )}
+              </div>
+              {savedOpen && (
+                <div className="border-t border-pink-100 p-2 space-y-2 max-h-64 overflow-y-auto">
+                  {saved.length === 0 && (
+                    <p className="text-[11px] text-pink-700">{t("models.assistant.saved.empty" as any)}</p>
+                  )}
+                  {saved.filter((s): s is SavedImage => s.kind === "image").length > 0 && (
+                    <div>
+                      <div className="text-[11px] font-semibold text-pink-800 mb-1">{t("models.assistant.saved.imagesSection" as any)}</div>
+                      <div className="grid grid-cols-3 sm:grid-cols-4 gap-1.5">
+                        {saved.filter((s): s is SavedImage => s.kind === "image").map((it) => (
+                          <div key={`s-img-${it.id}`} className="relative bg-muted border border-pink-100 rounded overflow-hidden group">
+                            <button type="button" onClick={() => setLightbox(it.data)} className="block w-full aspect-[4/3]">
+                              <img src={it.data.thumbnailUrl} alt={it.data.title} loading="lazy" referrerPolicy="no-referrer" className="w-full h-full object-cover" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => toggleSavedImage(it.data)}
+                              data-testid={`button-saved-remove-img-${it.id}`}
+                              title={t("models.assistant.saved.remove" as any)}
+                              className="absolute top-0.5 right-0.5 bg-white/90 rounded p-0.5 text-pink-600 hover:text-red-600 opacity-0 group-hover:opacity-100 transition"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {saved.filter((s): s is SavedPaper => s.kind === "paper").length > 0 && (
+                    <div>
+                      <div className="text-[11px] font-semibold text-pink-800 mb-1 mt-1">{t("models.assistant.saved.papersSection" as any)}</div>
+                      <ul className="space-y-1">
+                        {saved.filter((s): s is SavedPaper => s.kind === "paper").map((it) => (
+                          <li key={`s-p-${it.id}`} className="text-[11px] flex items-start gap-1.5">
+                            <span className={
+                              "shrink-0 inline-block rounded px-1 text-[9px] font-semibold mt-0.5 " +
+                              (it.data.modelFigureLikelihood === "high" ? "bg-emerald-100 text-emerald-900"
+                                : it.data.modelFigureLikelihood === "medium" ? "bg-amber-100 text-amber-900"
+                                : "bg-slate-100 text-slate-700")
+                            }>
+                              {it.data.modelFigureLikelihood}
+                            </span>
+                            <a href={it.data.url} target="_blank" rel="noopener noreferrer" className="flex-1 text-foreground hover:text-sky-700 leading-snug line-clamp-2">
+                              {it.data.title}
+                            </a>
+                            <button
+                              type="button"
+                              onClick={() => toggleSavedPaper(it.data)}
+                              data-testid={`button-saved-remove-paper-${it.id}`}
+                              title={t("models.assistant.saved.remove" as any)}
+                              className="shrink-0 text-pink-600 hover:text-red-600"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Mode tabs (3 options) */}
           <div className="flex bg-white border border-sky-200 rounded-md p-0.5 text-xs font-medium">
             <button
               type="button"
               data-testid="tab-search-images"
               onClick={() => setSearchMode("images")}
               className={
-                "flex-1 inline-flex items-center justify-center gap-1.5 px-2 py-1.5 rounded transition " +
+                "flex-1 inline-flex items-center justify-center gap-1 px-2 py-1.5 rounded transition " +
                 (searchMode === "images" ? "bg-sky-600 text-white" : "text-sky-800 hover:bg-sky-50")
               }
             >
@@ -383,11 +628,23 @@ export function ModelAssistantChat({
               data-testid="tab-search-papers"
               onClick={() => setSearchMode("papers")}
               className={
-                "flex-1 inline-flex items-center justify-center gap-1.5 px-2 py-1.5 rounded transition " +
+                "flex-1 inline-flex items-center justify-center gap-1 px-2 py-1.5 rounded transition " +
                 (searchMode === "papers" ? "bg-sky-600 text-white" : "text-sky-800 hover:bg-sky-50")
               }
             >
               <BookOpen className="w-3.5 h-3.5" /> {t("models.assistant.tab.papers" as any)}
+            </button>
+            <button
+              type="button"
+              data-testid="tab-search-all"
+              onClick={() => setSearchMode("all")}
+              title={t("models.assistant.tab.allHint" as any)}
+              className={
+                "flex-1 inline-flex items-center justify-center gap-1 px-2 py-1.5 rounded transition " +
+                (searchMode === "all" ? "bg-sky-600 text-white" : "text-sky-800 hover:bg-sky-50")
+              }
+            >
+              <LayoutGrid className="w-3.5 h-3.5" /> {t("models.assistant.tab.all" as any)}
             </button>
           </div>
 
@@ -459,9 +716,14 @@ export function ModelAssistantChat({
             {t((searchMode === "papers" ? "models.assistant.searchPapers.tip" : "models.assistant.searchImages.tip") as any)}
           </p>
 
-          {/* IMAGES mode */}
-          {searchMode === "images" && (
+          {/* IMAGES section (shown in images + all modes) */}
+          {showImagesSection && (
             <>
+              {searchMode === "all" && (
+                <div className="text-[11px] font-semibold text-sky-900 inline-flex items-center gap-1 mt-1">
+                  <ImageIcon className="w-3 h-3" /> {t("models.assistant.searchImages.title" as any)}
+                </div>
+              )}
               {imageSearch.isPending && (
                 <div className="text-xs text-sky-800 inline-flex items-center gap-2">
                   <Loader2 className="w-3.5 h-3.5 animate-spin" /> {t("models.assistant.searchImages.loading" as any)}
@@ -473,10 +735,15 @@ export function ModelAssistantChat({
               )}
               {imgResults && imgResults.length > 0 && (
                 <>
-                  <p className="text-[11px] text-sky-700">{t("models.assistant.searchImages.hint" as any)}</p>
+                  <p className="text-[11px] text-sky-700">
+                    {t("models.assistant.searchImages.hint" as any)}
+                    {imgPage > 1 && <span className="ml-1 text-sky-500">· {t("models.assistant.page" as any).replace("{n}", String(imgPage))}</span>}
+                  </p>
                   <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
-                    {imgResults.map((r, i) => (
-                      <div key={i} data-testid={`image-result-${i}`} className="bg-white border border-sky-200 rounded-md overflow-hidden flex flex-col">
+                    {imgResults.map((r, i) => {
+                      const liked = isSaved("image", r.sourceUrl);
+                      return (
+                      <div key={`${r.sourceUrl}-${i}`} data-testid={`image-result-${i}`} className="bg-white border border-sky-200 rounded-md overflow-hidden flex flex-col relative group">
                         <button
                           type="button"
                           onClick={() => setLightbox(r)}
@@ -489,6 +756,22 @@ export function ModelAssistantChat({
                             referrerPolicy="no-referrer"
                             className="w-full h-full object-cover hover:scale-105 transition-transform"
                           />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); toggleSavedImage(r); }}
+                          data-testid={`button-save-image-${i}`}
+                          aria-pressed={liked}
+                          aria-label={liked ? t("models.assistant.saved.toggle" as any) : t("models.assistant.save" as any)}
+                          title={liked ? t("models.assistant.saved.toggle" as any) : t("models.assistant.save" as any)}
+                          className={
+                            "absolute top-1 right-1 rounded-full p-1 backdrop-blur transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500 focus-visible:opacity-100 " +
+                            (liked
+                              ? "bg-pink-500/95 text-white opacity-100"
+                              : "bg-white/85 text-pink-500 opacity-0 group-hover:opacity-100 hover:bg-white")
+                          }
+                        >
+                          <Heart className={"w-3.5 h-3.5 " + (liked ? "fill-white" : "")} />
                         </button>
                         <div className="p-1.5 flex flex-col gap-1 min-h-0">
                           <div className="text-[11px] leading-tight line-clamp-2 text-foreground" title={r.title}>{r.title}</div>
@@ -506,16 +789,22 @@ export function ModelAssistantChat({
                           </div>
                         </div>
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </>
               )}
             </>
           )}
 
-          {/* PAPERS mode */}
-          {searchMode === "papers" && (
+          {/* PAPERS section (shown in papers + all modes) */}
+          {showPapersSection && (
             <>
+              {searchMode === "all" && (
+                <div className="text-[11px] font-semibold text-sky-900 inline-flex items-center gap-1 mt-2">
+                  <BookOpen className="w-3 h-3" /> {t("models.assistant.searchPapers.title" as any)}
+                </div>
+              )}
               {paperSearch.isPending && (
                 <div className="text-xs text-sky-800 inline-flex items-center gap-2">
                   <Loader2 className="w-3.5 h-3.5 animate-spin" /> {t("models.assistant.searchPapers.loading" as any)}
@@ -527,6 +816,9 @@ export function ModelAssistantChat({
               )}
               {paperResults && paperResults.length > 0 && (
                 <div className="space-y-2 max-h-[480px] overflow-y-auto">
+                  {paperPage > 1 && (
+                    <p className="text-[11px] text-sky-500">{t("models.assistant.page" as any).replace("{n}", String(paperPage))}</p>
+                  )}
                   {paperResults.map((p, i) => {
                     const lkClass =
                       p.modelFigureLikelihood === "high"
@@ -535,6 +827,7 @@ export function ModelAssistantChat({
                           ? "bg-amber-100 text-amber-900 border-amber-300"
                           : "bg-slate-100 text-slate-700 border-slate-300";
                     const lkLabel = t((`models.assistant.searchPapers.likelihood.${p.modelFigureLikelihood}`) as any);
+                    const liked = isSaved("paper", p.externalId);
                     return (
                       <div
                         key={p.externalId}
@@ -545,6 +838,20 @@ export function ModelAssistantChat({
                           <h4 className="text-[13px] font-semibold leading-snug text-foreground flex-1" title={p.title}>
                             {p.title}
                           </h4>
+                          <button
+                            type="button"
+                            onClick={() => toggleSavedPaper(p)}
+                            data-testid={`button-save-paper-${i}`}
+                            aria-pressed={liked}
+                            aria-label={liked ? t("models.assistant.saved.toggle" as any) : t("models.assistant.save" as any)}
+                            title={liked ? t("models.assistant.saved.toggle" as any) : t("models.assistant.save" as any)}
+                            className={
+                              "shrink-0 rounded p-1 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500 " +
+                              (liked ? "bg-pink-500 text-white" : "text-pink-500 hover:bg-pink-50")
+                            }
+                          >
+                            <Heart className={"w-3.5 h-3.5 " + (liked ? "fill-white" : "")} />
+                          </button>
                           <span
                             className={`shrink-0 inline-flex items-center gap-1 text-[10px] font-semibold rounded border px-1.5 py-0.5 ${lkClass}`}
                             title={p.modelFigureReason || ""}
@@ -596,6 +903,22 @@ export function ModelAssistantChat({
                 </div>
               )}
             </>
+          )}
+
+          {canShowNextBatch && (
+            <div className="flex justify-center pt-1">
+              <button
+                type="button"
+                onClick={nextBatch}
+                data-testid="button-next-batch"
+                disabled={isAnyPending}
+                className="inline-flex items-center gap-1.5 rounded-md border border-sky-300 bg-white hover:bg-sky-50 text-sky-800 text-xs font-semibold px-3 py-1.5 disabled:opacity-50"
+              >
+                {isAnyPending
+                  ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> {t("models.assistant.nextBatch.loading" as any)}</>
+                  : <><RefreshCw className="w-3.5 h-3.5" /> {t("models.assistant.nextBatch" as any)}</>}
+              </button>
+            </div>
           )}
         </div>
       )}

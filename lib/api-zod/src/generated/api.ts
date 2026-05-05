@@ -362,6 +362,8 @@ export const SearchModelImagesParams = zod.object({
 
 export const searchModelImagesBodyCountMax = 20;
 
+export const searchModelImagesBodyPageMax = 10;
+
 export const SearchModelImagesBody = zod.object({
   query: zod
     .string()
@@ -369,6 +371,14 @@ export const SearchModelImagesBody = zod.object({
       "Topic \/ construct to search for. The server will augment it with academic phrasing unless `raw` is true.",
     ),
   count: zod.number().min(1).max(searchModelImagesBodyCountMax).optional(),
+  page: zod
+    .number()
+    .min(1)
+    .max(searchModelImagesBodyPageMax)
+    .optional()
+    .describe(
+      '1-indexed page number for \"换一批 \/ load more\". Defaults to 1.',
+    ),
   raw: zod
     .boolean()
     .optional()
@@ -395,6 +405,16 @@ export const SearchModelImagesResponse = zod.object({
     .enum(["serpapi", "brave"])
     .optional()
     .describe("Which upstream image search provider was actually used."),
+  page: zod
+    .number()
+    .optional()
+    .describe("Echoes the page number that was actually served."),
+  hasMore: zod
+    .boolean()
+    .optional()
+    .describe(
+      "True if the upstream returned a full result set, suggesting more pages may exist.",
+    ),
   results: zod.array(
     zod.object({
       title: zod.string(),
@@ -417,6 +437,8 @@ export const SearchModelPapersParams = zod.object({
 
 export const searchModelPapersBodyCountMax = 20;
 
+export const searchModelPapersBodyPageMax = 10;
+
 export const SearchModelPapersBody = zod.object({
   query: zod
     .string()
@@ -424,6 +446,14 @@ export const SearchModelPapersBody = zod.object({
       "Topic \/ construct to search for. The server will translate Chinese \/ rough English into precise academic queries unless `raw` is true.",
     ),
   count: zod.number().min(1).max(searchModelPapersBodyCountMax).optional(),
+  page: zod
+    .number()
+    .min(1)
+    .max(searchModelPapersBodyPageMax)
+    .optional()
+    .describe(
+      '1-indexed page number for \"换一批 \/ load more\". Defaults to 1.',
+    ),
   raw: zod.boolean().optional().describe("When true, skip AI query expansion."),
 });
 
@@ -431,6 +461,8 @@ export const SearchModelPapersResponse = zod.object({
   query: zod.string(),
   rawQuery: zod.string().optional(),
   expandedQueries: zod.array(zod.string()).optional(),
+  page: zod.number().optional(),
+  hasMore: zod.boolean().optional(),
   papers: zod.array(
     zod.object({
       externalId: zod.string(),

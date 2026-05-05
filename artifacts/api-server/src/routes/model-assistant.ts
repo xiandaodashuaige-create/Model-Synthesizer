@@ -385,6 +385,7 @@ async function serpApiImageSearch(
   apiKey: string,
   count: number,
   log: { warn: (o: object, m: string) => void },
+  page: number = 1,
 ): Promise<Array<{ raw: any; title: string; sourceUrl: string; thumbnailUrl: string; fullImage: string; sourceDomain: string; width?: number; height?: number }>> {
   const isHttp = (u: string) => /^https?:\/\//i.test(u);
   const url = new URL("https://serpapi.com/search.json");
@@ -395,6 +396,8 @@ async function serpApiImageSearch(
   url.searchParams.set("safe", "active");
   // tbs=isz:m biases toward medium+ images (filters tiny icons/logos)
   url.searchParams.set("tbs", "isz:m");
+  // SerpApi google_images uses ijn for page (0-indexed; each page = up to 100 imgs)
+  if (page > 1) url.searchParams.set("ijn", String(page - 1));
 
   const r = await fetch(url.toString(), {
     headers: { Accept: "application/json" },
@@ -451,12 +454,15 @@ async function braveImageSearch(
   apiKey: string,
   count: number,
   log: { warn: (o: object, m: string) => void },
+  page: number = 1,
 ): Promise<Array<{ raw: any; title: string; sourceUrl: string; thumbnailUrl: string; fullImage: string; sourceDomain: string; width?: number; height?: number }>> {
   const isHttp = (u: string) => /^https?:\/\//i.test(u);
   const url = new URL("https://api.search.brave.com/res/v1/images/search");
   url.searchParams.set("q", query);
   url.searchParams.set("count", String(count));
   url.searchParams.set("safesearch", "strict");
+  // Brave images: offset is 0-indexed page number (each page = `count` results)
+  if (page > 1) url.searchParams.set("offset", String(Math.min(page - 1, 9)));
 
   const r = await fetch(url.toString(), {
     headers: { "X-Subscription-Token": apiKey, Accept: "application/json" },
@@ -507,6 +513,7 @@ router.post("/sessions/:id/model-assistant/search-model-images", async (req, res
     return;
   }
   const count = Math.min(20, Math.max(1, Number(req.body?.count) || 12));
+  const page = Math.min(10, Math.max(1, Number(req.body?.page) || 1));
   const rawMode = req.body?.raw === true;
 
   const serpKey = process.env.SERPAPI_API_KEY;
@@ -550,7 +557,7 @@ router.post("/sessions/:id/model-assistant/search-model-images", async (req, res
 
     if (serpKey) {
       const calls = expandedQueries.map((q) =>
-        serpApiImageSearch(`${q} conceptual model figure`, serpKey, perQueryFetch, req.log).then((items) =>
+        serpApiImageSearch(`${q} conceptual model figure`, serpKey, perQueryFetch, req.log, page).then((items) =>
           items.map((it) => ({ ...it, _query: q })),
         ),
       );
@@ -568,7 +575,7 @@ router.post("/sessions/:id/model-assistant/search-model-images", async (req, res
 
     if (!anyOk && braveKey) {
       const calls = expandedQueries.map((q) =>
-        braveImageSearch(`${q} conceptual model figure`, braveKey, perQueryFetch, req.log).then((items) =>
+        braveImageSearch(`${q} conceptual model figure`, braveKey, perQueryFetch, req.log, page).then((items) =>
           items.map((it) => ({ ...it, _query: q })),
         ),
       );
@@ -668,11 +675,17 @@ router.post("/sessions/:id/model-assistant/search-model-images", async (req, res
 
     const results = finalList.slice(0, count).map(({ _score, _matched, _query, _academic, ...rest }) => rest);
 
+    // hasMore heuristic: if upstream returned at least the requested count
+    // worth of distinct items, more pages probably exist.
+    const hasMore = page < 10 && deduped.length >= count;
+
     res.json({
       query: expandedQueries.join(" | "),
       rawQuery,
       expandedQueries,
       provider,
+      page,
+      hasMore,
       results,
     });
   } catch (err) {
@@ -715,13 +728,14 @@ function reconstructAbstractLite(inv: Record<string, number[]> | null | undefine
   return positions.map(([, w]) => w).join(" ");
 }
 
-async function fetchPapersFromOpenAlex(query: string, perPage: number): Promise<OpenAlexLite[]> {
+async function fetchPapersFromOpenAlex(query: string, perPage: number, page: number = 1): Promise<OpenAlexLite[]> {
   const safe = query.replace(/["',:|]+/g, " ").replace(/\s+/g, " ").trim();
   if (!safe) return [];
   const url = new URL("https://api.openalex.org/works");
   url.searchParams.set("filter", `title_and_abstract.search:${safe},is_paratext:false,has_abstract:true`);
   url.searchParams.set("per-page", String(Math.min(perPage, 50)));
   url.searchParams.set("sort", "relevance_score:desc");
+  if (page > 1) url.searchParams.set("page", String(page));
   url.searchParams.set(
     "select",
     "id,title,authorships,publication_year,cited_by_count,primary_location,abstract_inverted_index",
@@ -810,6 +824,7 @@ router.post("/sessions/:id/model-assistant/search-model-papers", async (req, res
     return;
   }
   const count = Math.min(20, Math.max(1, Number(req.body?.count) || 10));
+  const page = Math.min(10, Math.max(1, Number(req.body?.page) || 1));
   const rawMode = req.body?.raw === true;
 
   try {
@@ -833,7 +848,7 @@ router.post("/sessions/:id/model-assistant/search-model-papers", async (req, res
     // ---- Stage 2: parallel OpenAlex queries ------------------------------
     const perQuery = 25;
     const settled = await Promise.allSettled(
-      expandedQueries.map((q) => fetchPapersFromOpenAlex(q, perQuery)),
+      expandedQueries.map((q) => fetchPapersFromOpenAlex(q, perQuery, page)),
     );
     const all = settled.flatMap((s) => (s.status === "fulfilled" ? s.value : []));
     if (all.length === 0) {
@@ -897,10 +912,14 @@ router.post("/sessions/:id/model-assistant/search-model-papers", async (req, res
       return (b.citationCount ?? 0) - (a.citationCount ?? 0);
     });
 
+    const hasMore = page < 10 && deduped.length >= count;
+
     res.json({
       query: expandedQueries.join(" | "),
       rawQuery,
       expandedQueries,
+      page,
+      hasMore,
       papers: enriched.slice(0, count),
     });
   } catch (err) {
