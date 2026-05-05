@@ -148,12 +148,20 @@ export function NextStepHint({
   body,
   href,
   cta,
+  onClick,
+  disabled,
+  loading,
 }: {
   title: string;
   body: string;
-  href: string;
+  href?: string;
   cta: string;
+  onClick?: () => void;
+  disabled?: boolean;
+  loading?: boolean;
 }) {
+  const btnClass =
+    "shrink-0 inline-flex items-center gap-1.5 rounded-md text-xs font-medium h-8 px-3 bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed";
   return (
     <div className="bg-primary/5 border border-primary/20 rounded-lg p-4 flex items-start gap-3">
       <div className="shrink-0 w-8 h-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center">
@@ -163,13 +171,26 @@ export function NextStepHint({
         <p className="text-sm font-semibold text-foreground">{title}</p>
         <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">{body}</p>
       </div>
-      <Link
-        href={href}
-        className="shrink-0 inline-flex items-center gap-1.5 rounded-md text-xs font-medium h-8 px-3 bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
-      >
-        {cta}
-        <ArrowRight className="w-3.5 h-3.5" />
-      </Link>
+      {onClick ? (
+        <button
+          type="button"
+          onClick={onClick}
+          disabled={disabled || loading}
+          className={btnClass}
+          data-testid="button-next-step-cta"
+        >
+          {loading ? (
+            <span className="inline-block w-3.5 h-3.5 border-2 border-primary-foreground/40 border-t-primary-foreground rounded-full animate-spin" />
+          ) : null}
+          {cta}
+          {!loading && <ArrowRight className="w-3.5 h-3.5" />}
+        </button>
+      ) : (
+        <Link href={href ?? "#"} className={btnClass}>
+          {cta}
+          <ArrowRight className="w-3.5 h-3.5" />
+        </Link>
+      )}
     </div>
   );
 }

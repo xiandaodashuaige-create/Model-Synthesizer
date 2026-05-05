@@ -245,6 +245,33 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
     );
   };
 
+  const [extractAllProgress, setExtractAllProgress] = useState<{ done: number; total: number } | null>(null);
+
+  const handleExtractAll = async () => {
+    const pending = (sessionPapers ?? []).filter((p) => !p.extracted);
+    if (pending.length === 0) return;
+    setExtractAllProgress({ done: 0, total: pending.length });
+    let ok = 0, fail = 0;
+    for (let i = 0; i < pending.length; i++) {
+      const p = pending[i];
+      try {
+        await extractVariables.mutateAsync({ id: sessionId, paperId: p.id });
+        ok++;
+      } catch {
+        fail++;
+      }
+      setExtractAllProgress({ done: i + 1, total: pending.length });
+    }
+    setExtractAllProgress(null);
+    queryClient.invalidateQueries({ queryKey: getListSessionPapersQueryKey(sessionId) });
+    queryClient.invalidateQueries({ queryKey: getListSessionVariablesQueryKey(sessionId) });
+    queryClient.invalidateQueries({ queryKey: getGetSessionSummaryQueryKey(sessionId) });
+    queryClient.invalidateQueries({ queryKey: getGetSessionQueryKey(sessionId) });
+    toast({
+      title: t("papers.toast.extractAllDone" as any, { ok, fail }),
+    });
+  };
+
   const handleExtract = (paperId: number, title: string) => {
     extractVariables.mutate(
       { id: sessionId, paperId },
@@ -541,12 +568,27 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
 
       {/* Next-step hint */}
       {(sessionPapers?.length ?? 0) > 0 && !allExtracted && (
-        <NextStepHint
-          title={t("papers.tip.next.title" as any)}
-          body={t("papers.tip.next.body" as any)}
-          href={someExtracted ? `/sessions/${sessionId}/variables` : `#session-papers`}
-          cta={someExtracted ? t("vars.goModels" as any) : t("papers.extract.btn" as any)}
-        />
+        someExtracted ? (
+          <NextStepHint
+            title={t("papers.tip.next.title" as any)}
+            body={t("papers.tip.next.body" as any)}
+            href={`/sessions/${sessionId}/variables`}
+            cta={t("vars.goModels" as any)}
+          />
+        ) : (
+          <NextStepHint
+            title={t("papers.tip.extractAll.title" as any)}
+            body={
+              extractAllProgress
+                ? t("papers.tip.extractAll.progress" as any, { done: extractAllProgress.done, total: extractAllProgress.total })
+                : t("papers.tip.extractAll.body" as any, { count: (sessionPapers ?? []).filter((p) => !p.extracted).length })
+            }
+            cta={extractAllProgress ? t("papers.extract.btn.working" as any) : t("papers.extract.btn.all" as any)}
+            onClick={handleExtractAll}
+            loading={extractAllProgress !== null || extractVariables.isPending}
+            disabled={extractAllProgress !== null}
+          />
+        )
       )}
       {allExtracted && (sessionPapers?.length ?? 0) > 0 && (
         <NextStepHint
