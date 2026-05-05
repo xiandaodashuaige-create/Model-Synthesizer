@@ -43,7 +43,11 @@ router.post("/sessions/:id/papers/:paperId/extract", async (req, res): Promise<v
     return;
   }
 
-  const paperContext = `Title: ${paper.title}\nAuthors: ${paper.authors.join(", ")} (${paper.year ?? "unknown year"})\nAbstract: ${paper.abstract ?? "No abstract available"}`;
+  // Prefer full text (uploaded PDF) when available — gives the LLM far richer context than just the abstract.
+  const baseHeader = `Title: ${paper.title}\nAuthors: ${paper.authors.join(", ")} (${paper.year ?? "unknown year"})`;
+  const paperContext = paper.fullText && paper.fullText.length > 500
+    ? `${baseHeader}\nFull text (truncated to keep within token limits):\n${paper.fullText.slice(0, 30000)}`
+    : `${baseHeader}\nAbstract: ${paper.abstract ?? "No abstract available"}`;
 
   const prompt = `You are a research methodology expert. Analyze this academic paper and extract the research variables from its theoretical model.
 

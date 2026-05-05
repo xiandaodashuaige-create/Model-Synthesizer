@@ -27,6 +27,7 @@ export const papersTable = pgTable("papers", {
   citationCount: integer("citation_count"),
   openAccessUrl: text("open_access_url"),
   url: text("url").notNull(),
+  fullText: text("full_text"),
   extracted: text("extracted").notNull().default("false"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });

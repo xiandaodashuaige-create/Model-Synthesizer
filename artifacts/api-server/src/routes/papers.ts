@@ -1,6 +1,30 @@
 import { Router, type IRouter } from "express";
+import { createRequire } from "node:module";
+import multer from "multer";
 import { eq, and } from "drizzle-orm";
 import { db, papersTable, sessionsTable } from "@workspace/db";
+import { openai } from "@workspace/integrations-openai-ai-server";
+
+// pdf-parse v2 ships an ESM-native class API (`PDFParse`); load lazily via
+// createRequire so it is only initialised on first upload, not at boot time.
+const require = createRequire(import.meta.url);
+type PdfParseCtor = new (opts: { data: Buffer | Uint8Array }) => {
+  getText: () => Promise<{ text: string; total: number }>;
+};
+let PDFParseClass: PdfParseCtor | null = null;
+function getPdfParser(): PdfParseCtor {
+  if (PDFParseClass) return PDFParseClass;
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const mod = require("pdf-parse") as { PDFParse?: PdfParseCtor };
+  if (!mod.PDFParse) throw new Error("pdf-parse did not export PDFParse class");
+  PDFParseClass = mod.PDFParse;
+  return PDFParseClass;
+}
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 25 * 1024 * 1024 }, // 25 MB
+});
 import {
   SearchPapersBody,
   LookupPaperBody,
@@ -483,6 +507,151 @@ router.post("/sessions/:id/papers", async (req, res): Promise<void> => {
 
   res.status(201).json(formatPaper(paper));
 });
+
+/**
+ * Upload a PDF: extract text, find a DOI in the first ~3 pages,
+ * if found use OpenAlex; otherwise ask the LLM to extract metadata
+ * from the first chunk of text. The full text is stored on the paper
+ * row so variable extraction can use it instead of just the abstract.
+ */
+router.post(
+  "/sessions/:id/papers/upload-pdf",
+  upload.single("file"),
+  async (req, res): Promise<void> => {
+    const params = ListSessionPapersParams.safeParse(req.params);
+    if (!params.success) {
+      res.status(400).json({ error: params.error.message });
+      return;
+    }
+    if (!req.file) {
+      res.status(400).json({ error: "No file uploaded (expected multipart field 'file')" });
+      return;
+    }
+
+    const sessionId = params.data.id;
+    const [session] = await db.select().from(sessionsTable).where(eq(sessionsTable.id, sessionId));
+    if (!session) {
+      res.status(404).json({ error: "Session not found" });
+      return;
+    }
+
+    let parsed: { text: string; total: number };
+    try {
+      const PDFParse = getPdfParser();
+      const parser = new PDFParse({ data: req.file.buffer });
+      parsed = await parser.getText();
+    } catch (err) {
+      req.log.warn({ err }, "PDF parse failed");
+      res.status(400).json({ error: "Could not read this PDF. Make sure it's a real PDF (not scanned images)." });
+      return;
+    }
+    const fullText = parsed.text.trim();
+    if (fullText.length < 200) {
+      res.status(400).json({
+        error:
+          "The PDF contains almost no extractable text (often the case for scanned documents). Please use a text-based PDF, or paste the DOI manually.",
+      });
+      return;
+    }
+
+    // Look for a DOI in the first ~6000 characters (≈ first 2 pages).
+    const head = fullText.slice(0, 6000);
+    const doiMatch = head.match(/10\.\d{4,9}\/[^\s"'<>?#)\]]+/);
+    let metadata: PaperResult | null = null;
+
+    if (doiMatch) {
+      const doi = doiMatch[0].replace(/[.,;:)\]]+$/, "");
+      try {
+        metadata = await lookupOnOpenAlex(doi);
+        if (metadata) metadata = await enrichWithUnpaywall(metadata);
+      } catch (err) {
+        req.log.warn({ err, doi }, "OpenAlex lookup from PDF DOI failed");
+      }
+    }
+
+    // Fall back to AI metadata extraction from the first chunk of text.
+    if (!metadata) {
+      try {
+        const aiPrompt = `Extract bibliographic metadata from this academic paper's first page. Return JSON only:
+{"title": "...", "authors": ["First Last", "..."], "year": 2023, "venue": "Journal Name or Conference", "abstract": "..."}
+
+If a field is unknown, use null. Authors should be an array of strings. Year is a number.
+
+First page text:
+${head}`;
+        const completion = await openai.chat.completions.create({
+          model: "gpt-5.4",
+          max_completion_tokens: 800,
+          messages: [{ role: "user", content: aiPrompt }],
+        });
+        const content = completion.choices[0]?.message?.content ?? "{}";
+        const cleaned = content.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+        const aiMeta = JSON.parse(cleaned) as {
+          title?: string | null; authors?: string[] | null; year?: number | null;
+          venue?: string | null; abstract?: string | null;
+        };
+        if (!aiMeta.title) {
+          res.status(422).json({ error: "Could not extract a title from this PDF. Please paste the DOI manually." });
+          return;
+        }
+        metadata = {
+          externalId: `upload:${Date.now()}:${(req.file.originalname || "pdf").slice(0, 40)}`,
+          title: aiMeta.title,
+          authors: Array.isArray(aiMeta.authors) ? aiMeta.authors.filter((s) => typeof s === "string") : [],
+          year: typeof aiMeta.year === "number" ? aiMeta.year : null,
+          venue: aiMeta.venue ?? null,
+          citationCount: null,
+          abstract: aiMeta.abstract ?? null,
+          openAccessUrl: null,
+          url: `pdf-upload://${(req.file.originalname || "uploaded.pdf").slice(0, 100)}`,
+        };
+      } catch (err) {
+        req.log.error({ err }, "AI metadata extraction failed");
+        res.status(502).json({ error: "Failed to extract metadata from this PDF. Please paste the DOI manually." });
+        return;
+      }
+    }
+
+    // Dedupe: if a paper with this externalId already exists in the session, just update full text.
+    const existing = await db
+      .select()
+      .from(papersTable)
+      .where(and(eq(papersTable.sessionId, sessionId), eq(papersTable.externalId, metadata.externalId)));
+
+    // Cap stored full text to keep DB rows bounded (≈ 80k chars / ~20k tokens worth of context).
+    const storedFullText = fullText.slice(0, 80000);
+
+    if (existing.length > 0) {
+      const [updated] = await db
+        .update(papersTable)
+        .set({ fullText: storedFullText, openAccessUrl: metadata.openAccessUrl ?? existing[0].openAccessUrl })
+        .where(eq(papersTable.id, existing[0].id))
+        .returning();
+      res.status(200).json({ ...formatPaper(updated), fullTextChars: storedFullText.length, alreadyExisted: true });
+      return;
+    }
+
+    const [paper] = await db
+      .insert(papersTable)
+      .values({
+        sessionId,
+        externalId: metadata.externalId,
+        title: metadata.title,
+        abstract: metadata.abstract ?? null,
+        authors: metadata.authors,
+        year: metadata.year ?? null,
+        venue: metadata.venue ?? null,
+        citationCount: metadata.citationCount ?? null,
+        openAccessUrl: metadata.openAccessUrl ?? null,
+        url: metadata.url,
+        fullText: storedFullText,
+        extracted: "false",
+      })
+      .returning();
+
+    res.status(201).json({ ...formatPaper(paper), fullTextChars: storedFullText.length, alreadyExisted: false });
+  },
+);
 
 router.delete("/sessions/:sessionId/papers/:paperId", async (req, res): Promise<void> => {
   const params = RemovePaperFromSessionParams.safeParse(req.params);

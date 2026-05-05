@@ -45,6 +45,9 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
     importedCount: number; skippedCount: number; failedCount: number; totalDois: number;
     failures: Array<{ identifier: string; reason: string }>;
   }>(null);
+  const [pdfUploading, setPdfUploading] = useState<string | null>(null);
+  const [pdfQueueProgress, setPdfQueueProgress] = useState<{ done: number; total: number } | null>(null);
+  const [pdfDragOver, setPdfDragOver] = useState(false);
 
   const { data: sessionPapers, isLoading: papersLoading } = useListSessionPapers(sessionId, {
     query: { enabled: !!sessionId, queryKey: getListSessionPapersQueryKey(sessionId) },
@@ -166,6 +169,58 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
         },
       },
     );
+  };
+
+  const uploadOnePdf = async (file: File): Promise<boolean> => {
+    if (!file.name.toLowerCase().endsWith(".pdf") && file.type !== "application/pdf") {
+      toast({ title: t("papers.pdf.toast.notPdf" as any, { name: file.name }), variant: "destructive" });
+      return false;
+    }
+    if (file.size > 25 * 1024 * 1024) {
+      toast({ title: t("papers.pdf.toast.tooLarge" as any, { name: file.name }), variant: "destructive" });
+      return false;
+    }
+    setPdfUploading(file.name);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const resp = await fetch(`/api/sessions/${sessionId}/papers/upload-pdf`, { method: "POST", body: fd });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({ error: "" }));
+        toast({
+          title: t("papers.pdf.toast.failed" as any, { name: file.name }),
+          description: err.error || `HTTP ${resp.status}`,
+          variant: "destructive",
+        });
+        return false;
+      }
+      const paper = await resp.json();
+      toast({ title: t("papers.pdf.toast.added" as any, { title: paper.title }) });
+      return true;
+    } catch {
+      toast({ title: t("papers.pdf.toast.failed" as any, { name: file.name }), variant: "destructive" });
+      return false;
+    }
+  };
+
+  const handlePdfFiles = async (files: FileList | File[]) => {
+    const arr = Array.from(files);
+    if (arr.length === 0) return;
+    let ok = 0, fail = 0;
+    setPdfQueueProgress({ done: 0, total: arr.length });
+    for (let i = 0; i < arr.length; i++) {
+      const success = await uploadOnePdf(arr[i]);
+      if (success) ok++; else fail++;
+      setPdfQueueProgress({ done: i + 1, total: arr.length });
+    }
+    setPdfUploading(null);
+    setPdfQueueProgress(null);
+    queryClient.invalidateQueries({ queryKey: getListSessionPapersQueryKey(sessionId) });
+    queryClient.invalidateQueries({ queryKey: getGetSessionSummaryQueryKey(sessionId) });
+    queryClient.invalidateQueries({ queryKey: getGetSessionQueryKey(sessionId) });
+    if (arr.length > 1) {
+      toast({ title: t("papers.pdf.summary" as any, { ok, fail }) });
+    }
   };
 
   const handleBulkFile = async (file: File) => {
@@ -340,16 +395,71 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
         </div>
         <div className="mt-3 flex items-start gap-2 p-3 rounded-md bg-muted/50 border border-border">
           <Info className="w-3.5 h-3.5 text-muted-foreground mt-0.5 shrink-0" />
-          <p className="text-xs text-muted-foreground leading-relaxed">{t("papers.lookup.uniNote" as any)}</p>
+          <p className="text-xs text-muted-foreground leading-relaxed whitespace-pre-line">{t("papers.lookup.uniNote" as any)}</p>
         </div>
       </div>
 
-      {/* Bulk import (BibTeX / RIS) */}
+      {/* Upload PDF papers — primary (most natural) way to add */}
+      <div
+        className={`bg-card border rounded-lg p-6 transition-colors ${
+          pdfDragOver ? "border-primary bg-primary/5" : "border-border"
+        }`}
+        onDragOver={(e) => { e.preventDefault(); setPdfDragOver(true); }}
+        onDragLeave={() => setPdfDragOver(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setPdfDragOver(false);
+          if (e.dataTransfer.files?.length) handlePdfFiles(e.dataTransfer.files);
+        }}
+        data-testid="dropzone-pdf"
+      >
+        <h2 className="text-lg font-semibold text-foreground mb-1 flex items-center gap-2">
+          <FileText className="w-5 h-5 text-primary" /> {t("papers.pdf.title" as any)}
+        </h2>
+        <p className="text-xs text-muted-foreground mb-4 leading-relaxed whitespace-pre-line">
+          {t("papers.pdf.hint" as any)}
+        </p>
+
+        <div className="flex flex-wrap items-center gap-3">
+          <label
+            className="inline-flex items-center gap-2 cursor-pointer rounded-md bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-5 text-sm font-medium"
+            data-testid="label-pdf-upload"
+          >
+            <Upload className="w-4 h-4" />
+            {t("papers.pdf.uploadFile" as any)}
+            <input
+              type="file"
+              accept="application/pdf,.pdf"
+              multiple
+              className="hidden"
+              data-testid="input-pdf-file"
+              disabled={pdfUploading !== null}
+              onChange={(e) => {
+                if (e.target.files?.length) handlePdfFiles(e.target.files);
+                e.target.value = "";
+              }}
+            />
+          </label>
+          <span className="text-xs text-muted-foreground">{t("papers.pdf.dragHint" as any)}</span>
+        </div>
+
+        {pdfUploading && (
+          <div className="mt-4 flex items-center gap-2 text-xs text-muted-foreground">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            <span>
+              {t("papers.pdf.working" as any, { name: pdfUploading })}
+              {pdfQueueProgress && pdfQueueProgress.total > 1 ? ` (${pdfQueueProgress.done}/${pdfQueueProgress.total})` : ""}
+            </span>
+          </div>
+        )}
+      </div>
+
+      {/* Bulk import (BibTeX / RIS) — advanced/secondary */}
       <div className="bg-card border border-border rounded-lg p-6">
         <h2 className="text-lg font-semibold text-foreground mb-1 flex items-center gap-2">
           <Upload className="w-5 h-5 text-primary" /> {t("papers.bulk.title" as any)}
         </h2>
-        <p className="text-xs text-muted-foreground mb-4 leading-relaxed">{t("papers.bulk.hint" as any)}</p>
+        <p className="text-xs text-muted-foreground mb-4 leading-relaxed whitespace-pre-line">{t("papers.bulk.hint" as any)}</p>
 
         <div className="flex flex-wrap items-center gap-3 mb-3">
           <label
