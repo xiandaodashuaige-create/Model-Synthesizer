@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useMemo, useState } from "react";
 import { useParams, Link } from "wouter";
 import {
   useListSessionModels,
@@ -9,7 +9,7 @@ import {
   getGetSessionQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Loader2, Share2, Sparkles, CheckCircle, ArrowRight, BookOpen } from "lucide-react";
+import { Loader2, Share2, Sparkles, CheckCircle, ArrowRight, BookOpen, Wand2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useT } from "@/lib/i18n";
 
@@ -20,15 +20,16 @@ const TYPE_COLORS: Record<string, string> = {
   dependent: "#16a34a",
 };
 
-function ModelGraph({ nodes, edges }: {
-  nodes: Array<{ variableId: number; variableName: string; type: string }>;
-  edges: Array<{ fromVariableId: number; toVariableId: number; relationship: string }>;
+function ModelGraph({ nodes, edges, paperTagById }: {
+  nodes: Array<{ variableId: number; variableName: string; type: string; paperId: number }>;
+  edges: Array<{ fromVariableId: number; toVariableId: number; relationship: string; evidencePaperId: number }>;
+  paperTagById: Map<number, string>;
 }) {
   if (!nodes.length) return null;
-  const WIDTH = 460;
-  const HEIGHT = 200;
-  const NODE_W = 120;
-  const NODE_H = 38;
+  const WIDTH = 540;
+  const HEIGHT = 220;
+  const NODE_W = 130;
+  const NODE_H = 44;
 
   const typeOrder = ["independent", "mediator", "moderator", "dependent"];
   const grouped: Record<string, typeof nodes> = {};
@@ -42,9 +43,9 @@ function ModelGraph({ nodes, edges }: {
     const ns = grouped[type] ?? [];
     const colX = ((colIdx + 0.5) / cols.length) * WIDTH;
     ns.forEach((node, rowIdx) => {
-      const totalH = ns.length * (NODE_H + 12) - 12;
+      const totalH = ns.length * (NODE_H + 14) - 14;
       const startY = (HEIGHT - totalH) / 2;
-      positions.set(node.variableId, { x: colX, y: startY + rowIdx * (NODE_H + 12) + NODE_H / 2 });
+      positions.set(node.variableId, { x: colX, y: startY + rowIdx * (NODE_H + 14) + NODE_H / 2 });
     });
   });
 
@@ -61,26 +62,60 @@ function ModelGraph({ nodes, edges }: {
         if (!from || !to) return null;
         const fromX = from.x + NODE_W / 2 - 2;
         const toX = to.x - NODE_W / 2 + 2;
+        const midX = (fromX + toX) / 2;
+        const midY = (from.y + to.y) / 2;
+        const tag = paperTagById.get(edge.evidencePaperId);
         return (
-          <line key={i} x1={fromX} y1={from.y} x2={toX} y2={to.y}
-            stroke="currentColor" strokeOpacity={0.2} strokeWidth={1.5}
-            markerEnd="url(#arr-m)" />
+          <g key={i}>
+            <line x1={fromX} y1={from.y} x2={toX} y2={to.y}
+              stroke="currentColor" strokeOpacity={0.25} strokeWidth={1.5}
+              markerEnd="url(#arr-m)" />
+            {tag && (
+              <g transform={`translate(${midX - 12}, ${midY - 7})`}>
+                <rect width={24} height={14} rx={3} fill="white" stroke="currentColor" strokeOpacity={0.3} strokeWidth={0.8} />
+                <text x={12} y={10} textAnchor="middle" fontSize={8} fontWeight={700} fill="#555">{tag}</text>
+              </g>
+            )}
+          </g>
         );
       })}
       {nodes.map((node) => {
         const pos = positions.get(node.variableId);
         if (!pos) return null;
         const color = TYPE_COLORS[node.type] ?? "#888";
+        const tag = paperTagById.get(node.paperId);
         return (
           <g key={node.variableId} transform={`translate(${pos.x - NODE_W / 2}, ${pos.y - NODE_H / 2})`}>
-            <rect width={NODE_W} height={NODE_H} rx={5} fill={color} fillOpacity={0.1} stroke={color} strokeOpacity={0.35} strokeWidth={1.5} />
-            <text x={NODE_W / 2} y={NODE_H / 2 + 4} textAnchor="middle" fontSize={9} fontWeight={600} fill={color}>
-              {node.variableName.length > 16 ? node.variableName.slice(0, 15) + "…" : node.variableName}
+            <rect width={NODE_W} height={NODE_H} rx={5} fill={color} fillOpacity={0.1} stroke={color} strokeOpacity={0.4} strokeWidth={1.5} />
+            <text x={NODE_W / 2} y={NODE_H / 2 - 2} textAnchor="middle" fontSize={9} fontWeight={600} fill={color}>
+              {node.variableName.length > 18 ? node.variableName.slice(0, 17) + "…" : node.variableName}
             </text>
+            {tag && (
+              <g transform={`translate(${NODE_W / 2 - 14}, ${NODE_H - 14})`}>
+                <rect width={28} height={11} rx={2} fill={color} fillOpacity={0.85} />
+                <text x={14} y={8.5} textAnchor="middle" fontSize={7} fontWeight={700} fill="white">{tag}</text>
+              </g>
+            )}
           </g>
         );
       })}
     </svg>
+  );
+}
+
+function PaperLegend({ refs }: { refs: Array<{ tag: string; label: string }> }) {
+  if (!refs.length) return null;
+  return (
+    <div className="mt-3 pt-3 border-t border-border/60 grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1">
+      {refs.map((r) => (
+        <div key={r.tag} className="flex items-start gap-2 text-[11px] text-muted-foreground">
+          <span className="shrink-0 inline-flex items-center justify-center min-w-[26px] h-4 px-1 rounded bg-muted text-foreground text-[10px] font-bold border border-border">
+            {r.tag}
+          </span>
+          <span className="truncate" title={r.label}>{r.label}</span>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -98,8 +133,17 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
     query: { enabled: !!sessionId, queryKey: getListSessionModelsQueryKey(sessionId) },
   });
 
+  const [userPrompt, setUserPrompt] = useState("");
+  const [numModels, setNumModels] = useState(3);
+
   const handleGenerate = () => {
-    generateModels.mutate({ id: sessionId }, {
+    generateModels.mutate({
+      id: sessionId,
+      data: {
+        userPrompt: userPrompt.trim() || undefined,
+        numModels,
+      },
+    }, {
       onSuccess: (result) => {
         queryClient.invalidateQueries({ queryKey: getListSessionModelsQueryKey(sessionId) });
         queryClient.invalidateQueries({ queryKey: getGetSessionSummaryQueryKey(sessionId) });
@@ -134,20 +178,59 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <p className="text-sm text-muted-foreground max-w-2xl">{t("models.intro" as any)}</p>
-        <button
-          data-testid="button-generate-models"
-          onClick={handleGenerate}
-          disabled={generateModels.isPending}
-          className="inline-flex items-center gap-2 rounded-md text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-5 disabled:opacity-50 disabled:pointer-events-none transition-colors"
-        >
-          {generateModels.isPending ? (
-            <><Loader2 className="w-4 h-4 animate-spin" /> {t("models.generating" as any)}</>
-          ) : (
-            <><Sparkles className="w-4 h-4" /> {t("models.generate" as any)}</>
-          )}
-        </button>
+      <p className="text-sm text-muted-foreground max-w-2xl">{t("models.intro" as any)}</p>
+
+      {/* Custom prompt panel */}
+      <div className="bg-card border border-border rounded-lg p-5 space-y-4">
+        <div className="flex items-center gap-2">
+          <Wand2 className="w-4 h-4 text-primary" />
+          <h3 className="text-sm font-semibold text-foreground">{t("models.custom.title" as any)}</h3>
+        </div>
+        <div>
+          <label htmlFor="user-prompt" className="text-xs font-medium text-muted-foreground mb-1.5 block">
+            {t("models.custom.promptLabel" as any)}
+          </label>
+          <textarea
+            id="user-prompt"
+            data-testid="textarea-user-prompt"
+            value={userPrompt}
+            onChange={(e) => setUserPrompt(e.target.value)}
+            placeholder={t("models.custom.promptPlaceholder" as any)}
+            rows={4}
+            className="w-full text-sm rounded-md border border-input bg-background px-3 py-2 ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring resize-y"
+          />
+          <p className="text-[11px] text-muted-foreground mt-1.5 whitespace-pre-line">{t("models.custom.promptHint" as any)}</p>
+        </div>
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div className="flex items-center gap-2">
+            <label htmlFor="num-models" className="text-xs font-medium text-muted-foreground">
+              {t("models.custom.numLabel" as any)}
+            </label>
+            <select
+              id="num-models"
+              data-testid="select-num-models"
+              value={numModels}
+              onChange={(e) => setNumModels(parseInt(e.target.value, 10))}
+              className="text-sm rounded-md border border-input bg-background px-3 py-1.5"
+            >
+              {[1, 2, 3, 4, 5].map((n) => (
+                <option key={n} value={n}>{n}</option>
+              ))}
+            </select>
+          </div>
+          <button
+            data-testid="button-generate-models"
+            onClick={handleGenerate}
+            disabled={generateModels.isPending}
+            className="inline-flex items-center gap-2 rounded-md text-sm font-semibold bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-5 disabled:opacity-50 disabled:pointer-events-none transition-colors"
+          >
+            {generateModels.isPending ? (
+              <><Loader2 className="w-4 h-4 animate-spin" /> {t("models.generating" as any)}</>
+            ) : (
+              <><Sparkles className="w-4 h-4" /> {models && models.length > 0 ? t("models.regenerate" as any) : t("models.generate" as any)}</>
+            )}
+          </button>
+        </div>
       </div>
 
       {isLoading ? (
@@ -188,9 +271,41 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
                 </div>
               </div>
 
-              <div className="mb-4 bg-background/50 rounded-lg p-4 border border-border overflow-hidden">
-                <ModelGraph nodes={model.nodes ?? []} edges={model.edges ?? []} />
-              </div>
+              {(() => {
+                const nodes = model.nodes ?? [];
+                const edges = model.edges ?? [];
+                // Build paper tags scoped to this model: P1, P2, … by first appearance.
+                const paperOrder: number[] = [];
+                const seen = new Set<number>();
+                for (const n of nodes) {
+                  if (!seen.has(n.paperId)) { seen.add(n.paperId); paperOrder.push(n.paperId); }
+                }
+                for (const e of edges) {
+                  if (!seen.has(e.evidencePaperId)) { seen.add(e.evidencePaperId); paperOrder.push(e.evidencePaperId); }
+                }
+                const paperTagById = new Map<number, string>();
+                paperOrder.forEach((pid, i) => paperTagById.set(pid, `P${i + 1}`));
+                const paperLabelById = new Map<number, string>();
+                for (const n of nodes) {
+                  if (!paperLabelById.has(n.paperId)) {
+                    const author = (n.paperAuthors ?? [])[0] ?? "Unknown";
+                    paperLabelById.set(n.paperId, `${author}${n.paperYear ? ` (${n.paperYear})` : ""} — ${n.paperTitle}`);
+                  }
+                }
+                for (const e of edges) {
+                  if (!paperLabelById.has(e.evidencePaperId)) {
+                    const author = (e.evidencePaperAuthors ?? [])[0] ?? "Unknown";
+                    paperLabelById.set(e.evidencePaperId, `${author}${e.evidencePaperYear ? ` (${e.evidencePaperYear})` : ""} — ${e.evidencePaperTitle}`);
+                  }
+                }
+                const refs = paperOrder.map((pid) => ({ tag: paperTagById.get(pid)!, label: paperLabelById.get(pid) ?? `Paper ${pid}` }));
+                return (
+                  <div className="mb-4 bg-background/50 rounded-lg p-4 border border-border overflow-hidden">
+                    <ModelGraph nodes={nodes} edges={edges} paperTagById={paperTagById} />
+                    <PaperLegend refs={refs} />
+                  </div>
+                );
+              })()}
 
               <div className="border-t border-border pt-4">
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">{t("common.rationale" as any)}</p>

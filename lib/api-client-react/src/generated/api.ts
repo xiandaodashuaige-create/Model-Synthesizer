@@ -22,6 +22,7 @@ import type {
   BulkImportPapersResponse,
   CreateSessionBody,
   ErrorResponse,
+  GenerateModelsBody,
   HealthStatus,
   LookupPaper404,
   LookupPaperBody,
@@ -1416,11 +1417,14 @@ export const getGenerateModelsUrl = (id: number) => {
 
 export const generateModels = async (
   id: number,
+  generateModelsBody?: GenerateModelsBody,
   options?: RequestInit,
 ): Promise<ResearchModel[]> => {
   return customFetch<ResearchModel[]>(getGenerateModelsUrl(id), {
     ...options,
     method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(generateModelsBody),
   });
 };
 
@@ -1431,14 +1435,14 @@ export const getGenerateModelsMutationOptions = <
   mutation?: UseMutationOptions<
     Awaited<ReturnType<typeof generateModels>>,
     TError,
-    { id: number },
+    { id: number; data: BodyType<GenerateModelsBody> },
     TContext
   >;
   request?: SecondParameter<typeof customFetch>;
 }): UseMutationOptions<
   Awaited<ReturnType<typeof generateModels>>,
   TError,
-  { id: number },
+  { id: number; data: BodyType<GenerateModelsBody> },
   TContext
 > => {
   const mutationKey = ["generateModels"];
@@ -1452,11 +1456,11 @@ export const getGenerateModelsMutationOptions = <
 
   const mutationFn: MutationFunction<
     Awaited<ReturnType<typeof generateModels>>,
-    { id: number }
+    { id: number; data: BodyType<GenerateModelsBody> }
   > = (props) => {
-    const { id } = props ?? {};
+    const { id, data } = props ?? {};
 
-    return generateModels(id, requestOptions);
+    return generateModels(id, data, requestOptions);
   };
 
   return { mutationFn, ...mutationOptions };
@@ -1465,7 +1469,7 @@ export const getGenerateModelsMutationOptions = <
 export type GenerateModelsMutationResult = NonNullable<
   Awaited<ReturnType<typeof generateModels>>
 >;
-
+export type GenerateModelsMutationBody = BodyType<GenerateModelsBody>;
 export type GenerateModelsMutationError = ErrorType<unknown>;
 
 /**
@@ -1478,14 +1482,14 @@ export const useGenerateModels = <
   mutation?: UseMutationOptions<
     Awaited<ReturnType<typeof generateModels>>,
     TError,
-    { id: number },
+    { id: number; data: BodyType<GenerateModelsBody> },
     TContext
   >;
   request?: SecondParameter<typeof customFetch>;
 }): UseMutationResult<
   Awaited<ReturnType<typeof generateModels>>,
   TError,
-  { id: number },
+  { id: number; data: BodyType<GenerateModelsBody> },
   TContext
 > => {
   return useMutation(getGenerateModelsMutationOptions(options));

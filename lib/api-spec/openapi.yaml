@@ -378,6 +378,26 @@ paths:
           required: true
           schema:
             type: integer
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                userPrompt:
+                  type: string
+                  description: Optional user-supplied direction/constraints/research focus to steer the AI
+                numModels:
+                  type: integer
+                  minimum: 1
+                  maximum: 5
+                  description: Number of model proposals to generate (default 3)
+                focusVariableIds:
+                  type: array
+                  items:
+                    type: integer
+                  description: Variable IDs the user wants the AI to prioritize including
       responses:
         "200":
           description: Generated model combinations

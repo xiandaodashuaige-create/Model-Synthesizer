@@ -310,6 +310,27 @@ export const GenerateModelsParams = zod.object({
   id: zod.coerce.number(),
 });
 
+export const generateModelsBodyNumModelsMax = 5;
+
+export const GenerateModelsBody = zod.object({
+  userPrompt: zod
+    .string()
+    .optional()
+    .describe(
+      "Optional user-supplied direction\/constraints\/research focus to steer the AI",
+    ),
+  numModels: zod
+    .number()
+    .min(1)
+    .max(generateModelsBodyNumModelsMax)
+    .optional()
+    .describe("Number of model proposals to generate (default 3)"),
+  focusVariableIds: zod
+    .array(zod.number())
+    .optional()
+    .describe("Variable IDs the user wants the AI to prioritize including"),
+});
+
 export const GenerateModelsResponseItem = zod.object({
   id: zod.number(),
   sessionId: zod.number(),

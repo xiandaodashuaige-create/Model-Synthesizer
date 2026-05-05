@@ -224,3 +224,16 @@ export interface ResearchModel {
 export type LookupPaper404 = {
   error: string;
 };
+
+export type GenerateModelsBody = {
+  /** Optional user-supplied direction/constraints/research focus to steer the AI */
+  userPrompt?: string;
+  /**
+   * Number of model proposals to generate (default 3)
+   * @minimum 1
+   * @maximum 5
+   */
+  numModels?: number;
+  /** Variable IDs the user wants the AI to prioritize including */
+  focusVariableIds?: number[];
+};
