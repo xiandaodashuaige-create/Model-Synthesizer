@@ -17,6 +17,8 @@ import type {
 } from "@tanstack/react-query";
 
 import type {
+  AddLiveModelEdgeBody,
+  AddLiveModelNodeBody,
   AddPaperBody,
   BulkImportPapersBody,
   BulkImportPapersResponse,
@@ -27,6 +29,8 @@ import type {
   GenerateModelsBody,
   GetSessionLearningStats200,
   HealthStatus,
+  ImportLiveModelFromModelBody,
+  LiveModelDetail,
   LookupPaper404,
   LookupPaperBody,
   Paper,
@@ -2197,4 +2201,523 @@ export const useSelectModel = <
   TContext
 > => {
   return useMutation(getSelectModelMutationOptions(options));
+};
+
+/**
+ * @summary Get the user's evolving research model for this session (lazy-creates on first access)
+ */
+export const getGetLiveModelUrl = (id: number) => {
+  return `/api/sessions/${id}/live-model`;
+};
+
+export const getLiveModel = async (
+  id: number,
+  options?: RequestInit,
+): Promise<LiveModelDetail> => {
+  return customFetch<LiveModelDetail>(getGetLiveModelUrl(id), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetLiveModelQueryKey = (id: number) => {
+  return [`/api/sessions/${id}/live-model`] as const;
+};
+
+export const getGetLiveModelQueryOptions = <
+  TData = Awaited<ReturnType<typeof getLiveModel>>,
+  TError = ErrorType<unknown>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getLiveModel>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetLiveModelQueryKey(id);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getLiveModel>>> = ({
+    signal,
+  }) => getLiveModel(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getLiveModel>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetLiveModelQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getLiveModel>>
+>;
+export type GetLiveModelQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get the user's evolving research model for this session (lazy-creates on first access)
+ */
+
+export function useGetLiveModel<
+  TData = Awaited<ReturnType<typeof getLiveModel>>,
+  TError = ErrorType<unknown>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getLiveModel>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetLiveModelQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Add a variable to the live model
+ */
+export const getAddLiveModelNodeUrl = (id: number) => {
+  return `/api/sessions/${id}/live-model/nodes`;
+};
+
+export const addLiveModelNode = async (
+  id: number,
+  addLiveModelNodeBody: AddLiveModelNodeBody,
+  options?: RequestInit,
+): Promise<LiveModelDetail> => {
+  return customFetch<LiveModelDetail>(getAddLiveModelNodeUrl(id), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(addLiveModelNodeBody),
+  });
+};
+
+export const getAddLiveModelNodeMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof addLiveModelNode>>,
+    TError,
+    { id: number; data: BodyType<AddLiveModelNodeBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof addLiveModelNode>>,
+  TError,
+  { id: number; data: BodyType<AddLiveModelNodeBody> },
+  TContext
+> => {
+  const mutationKey = ["addLiveModelNode"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof addLiveModelNode>>,
+    { id: number; data: BodyType<AddLiveModelNodeBody> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return addLiveModelNode(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AddLiveModelNodeMutationResult = NonNullable<
+  Awaited<ReturnType<typeof addLiveModelNode>>
+>;
+export type AddLiveModelNodeMutationBody = BodyType<AddLiveModelNodeBody>;
+export type AddLiveModelNodeMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Add a variable to the live model
+ */
+export const useAddLiveModelNode = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof addLiveModelNode>>,
+    TError,
+    { id: number; data: BodyType<AddLiveModelNodeBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof addLiveModelNode>>,
+  TError,
+  { id: number; data: BodyType<AddLiveModelNodeBody> },
+  TContext
+> => {
+  return useMutation(getAddLiveModelNodeMutationOptions(options));
+};
+
+/**
+ * @summary Remove a variable (and any edges touching it) from the live model
+ */
+export const getRemoveLiveModelNodeUrl = (id: number, nodeId: number) => {
+  return `/api/sessions/${id}/live-model/nodes/${nodeId}`;
+};
+
+export const removeLiveModelNode = async (
+  id: number,
+  nodeId: number,
+  options?: RequestInit,
+): Promise<LiveModelDetail> => {
+  return customFetch<LiveModelDetail>(getRemoveLiveModelNodeUrl(id, nodeId), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getRemoveLiveModelNodeMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof removeLiveModelNode>>,
+    TError,
+    { id: number; nodeId: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof removeLiveModelNode>>,
+  TError,
+  { id: number; nodeId: number },
+  TContext
+> => {
+  const mutationKey = ["removeLiveModelNode"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof removeLiveModelNode>>,
+    { id: number; nodeId: number }
+  > = (props) => {
+    const { id, nodeId } = props ?? {};
+
+    return removeLiveModelNode(id, nodeId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RemoveLiveModelNodeMutationResult = NonNullable<
+  Awaited<ReturnType<typeof removeLiveModelNode>>
+>;
+
+export type RemoveLiveModelNodeMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Remove a variable (and any edges touching it) from the live model
+ */
+export const useRemoveLiveModelNode = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof removeLiveModelNode>>,
+    TError,
+    { id: number; nodeId: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof removeLiveModelNode>>,
+  TError,
+  { id: number; nodeId: number },
+  TContext
+> => {
+  return useMutation(getRemoveLiveModelNodeMutationOptions(options));
+};
+
+/**
+ * @summary Add an edge to the live model. Must have provenance (paperId+citationText) OR be userAdded=true.
+ */
+export const getAddLiveModelEdgeUrl = (id: number) => {
+  return `/api/sessions/${id}/live-model/edges`;
+};
+
+export const addLiveModelEdge = async (
+  id: number,
+  addLiveModelEdgeBody: AddLiveModelEdgeBody,
+  options?: RequestInit,
+): Promise<LiveModelDetail> => {
+  return customFetch<LiveModelDetail>(getAddLiveModelEdgeUrl(id), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(addLiveModelEdgeBody),
+  });
+};
+
+export const getAddLiveModelEdgeMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof addLiveModelEdge>>,
+    TError,
+    { id: number; data: BodyType<AddLiveModelEdgeBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof addLiveModelEdge>>,
+  TError,
+  { id: number; data: BodyType<AddLiveModelEdgeBody> },
+  TContext
+> => {
+  const mutationKey = ["addLiveModelEdge"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof addLiveModelEdge>>,
+    { id: number; data: BodyType<AddLiveModelEdgeBody> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return addLiveModelEdge(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AddLiveModelEdgeMutationResult = NonNullable<
+  Awaited<ReturnType<typeof addLiveModelEdge>>
+>;
+export type AddLiveModelEdgeMutationBody = BodyType<AddLiveModelEdgeBody>;
+export type AddLiveModelEdgeMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Add an edge to the live model. Must have provenance (paperId+citationText) OR be userAdded=true.
+ */
+export const useAddLiveModelEdge = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof addLiveModelEdge>>,
+    TError,
+    { id: number; data: BodyType<AddLiveModelEdgeBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof addLiveModelEdge>>,
+  TError,
+  { id: number; data: BodyType<AddLiveModelEdgeBody> },
+  TContext
+> => {
+  return useMutation(getAddLiveModelEdgeMutationOptions(options));
+};
+
+/**
+ * @summary Remove an edge from the live model
+ */
+export const getRemoveLiveModelEdgeUrl = (id: number, edgeId: number) => {
+  return `/api/sessions/${id}/live-model/edges/${edgeId}`;
+};
+
+export const removeLiveModelEdge = async (
+  id: number,
+  edgeId: number,
+  options?: RequestInit,
+): Promise<LiveModelDetail> => {
+  return customFetch<LiveModelDetail>(getRemoveLiveModelEdgeUrl(id, edgeId), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getRemoveLiveModelEdgeMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof removeLiveModelEdge>>,
+    TError,
+    { id: number; edgeId: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof removeLiveModelEdge>>,
+  TError,
+  { id: number; edgeId: number },
+  TContext
+> => {
+  const mutationKey = ["removeLiveModelEdge"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof removeLiveModelEdge>>,
+    { id: number; edgeId: number }
+  > = (props) => {
+    const { id, edgeId } = props ?? {};
+
+    return removeLiveModelEdge(id, edgeId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RemoveLiveModelEdgeMutationResult = NonNullable<
+  Awaited<ReturnType<typeof removeLiveModelEdge>>
+>;
+
+export type RemoveLiveModelEdgeMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Remove an edge from the live model
+ */
+export const useRemoveLiveModelEdge = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof removeLiveModelEdge>>,
+    TError,
+    { id: number; edgeId: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof removeLiveModelEdge>>,
+  TError,
+  { id: number; edgeId: number },
+  TContext
+> => {
+  return useMutation(getRemoveLiveModelEdgeMutationOptions(options));
+};
+
+/**
+ * @summary One-click import all nodes+edges from an AI candidate model into the live model (preserves provenance)
+ */
+export const getImportLiveModelFromModelUrl = (id: number) => {
+  return `/api/sessions/${id}/live-model/import-from-model`;
+};
+
+export const importLiveModelFromModel = async (
+  id: number,
+  importLiveModelFromModelBody: ImportLiveModelFromModelBody,
+  options?: RequestInit,
+): Promise<LiveModelDetail> => {
+  return customFetch<LiveModelDetail>(getImportLiveModelFromModelUrl(id), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(importLiveModelFromModelBody),
+  });
+};
+
+export const getImportLiveModelFromModelMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof importLiveModelFromModel>>,
+    TError,
+    { id: number; data: BodyType<ImportLiveModelFromModelBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof importLiveModelFromModel>>,
+  TError,
+  { id: number; data: BodyType<ImportLiveModelFromModelBody> },
+  TContext
+> => {
+  const mutationKey = ["importLiveModelFromModel"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof importLiveModelFromModel>>,
+    { id: number; data: BodyType<ImportLiveModelFromModelBody> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return importLiveModelFromModel(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ImportLiveModelFromModelMutationResult = NonNullable<
+  Awaited<ReturnType<typeof importLiveModelFromModel>>
+>;
+export type ImportLiveModelFromModelMutationBody =
+  BodyType<ImportLiveModelFromModelBody>;
+export type ImportLiveModelFromModelMutationError = ErrorType<unknown>;
+
+/**
+ * @summary One-click import all nodes+edges from an AI candidate model into the live model (preserves provenance)
+ */
+export const useImportLiveModelFromModel = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof importLiveModelFromModel>>,
+    TError,
+    { id: number; data: BodyType<ImportLiveModelFromModelBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof importLiveModelFromModel>>,
+  TError,
+  { id: number; data: BodyType<ImportLiveModelFromModelBody> },
+  TContext
+> => {
+  return useMutation(getImportLiveModelFromModelMutationOptions(options));
 };

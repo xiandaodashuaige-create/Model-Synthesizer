@@ -93,3 +93,22 @@ pnpm --filter @workspace/db run push
 - Variable extraction may take ~10 seconds per paper
 - Model generation may take ~20 seconds
 - Search results are cached in-memory for 15 minutes to avoid redundant API calls
+
+## P1 LiveModel Feature (我的研究模型)
+
+Per-session user-curated research model with provenance-tracked edges. Independent tables (not jsonb).
+
+**Schema** (`lib/db/src/schema/live-models.ts`):
+- `live_models` — one row per session (unique `session_id`), with `version` counter for change tracking
+- `live_model_nodes` — variables included by the user (unique `(live_model_id, variable_id)`)
+- `live_model_edges` — relationships with provenance fields (`provenance_paper_id`, `provenance_citation_text`, `confidence`, `user_added`)
+
+**Backend** (`artifacts/api-server/src/routes/live-model.ts`): 6 REST endpoints under `/sessions/{id}/live-model`. Race-safe lazy-create (`ON CONFLICT DO NOTHING` + SELECT). All multi-step writes wrapped in `db.transaction`. Session-scope validation on `variableId`, `sourceModelId`, `provenancePaperId` to prevent cross-session leakage.
+
+**Frontend** (`artifacts/research-model/src/pages/sessions/live-model.tsx`):
+- 4th tab "我的模型" with reactive count badge (vars + edges)
+- Graph (dagre auto-layout) + variable pool sidebar (➕ to add) + edge list with inline "+ 添加关系" form
+- Manual edges flagged with "无出处" amber badge until citation added (P2)
+- One-click "作为我的研究模型基础" import button on each AI candidate model
+
+**i18n note**: interpolation uses single-brace `{key}` syntax, NOT `{{key}}`.

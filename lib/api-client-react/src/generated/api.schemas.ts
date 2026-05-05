@@ -221,6 +221,63 @@ export interface ResearchModel {
   createdAt: string;
 }
 
+export interface LiveModelNodeOut {
+  id: number;
+  variableId: number;
+  variableName: string;
+  variableType: string;
+  paperId: number;
+  /** @nullable */
+  sourceModelId?: number | null;
+  userAdded: boolean;
+  createdAt: string;
+}
+
+export interface LiveModelEdgeOut {
+  id: number;
+  fromVariableId: number;
+  toVariableId: number;
+  fromVariableName: string;
+  toVariableName: string;
+  relationship: string;
+  /** @nullable */
+  provenancePaperId?: number | null;
+  /** @nullable */
+  provenancePaperTitle?: string | null;
+  /** @nullable */
+  provenanceCitationText?: string | null;
+  /** @nullable */
+  provenanceFigureThumbnailUrl?: string | null;
+  /** @nullable */
+  provenanceFigureSourceUrl?: string | null;
+  /** @nullable */
+  provenanceFigureSourceDomain?: string | null;
+  confidence: string;
+  /** @nullable */
+  sourceModelId?: number | null;
+  userAdded: boolean;
+  /** True if a paperId+citationText backs this edge. */
+  hasProvenance: boolean;
+  createdAt: string;
+}
+
+export type LiveModelDetailLiveModel = {
+  id: number;
+  sessionId: number;
+  notes: string;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export interface LiveModelDetail {
+  liveModel: LiveModelDetailLiveModel;
+  nodes: LiveModelNodeOut[];
+  edges: LiveModelEdgeOut[];
+  /** Number of edges with no provenance (paper backing) — UI should warn. */
+  unsupportedEdgeCount: number;
+}
+
 export type LookupPaper404 = {
   error: string;
 };
@@ -427,4 +484,50 @@ export type UpdateModelBody = {
   rationale?: string;
   nodes?: UpdateModelBodyNodesItem[];
   edges?: UpdateModelBodyEdgesItem[];
+};
+
+export type AddLiveModelNodeBody = {
+  variableId: number;
+  /** AI candidate model this variable was picked from (for provenance) */
+  sourceModelId?: number | null;
+  userAdded?: boolean;
+};
+
+export type AddLiveModelEdgeBodyRelationship =
+  (typeof AddLiveModelEdgeBodyRelationship)[keyof typeof AddLiveModelEdgeBodyRelationship];
+
+export const AddLiveModelEdgeBodyRelationship = {
+  positive: "positive",
+  negative: "negative",
+  mediates: "mediates",
+  moderates: "moderates",
+} as const;
+
+export type AddLiveModelEdgeBodyConfidence =
+  (typeof AddLiveModelEdgeBodyConfidence)[keyof typeof AddLiveModelEdgeBodyConfidence];
+
+export const AddLiveModelEdgeBodyConfidence = {
+  high: "high",
+  medium: "medium",
+  low: "low",
+} as const;
+
+export type AddLiveModelEdgeBody = {
+  fromVariableId: number;
+  toVariableId: number;
+  relationship: AddLiveModelEdgeBodyRelationship;
+  provenancePaperId?: number | null;
+  provenanceCitationText?: string | null;
+  provenanceFigureThumbnailUrl?: string | null;
+  provenanceFigureSourceUrl?: string | null;
+  provenanceFigureSourceDomain?: string | null;
+  confidence?: AddLiveModelEdgeBodyConfidence;
+  sourceModelId?: number | null;
+  userAdded?: boolean;
+};
+
+export type ImportLiveModelFromModelBody = {
+  modelId: number;
+  /** If true, clears existing nodes/edges before importing. */
+  replace?: boolean;
 };

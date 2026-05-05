@@ -806,6 +806,201 @@ paths:
               schema:
                 $ref: "#/components/schemas/ResearchModel"
 
+  /sessions/{id}/live-model:
+    get:
+      operationId: getLiveModel
+      tags: [live-model]
+      summary: Get the user's evolving research model for this session (lazy-creates on first access)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Live model with nodes and edges
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LiveModelDetail"
+
+  /sessions/{id}/live-model/nodes:
+    post:
+      operationId: addLiveModelNode
+      tags: [live-model]
+      summary: Add a variable to the live model
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [variableId]
+              properties:
+                variableId:
+                  type: integer
+                sourceModelId:
+                  type: integer
+                  nullable: true
+                  description: AI candidate model this variable was picked from (for provenance)
+                userAdded:
+                  type: boolean
+                  default: false
+      responses:
+        "200":
+          description: Updated live model
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LiveModelDetail"
+
+  /sessions/{id}/live-model/nodes/{nodeId}:
+    delete:
+      operationId: removeLiveModelNode
+      tags: [live-model]
+      summary: Remove a variable (and any edges touching it) from the live model
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: nodeId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Updated live model
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LiveModelDetail"
+
+  /sessions/{id}/live-model/edges:
+    post:
+      operationId: addLiveModelEdge
+      tags: [live-model]
+      summary: Add an edge to the live model. Must have provenance (paperId+citationText) OR be userAdded=true.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [fromVariableId, toVariableId, relationship]
+              properties:
+                fromVariableId:
+                  type: integer
+                toVariableId:
+                  type: integer
+                relationship:
+                  type: string
+                  enum: [positive, negative, mediates, moderates]
+                provenancePaperId:
+                  type: integer
+                  nullable: true
+                provenanceCitationText:
+                  type: string
+                  nullable: true
+                provenanceFigureThumbnailUrl:
+                  type: string
+                  nullable: true
+                provenanceFigureSourceUrl:
+                  type: string
+                  nullable: true
+                provenanceFigureSourceDomain:
+                  type: string
+                  nullable: true
+                confidence:
+                  type: string
+                  enum: [high, medium, low]
+                  default: medium
+                sourceModelId:
+                  type: integer
+                  nullable: true
+                userAdded:
+                  type: boolean
+                  default: false
+      responses:
+        "200":
+          description: Updated live model
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LiveModelDetail"
+
+  /sessions/{id}/live-model/edges/{edgeId}:
+    delete:
+      operationId: removeLiveModelEdge
+      tags: [live-model]
+      summary: Remove an edge from the live model
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: edgeId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Updated live model
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LiveModelDetail"
+
+  /sessions/{id}/live-model/import-from-model:
+    post:
+      operationId: importLiveModelFromModel
+      tags: [live-model]
+      summary: One-click import all nodes+edges from an AI candidate model into the live model (preserves provenance)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [modelId]
+              properties:
+                modelId:
+                  type: integer
+                replace:
+                  type: boolean
+                  default: false
+                  description: If true, clears existing nodes/edges before importing.
+      responses:
+        "200":
+          description: Updated live model
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LiveModelDetail"
+
 components:
   schemas:
     HealthStatus:
@@ -1251,3 +1446,116 @@ components:
         - evidencePaperTitle
         - evidencePaperAuthors
         - evidenceCitationText
+    LiveModelNodeOut:
+      type: object
+      properties:
+        id:
+          type: integer
+        variableId:
+          type: integer
+        variableName:
+          type: string
+        variableType:
+          type: string
+        paperId:
+          type: integer
+        sourceModelId:
+          type: ["integer", "null"]
+        userAdded:
+          type: boolean
+        createdAt:
+          type: string
+      required:
+        - id
+        - variableId
+        - variableName
+        - variableType
+        - paperId
+        - userAdded
+        - createdAt
+
+    LiveModelEdgeOut:
+      type: object
+      properties:
+        id:
+          type: integer
+        fromVariableId:
+          type: integer
+        toVariableId:
+          type: integer
+        fromVariableName:
+          type: string
+        toVariableName:
+          type: string
+        relationship:
+          type: string
+        provenancePaperId:
+          type: ["integer", "null"]
+        provenancePaperTitle:
+          type: ["string", "null"]
+        provenanceCitationText:
+          type: ["string", "null"]
+        provenanceFigureThumbnailUrl:
+          type: ["string", "null"]
+        provenanceFigureSourceUrl:
+          type: ["string", "null"]
+        provenanceFigureSourceDomain:
+          type: ["string", "null"]
+        confidence:
+          type: string
+        sourceModelId:
+          type: ["integer", "null"]
+        userAdded:
+          type: boolean
+        hasProvenance:
+          type: boolean
+          description: True if a paperId+citationText backs this edge.
+        createdAt:
+          type: string
+      required:
+        - id
+        - fromVariableId
+        - toVariableId
+        - fromVariableName
+        - toVariableName
+        - relationship
+        - confidence
+        - userAdded
+        - hasProvenance
+        - createdAt
+
+    LiveModelDetail:
+      type: object
+      properties:
+        liveModel:
+          type: object
+          properties:
+            id:
+              type: integer
+            sessionId:
+              type: integer
+            notes:
+              type: string
+            version:
+              type: integer
+            createdAt:
+              type: string
+            updatedAt:
+              type: string
+          required: [id, sessionId, notes, version, createdAt, updatedAt]
+        nodes:
+          type: array
+          items:
+            $ref: "#/components/schemas/LiveModelNodeOut"
+        edges:
+          type: array
+          items:
+            $ref: "#/components/schemas/LiveModelEdgeOut"
+        unsupportedEdgeCount:
+          type: integer
+          description: Number of edges with no provenance (paper backing) — UI should warn.
+      required:
+        - liveModel
+        - nodes
+        - edges
+        - unsupportedEdgeCount

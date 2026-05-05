@@ -5,6 +5,8 @@ import {
   getGetSessionQueryKey,
   useGetSessionSummary,
   getGetSessionSummaryQueryKey,
+  useGetLiveModel,
+  getGetLiveModelQueryKey,
 } from "@workspace/api-client-react";
 import { ChevronRight, Loader2, Home as HomeIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -24,6 +26,11 @@ export default function SessionLayout({ children }: { children: React.ReactNode 
   const { data: summary } = useGetSessionSummary(sessionId, {
     query: { enabled: !!sessionId, queryKey: getGetSessionSummaryQueryKey(sessionId) },
   });
+
+  const { data: liveModel } = useGetLiveModel(sessionId, {
+    query: { enabled: !!sessionId, queryKey: getGetLiveModelQueryKey(sessionId) },
+  });
+  const liveCount = (liveModel?.nodes?.length ?? 0) + (liveModel?.edges?.length ?? 0);
 
   if (isSessionLoading) {
     return (
@@ -48,6 +55,7 @@ export default function SessionLayout({ children }: { children: React.ReactNode 
     { name: t("ws.tab.papers" as any), href: `/sessions/${sessionId}/papers`, count: summary?.paperCount ?? 0 },
     { name: t("ws.tab.variables" as any), href: `/sessions/${sessionId}/variables`, count: summary?.variableCount ?? 0 },
     { name: t("ws.tab.models" as any), href: `/sessions/${sessionId}/models`, count: summary?.modelCount ?? 0 },
+    { name: t("ws.tab.live" as any), href: `/sessions/${sessionId}/live-model`, count: liveCount },
   ];
 
   const hasSelectedModel = (summary?.modelCount ?? 0) > 0 && !!(summary as any)?.hasSelectedModel;

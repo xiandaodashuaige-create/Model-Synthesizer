@@ -7,15 +7,18 @@ import {
   useSelectModel,
   useGetSessionLearningStats,
   useListSessionVariables,
+  useImportLiveModelFromModel,
   getListSessionModelsQueryKey,
   getGetSessionSummaryQueryKey,
   getGetSessionQueryKey,
   getGetSessionLearningStatsQueryKey,
   getListSessionVariablesQueryKey,
+  getGetLiveModelQueryKey,
 } from "@workspace/api-client-react";
 import { ModelAssistantChat } from "@/components/model-assistant-chat";
 import { useQueryClient } from "@tanstack/react-query";
-import { Loader2, Share2, Sparkles, CheckCircle, ArrowRight, BookOpen, Wand2 } from "lucide-react";
+import { Loader2, Share2, Sparkles, CheckCircle, ArrowRight, BookOpen, Wand2, GitBranch } from "lucide-react";
+import { useLocation } from "wouter";
 import { useToast } from "@/hooks/use-toast";
 import { useT } from "@/lib/i18n";
 
@@ -204,6 +207,8 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
 
   const generateModels = useGenerateModels();
   const selectModel = useSelectModel();
+  const importLiveModel = useImportLiveModelFromModel();
+  const [, navigate] = useLocation();
 
   const { data: models, isLoading } = useListSessionModels(sessionId, {
     query: { enabled: !!sessionId, queryKey: getListSessionModelsQueryKey(sessionId) },
@@ -274,6 +279,27 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
         });
       },
     });
+  };
+
+  const handleUseAsBase = (modelId: number, name: string) => {
+    importLiveModel.mutate(
+      { id: sessionId, data: { modelId, replace: false } },
+      {
+        onSuccess: (detail) => {
+          queryClient.invalidateQueries({ queryKey: getGetLiveModelQueryKey(sessionId) });
+          toast({
+            title: t("live.toast.imported" as any),
+            description: t("live.toast.importedDesc" as any, {
+              name,
+              vars: detail.nodes.length,
+              edges: detail.edges.length,
+            }),
+          });
+          navigate(`/sessions/${sessionId}/live-model`);
+        },
+        onError: () => toast({ title: t("live.toast.failed" as any), variant: "destructive" }),
+      },
+    );
   };
 
   const handleSelect = (modelId: number, name: string) => {
@@ -392,6 +418,16 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
                     className="inline-flex items-center gap-1.5 rounded-md text-xs font-medium h-8 px-3 bg-secondary text-secondary-foreground hover:bg-accent transition-colors">
                     {t("common.viewDetails" as any)} <ArrowRight className="w-3.5 h-3.5" />
                   </Link>
+                  <button
+                    data-testid={`button-use-as-base-${model.id}`}
+                    onClick={() => handleUseAsBase(model.id, model.name)}
+                    disabled={importLiveModel.isPending}
+                    title={t("models.useAsBase.tip" as any)}
+                    className="inline-flex items-center gap-1.5 rounded-md text-xs font-semibold h-8 px-3 bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
+                  >
+                    <GitBranch className="w-3.5 h-3.5" />
+                    {t("models.useAsBase" as any)}
+                  </button>
                   {!model.selected && (
                     <button
                       data-testid={`button-select-model-${model.id}`}

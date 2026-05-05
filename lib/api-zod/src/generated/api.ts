@@ -742,3 +742,395 @@ export const SelectModelResponse = zod.object({
   ),
   createdAt: zod.string(),
 });
+
+/**
+ * @summary Get the user's evolving research model for this session (lazy-creates on first access)
+ */
+export const GetLiveModelParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const GetLiveModelResponse = zod.object({
+  liveModel: zod.object({
+    id: zod.number(),
+    sessionId: zod.number(),
+    notes: zod.string(),
+    version: zod.number(),
+    createdAt: zod.string(),
+    updatedAt: zod.string(),
+  }),
+  nodes: zod.array(
+    zod.object({
+      id: zod.number(),
+      variableId: zod.number(),
+      variableName: zod.string(),
+      variableType: zod.string(),
+      paperId: zod.number(),
+      sourceModelId: zod.number().nullish(),
+      userAdded: zod.boolean(),
+      createdAt: zod.string(),
+    }),
+  ),
+  edges: zod.array(
+    zod.object({
+      id: zod.number(),
+      fromVariableId: zod.number(),
+      toVariableId: zod.number(),
+      fromVariableName: zod.string(),
+      toVariableName: zod.string(),
+      relationship: zod.string(),
+      provenancePaperId: zod.number().nullish(),
+      provenancePaperTitle: zod.string().nullish(),
+      provenanceCitationText: zod.string().nullish(),
+      provenanceFigureThumbnailUrl: zod.string().nullish(),
+      provenanceFigureSourceUrl: zod.string().nullish(),
+      provenanceFigureSourceDomain: zod.string().nullish(),
+      confidence: zod.string(),
+      sourceModelId: zod.number().nullish(),
+      userAdded: zod.boolean(),
+      hasProvenance: zod
+        .boolean()
+        .describe("True if a paperId+citationText backs this edge."),
+      createdAt: zod.string(),
+    }),
+  ),
+  unsupportedEdgeCount: zod
+    .number()
+    .describe(
+      "Number of edges with no provenance (paper backing) — UI should warn.",
+    ),
+});
+
+/**
+ * @summary Add a variable to the live model
+ */
+export const AddLiveModelNodeParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const addLiveModelNodeBodyUserAddedDefault = false;
+
+export const AddLiveModelNodeBody = zod.object({
+  variableId: zod.number(),
+  sourceModelId: zod
+    .number()
+    .nullish()
+    .describe(
+      "AI candidate model this variable was picked from (for provenance)",
+    ),
+  userAdded: zod.boolean().default(addLiveModelNodeBodyUserAddedDefault),
+});
+
+export const AddLiveModelNodeResponse = zod.object({
+  liveModel: zod.object({
+    id: zod.number(),
+    sessionId: zod.number(),
+    notes: zod.string(),
+    version: zod.number(),
+    createdAt: zod.string(),
+    updatedAt: zod.string(),
+  }),
+  nodes: zod.array(
+    zod.object({
+      id: zod.number(),
+      variableId: zod.number(),
+      variableName: zod.string(),
+      variableType: zod.string(),
+      paperId: zod.number(),
+      sourceModelId: zod.number().nullish(),
+      userAdded: zod.boolean(),
+      createdAt: zod.string(),
+    }),
+  ),
+  edges: zod.array(
+    zod.object({
+      id: zod.number(),
+      fromVariableId: zod.number(),
+      toVariableId: zod.number(),
+      fromVariableName: zod.string(),
+      toVariableName: zod.string(),
+      relationship: zod.string(),
+      provenancePaperId: zod.number().nullish(),
+      provenancePaperTitle: zod.string().nullish(),
+      provenanceCitationText: zod.string().nullish(),
+      provenanceFigureThumbnailUrl: zod.string().nullish(),
+      provenanceFigureSourceUrl: zod.string().nullish(),
+      provenanceFigureSourceDomain: zod.string().nullish(),
+      confidence: zod.string(),
+      sourceModelId: zod.number().nullish(),
+      userAdded: zod.boolean(),
+      hasProvenance: zod
+        .boolean()
+        .describe("True if a paperId+citationText backs this edge."),
+      createdAt: zod.string(),
+    }),
+  ),
+  unsupportedEdgeCount: zod
+    .number()
+    .describe(
+      "Number of edges with no provenance (paper backing) — UI should warn.",
+    ),
+});
+
+/**
+ * @summary Remove a variable (and any edges touching it) from the live model
+ */
+export const RemoveLiveModelNodeParams = zod.object({
+  id: zod.coerce.number(),
+  nodeId: zod.coerce.number(),
+});
+
+export const RemoveLiveModelNodeResponse = zod.object({
+  liveModel: zod.object({
+    id: zod.number(),
+    sessionId: zod.number(),
+    notes: zod.string(),
+    version: zod.number(),
+    createdAt: zod.string(),
+    updatedAt: zod.string(),
+  }),
+  nodes: zod.array(
+    zod.object({
+      id: zod.number(),
+      variableId: zod.number(),
+      variableName: zod.string(),
+      variableType: zod.string(),
+      paperId: zod.number(),
+      sourceModelId: zod.number().nullish(),
+      userAdded: zod.boolean(),
+      createdAt: zod.string(),
+    }),
+  ),
+  edges: zod.array(
+    zod.object({
+      id: zod.number(),
+      fromVariableId: zod.number(),
+      toVariableId: zod.number(),
+      fromVariableName: zod.string(),
+      toVariableName: zod.string(),
+      relationship: zod.string(),
+      provenancePaperId: zod.number().nullish(),
+      provenancePaperTitle: zod.string().nullish(),
+      provenanceCitationText: zod.string().nullish(),
+      provenanceFigureThumbnailUrl: zod.string().nullish(),
+      provenanceFigureSourceUrl: zod.string().nullish(),
+      provenanceFigureSourceDomain: zod.string().nullish(),
+      confidence: zod.string(),
+      sourceModelId: zod.number().nullish(),
+      userAdded: zod.boolean(),
+      hasProvenance: zod
+        .boolean()
+        .describe("True if a paperId+citationText backs this edge."),
+      createdAt: zod.string(),
+    }),
+  ),
+  unsupportedEdgeCount: zod
+    .number()
+    .describe(
+      "Number of edges with no provenance (paper backing) — UI should warn.",
+    ),
+});
+
+/**
+ * @summary Add an edge to the live model. Must have provenance (paperId+citationText) OR be userAdded=true.
+ */
+export const AddLiveModelEdgeParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const addLiveModelEdgeBodyConfidenceDefault = `medium`;
+export const addLiveModelEdgeBodyUserAddedDefault = false;
+
+export const AddLiveModelEdgeBody = zod.object({
+  fromVariableId: zod.number(),
+  toVariableId: zod.number(),
+  relationship: zod.enum(["positive", "negative", "mediates", "moderates"]),
+  provenancePaperId: zod.number().nullish(),
+  provenanceCitationText: zod.string().nullish(),
+  provenanceFigureThumbnailUrl: zod.string().nullish(),
+  provenanceFigureSourceUrl: zod.string().nullish(),
+  provenanceFigureSourceDomain: zod.string().nullish(),
+  confidence: zod
+    .enum(["high", "medium", "low"])
+    .default(addLiveModelEdgeBodyConfidenceDefault),
+  sourceModelId: zod.number().nullish(),
+  userAdded: zod.boolean().default(addLiveModelEdgeBodyUserAddedDefault),
+});
+
+export const AddLiveModelEdgeResponse = zod.object({
+  liveModel: zod.object({
+    id: zod.number(),
+    sessionId: zod.number(),
+    notes: zod.string(),
+    version: zod.number(),
+    createdAt: zod.string(),
+    updatedAt: zod.string(),
+  }),
+  nodes: zod.array(
+    zod.object({
+      id: zod.number(),
+      variableId: zod.number(),
+      variableName: zod.string(),
+      variableType: zod.string(),
+      paperId: zod.number(),
+      sourceModelId: zod.number().nullish(),
+      userAdded: zod.boolean(),
+      createdAt: zod.string(),
+    }),
+  ),
+  edges: zod.array(
+    zod.object({
+      id: zod.number(),
+      fromVariableId: zod.number(),
+      toVariableId: zod.number(),
+      fromVariableName: zod.string(),
+      toVariableName: zod.string(),
+      relationship: zod.string(),
+      provenancePaperId: zod.number().nullish(),
+      provenancePaperTitle: zod.string().nullish(),
+      provenanceCitationText: zod.string().nullish(),
+      provenanceFigureThumbnailUrl: zod.string().nullish(),
+      provenanceFigureSourceUrl: zod.string().nullish(),
+      provenanceFigureSourceDomain: zod.string().nullish(),
+      confidence: zod.string(),
+      sourceModelId: zod.number().nullish(),
+      userAdded: zod.boolean(),
+      hasProvenance: zod
+        .boolean()
+        .describe("True if a paperId+citationText backs this edge."),
+      createdAt: zod.string(),
+    }),
+  ),
+  unsupportedEdgeCount: zod
+    .number()
+    .describe(
+      "Number of edges with no provenance (paper backing) — UI should warn.",
+    ),
+});
+
+/**
+ * @summary Remove an edge from the live model
+ */
+export const RemoveLiveModelEdgeParams = zod.object({
+  id: zod.coerce.number(),
+  edgeId: zod.coerce.number(),
+});
+
+export const RemoveLiveModelEdgeResponse = zod.object({
+  liveModel: zod.object({
+    id: zod.number(),
+    sessionId: zod.number(),
+    notes: zod.string(),
+    version: zod.number(),
+    createdAt: zod.string(),
+    updatedAt: zod.string(),
+  }),
+  nodes: zod.array(
+    zod.object({
+      id: zod.number(),
+      variableId: zod.number(),
+      variableName: zod.string(),
+      variableType: zod.string(),
+      paperId: zod.number(),
+      sourceModelId: zod.number().nullish(),
+      userAdded: zod.boolean(),
+      createdAt: zod.string(),
+    }),
+  ),
+  edges: zod.array(
+    zod.object({
+      id: zod.number(),
+      fromVariableId: zod.number(),
+      toVariableId: zod.number(),
+      fromVariableName: zod.string(),
+      toVariableName: zod.string(),
+      relationship: zod.string(),
+      provenancePaperId: zod.number().nullish(),
+      provenancePaperTitle: zod.string().nullish(),
+      provenanceCitationText: zod.string().nullish(),
+      provenanceFigureThumbnailUrl: zod.string().nullish(),
+      provenanceFigureSourceUrl: zod.string().nullish(),
+      provenanceFigureSourceDomain: zod.string().nullish(),
+      confidence: zod.string(),
+      sourceModelId: zod.number().nullish(),
+      userAdded: zod.boolean(),
+      hasProvenance: zod
+        .boolean()
+        .describe("True if a paperId+citationText backs this edge."),
+      createdAt: zod.string(),
+    }),
+  ),
+  unsupportedEdgeCount: zod
+    .number()
+    .describe(
+      "Number of edges with no provenance (paper backing) — UI should warn.",
+    ),
+});
+
+/**
+ * @summary One-click import all nodes+edges from an AI candidate model into the live model (preserves provenance)
+ */
+export const ImportLiveModelFromModelParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const importLiveModelFromModelBodyReplaceDefault = false;
+
+export const ImportLiveModelFromModelBody = zod.object({
+  modelId: zod.number(),
+  replace: zod
+    .boolean()
+    .default(importLiveModelFromModelBodyReplaceDefault)
+    .describe("If true, clears existing nodes\/edges before importing."),
+});
+
+export const ImportLiveModelFromModelResponse = zod.object({
+  liveModel: zod.object({
+    id: zod.number(),
+    sessionId: zod.number(),
+    notes: zod.string(),
+    version: zod.number(),
+    createdAt: zod.string(),
+    updatedAt: zod.string(),
+  }),
+  nodes: zod.array(
+    zod.object({
+      id: zod.number(),
+      variableId: zod.number(),
+      variableName: zod.string(),
+      variableType: zod.string(),
+      paperId: zod.number(),
+      sourceModelId: zod.number().nullish(),
+      userAdded: zod.boolean(),
+      createdAt: zod.string(),
+    }),
+  ),
+  edges: zod.array(
+    zod.object({
+      id: zod.number(),
+      fromVariableId: zod.number(),
+      toVariableId: zod.number(),
+      fromVariableName: zod.string(),
+      toVariableName: zod.string(),
+      relationship: zod.string(),
+      provenancePaperId: zod.number().nullish(),
+      provenancePaperTitle: zod.string().nullish(),
+      provenanceCitationText: zod.string().nullish(),
+      provenanceFigureThumbnailUrl: zod.string().nullish(),
+      provenanceFigureSourceUrl: zod.string().nullish(),
+      provenanceFigureSourceDomain: zod.string().nullish(),
+      confidence: zod.string(),
+      sourceModelId: zod.number().nullish(),
+      userAdded: zod.boolean(),
+      hasProvenance: zod
+        .boolean()
+        .describe("True if a paperId+citationText backs this edge."),
+      createdAt: zod.string(),
+    }),
+  ),
+  unsupportedEdgeCount: zod
+    .number()
+    .describe(
+      "Number of edges with no provenance (paper backing) — UI should warn.",
+    ),
+});
