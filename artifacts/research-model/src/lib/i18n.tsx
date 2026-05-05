@@ -170,8 +170,9 @@ const dict = {
     "models.assistant.searchImages.close": "关闭",
     "models.assistant.searchImages.hint": "点击缩略图放大查看；点击「查看原文」跳转到包含该图的论文/网页。",
     "models.assistant.searchImages.actualQuery": "实际搜索",
-    "models.assistant.searchImages.rawMode": "原样搜索（不加强关键词）",
-    "models.assistant.searchImages.tip": "建议用英文学术关键词，例如「AI streamer trust purchase intention」「parasocial interaction live commerce」，比中文短语命中率高很多。",
+    "models.assistant.searchImages.expandedTitle": "AI 已把你的输入扩展为以下学术 query 并合并搜索",
+    "models.assistant.searchImages.rawMode": "原样搜索（跳过 AI 改写）",
+    "models.assistant.searchImages.tip": "中文/模糊输入会被 AI 自动改写成精准的英文学术 query（如「AI streamer impulse buying」），并仅在 ScienceDirect/Springer/ResearchGate/PMC 等学术站点中搜图。",
 
     "models.custom.title": "自定义生成（可选）",
     "models.custom.promptLabel": "你的研究方向 / 想法 / 约束",
@@ -442,8 +443,9 @@ const dict = {
     "models.assistant.searchImages.close": "Close",
     "models.assistant.searchImages.hint": "Click a thumbnail to enlarge; click \"Open source\" to jump to the paper / page that contains the figure.",
     "models.assistant.searchImages.actualQuery": "Actual query",
-    "models.assistant.searchImages.rawMode": "Raw mode (don't add academic keywords)",
-    "models.assistant.searchImages.tip": "Tip: Use precise English academic keywords (e.g. \"AI streamer trust purchase intention\", \"parasocial interaction live commerce\") — they hit far more relevant figures than generic phrases.",
+    "models.assistant.searchImages.expandedTitle": "Your topic was AI-expanded into these academic queries and searched in parallel",
+    "models.assistant.searchImages.rawMode": "Raw mode (skip AI rewriting)",
+    "models.assistant.searchImages.tip": "Vague or Chinese input is auto-rewritten by AI into precise English academic queries (e.g. \"AI streamer impulse buying\"), then searched only on academic sites (ScienceDirect / Springer / ResearchGate / PMC, etc.).",
 
     "models.custom.title": "Custom generation (optional)",
     "models.custom.promptLabel": "Your research direction / ideas / constraints",

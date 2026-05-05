@@ -306,10 +306,12 @@ export type SearchModelImages200ResultsItem = {
 };
 
 export type SearchModelImages200 = {
-  /** The augmented query actually sent to the search provider. */
+  /** All expanded queries joined with " | " for display purposes. */
   query: string;
-  /** The original query the user typed, before augmentation. */
+  /** The original query the user typed, before AI expansion. */
   rawQuery?: string;
+  /** AI-expanded English academic queries that were actually searched. */
+  expandedQueries?: string[];
   results: SearchModelImages200ResultsItem[];
 };
 

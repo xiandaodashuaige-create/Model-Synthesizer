@@ -47,6 +47,7 @@ export function ModelAssistantChat({
   const [imgRawMode, setImgRawMode] = useState(false);
   const [imgResults, setImgResults] = useState<ImageHit[] | null>(null);
   const [imgActualQuery, setImgActualQuery] = useState<string | null>(null);
+  const [imgExpandedQueries, setImgExpandedQueries] = useState<string[]>([]);
   const [imgError, setImgError] = useState<string | null>(null);
   const [lightbox, setLightbox] = useState<ImageHit | null>(null);
 
@@ -58,6 +59,7 @@ export function ModelAssistantChat({
     setImgResults(null);
     setImgError(null);
     setImgActualQuery(null);
+    setImgExpandedQueries([]);
     const useRaw = raw ?? imgRawMode;
     imageSearch.mutate(
       { id: sessionId, data: { query: trimmed, count: 12, raw: useRaw } },
@@ -65,6 +67,7 @@ export function ModelAssistantChat({
         onSuccess: (resp) => {
           setImgResults((resp.results ?? []) as ImageHit[]);
           setImgActualQuery((resp as { query?: string }).query ?? null);
+          setImgExpandedQueries(((resp as { expandedQueries?: string[] }).expandedQueries ?? []));
         },
         onError: () => setImgError(t("models.assistant.searchImages.failed" as any)),
       },
@@ -338,12 +341,22 @@ export function ModelAssistantChat({
               />
               {t("models.assistant.searchImages.rawMode" as any)}
             </label>
-            {imgActualQuery && (
-              <span className="text-sky-700 truncate max-w-full" title={imgActualQuery}>
-                {t("models.assistant.searchImages.actualQuery" as any)}: <code className="bg-white border border-sky-200 rounded px-1 py-0.5 font-mono">{imgActualQuery}</code>
-              </span>
-            )}
           </div>
+          {imgExpandedQueries.length > 0 && !imgRawMode && (
+            <div className="bg-white border border-sky-200 rounded p-2 space-y-1">
+              <div className="text-[11px] font-medium text-sky-800">{t("models.assistant.searchImages.expandedTitle" as any)}</div>
+              <ul className="text-[11px] text-sky-900 space-y-0.5 list-disc list-inside">
+                {imgExpandedQueries.map((q, i) => (
+                  <li key={i}><code className="font-mono">{q}</code></li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {imgRawMode && imgActualQuery && (
+            <span className="text-[11px] text-sky-700 truncate max-w-full block" title={imgActualQuery}>
+              {t("models.assistant.searchImages.actualQuery" as any)}: <code className="bg-white border border-sky-200 rounded px-1 py-0.5 font-mono">{imgActualQuery}</code>
+            </span>
+          )}
           <p className="text-[11px] text-sky-700/90 leading-relaxed">{t("models.assistant.searchImages.tip" as any)}</p>
           {imageSearch.isPending && (
             <div className="text-xs text-sky-800 inline-flex items-center gap-2">

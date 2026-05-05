@@ -380,11 +380,17 @@ export const SearchModelImagesBody = zod.object({
 export const SearchModelImagesResponse = zod.object({
   query: zod
     .string()
-    .describe("The augmented query actually sent to the search provider."),
+    .describe('All expanded queries joined with \" | \" for display purposes.'),
   rawQuery: zod
     .string()
     .optional()
-    .describe("The original query the user typed, before augmentation."),
+    .describe("The original query the user typed, before AI expansion."),
+  expandedQueries: zod
+    .array(zod.string())
+    .optional()
+    .describe(
+      "AI-expanded English academic queries that were actually searched.",
+    ),
   results: zod.array(
     zod.object({
       title: zod.string(),
