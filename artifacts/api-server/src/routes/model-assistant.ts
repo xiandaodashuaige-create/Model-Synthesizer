@@ -232,22 +232,41 @@ const ACADEMIC_SITES = [
   "sciencedirect.com",
   "link.springer.com",
   "springer.com",
+  "springeropen.com",
   "pmc.ncbi.nlm.nih.gov",
   "ncbi.nlm.nih.gov",
+  "pubmed.ncbi.nlm.nih.gov",
   "researchgate.net",
   "semanticscholar.org",
   "academia.edu",
   "tandfonline.com",
   "onlinelibrary.wiley.com",
+  "wiley.com",
   "emerald.com",
+  "emeraldinsight.com",
   "frontiersin.org",
   "mdpi.com",
   "arxiv.org",
   "ieeexplore.ieee.org",
+  "dl.acm.org",
   "journals.sagepub.com",
   "journals.plos.org",
   "nature.com",
   "cambridge.org",
+  "oup.com",
+  "academic.oup.com",
+  "ssrn.com",
+  "papers.ssrn.com",
+  "jstor.org",
+  "scholasticahq.com",
+  "biomedcentral.com",
+  "bmj.com",
+  "tandfonline.com",
+  "informaworld.com",
+  "elsevier.com",
+  "doi.org",
+  "core.ac.uk",
+  "openreview.net",
 ];
 
 const FIGURE_HINT_RE = /\b(framework|model|figure|fig\.|diagram|hypothes|conceptual|theoretical|construct|sem |moderat|mediat|antecedent|outcome)/i;
@@ -263,6 +282,61 @@ function isAcademicSource(sourceUrl: string): boolean {
     return false;
   }
   return ACADEMIC_SITES.some((d) => host === d || host.endsWith(`.${d}`));
+}
+
+// Second-pass AI relevance gate: given the user's topic and a list of candidate
+// figure titles + source URLs, return the subset of indices that are ACTUALLY
+// about the topic. Figures that are merely on academic sites but unrelated
+// (e.g. neural-network diagrams, generic flowcharts, journal logos) get
+// dropped here. Returns null if the AI call fails — caller should fall back
+// to the un-gated list rather than serve nothing.
+async function aiRelevanceFilter(
+  rawQuery: string,
+  expandedQueries: string[],
+  candidates: Array<{ title: string; sourceDomain: string }>,
+): Promise<number[] | null> {
+  if (candidates.length === 0) return [];
+  try {
+    const list = candidates
+      .map((c, i) => `${i}. [${c.sourceDomain}] ${c.title.slice(0, 180)}`)
+      .join("\n");
+    const completion = await openai.chat.completions.create({
+      model: "gpt-5.4",
+      max_completion_tokens: 600,
+      messages: [
+        {
+          role: "system",
+          content: `You are filtering image search results. The user is looking for conceptual-model / theoretical-framework FIGURES from research papers about a SPECIFIC topic.
+
+For each candidate (numbered list of "title [source]"), decide whether the figure is plausibly a conceptual model / SEM / framework / hypothesis diagram on this topic. Be GENEROUS — keep it if the title is short/generic ("Fig. 1", "Conceptual model") AND the source is a reputable academic paper site, because thumbnails often have minimal titles. Drop only when the title clearly indicates an UNRELATED domain (e.g. neural network architecture, gene expression, molecular structure, financial chart, journal logo, generic flowchart with no topic words).
+
+Output ONLY a JSON object: {"keep": [list of indices, integers]}.`,
+        },
+        {
+          role: "user",
+          content: `User's topic (Chinese or rough English): ${rawQuery}
+Expanded English queries: ${expandedQueries.join(" | ")}
+
+Candidates:
+${list}`,
+        },
+      ],
+    });
+    const txt = completion.choices[0]?.message?.content ?? "";
+    const match = txt.match(/\{[\s\S]*\}/);
+    if (!match) return null;
+    const parsed = JSON.parse(match[0]) as { keep?: unknown };
+    if (!Array.isArray(parsed.keep)) return null;
+    const keep = parsed.keep
+      .filter((n): n is number => typeof n === "number" && Number.isInteger(n))
+      .filter((n) => n >= 0 && n < candidates.length);
+    // Defend against the AI returning an empty list when it shouldn't — if it
+    // dropped EVERYTHING, fall back rather than show nothing.
+    if (keep.length === 0 && candidates.length >= 4) return null;
+    return keep;
+  } catch {
+    return null;
+  }
 }
 
 async function expandQueriesWithAI(rawQuery: string): Promise<string[]> {
@@ -400,7 +474,9 @@ router.post("/sessions/:id/model-assistant/search-model-images", async (req, res
     // research figures. Brave's image API does NOT support `site:` OR-lists
     // (returns 422), so we rely on academic-domain SCORING (Stage 4) instead
     // of pre-filtering.
-    const perQueryFetch = Math.max(10, Math.ceil(count / Math.max(1, expandedQueries.length)) * 4);
+    // Over-fetch heavily so the AI relevance gate has plenty of candidates
+    // to choose from. Brave allows up to 100 per call.
+    const perQueryFetch = 30;
 
     const allBraveCalls = expandedQueries.map((q) =>
       braveImageSearch(`${q} conceptual model figure`, apiKey, perQueryFetch, req.log).then((items) =>
@@ -477,16 +553,34 @@ router.post("/sessions/:id/model-assistant/search-model-images", async (req, res
     });
 
     // ---- Stage 5: filter & rank -----------------------------------------
-    // Default mode: STRICT — only return hits whose hostname is in the
-    // academic allowlist. This enforces the "real-paper figures" goal.
-    // Raw mode: looser — keep any hit that matches at least one topic token,
-    // since the user explicitly asked us not to rewrite their query.
-    const filtered = rawMode
+    // Default mode: STRICT — only academic hosts.
+    // Raw mode: looser — academic hosts OR ≥1 topic-token match.
+    const academicFiltered = rawMode
       ? scored.filter((r) => r._academic || r._matched >= 1)
       : scored.filter((r) => r._academic);
-    filtered.sort((a, b) => b._score - a._score);
+    academicFiltered.sort((a, b) => b._score - a._score);
 
-    const results = filtered.slice(0, count).map(({ _score, _matched, _query, _academic, ...rest }) => rest);
+    // ---- Stage 6: AI relevance gate -------------------------------------
+    // Even after the academic filter, results may include figures from real
+    // papers that are about a totally different topic (neural-net diagrams,
+    // chemistry, journal logos). Send the top ~30 candidates' titles to GPT
+    // and let it drop the off-topic ones. Falls back to academicFiltered if
+    // the AI call fails or hits an edge case.
+    let finalList = academicFiltered;
+    if (!rawMode && academicFiltered.length > 0) {
+      const candidates = academicFiltered.slice(0, 30);
+      const keep = await aiRelevanceFilter(
+        rawQuery,
+        expandedQueries,
+        candidates.map((c) => ({ title: c.title, sourceDomain: c.sourceDomain })),
+      );
+      if (keep && keep.length > 0) {
+        const keepSet = new Set(keep);
+        finalList = candidates.filter((_, i) => keepSet.has(i));
+      }
+    }
+
+    const results = finalList.slice(0, count).map(({ _score, _matched, _query, _academic, ...rest }) => rest);
 
     res.json({
       query: expandedQueries.join(" | "),
