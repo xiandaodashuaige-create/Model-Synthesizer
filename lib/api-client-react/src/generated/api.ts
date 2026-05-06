@@ -31,6 +31,8 @@ import type {
   GenerateModelLiteratureReviewBody,
   GenerateModelsBody,
   GetModelQualityReport200,
+  GetPaperModelFigures200,
+  GetPaperModelFiguresParams,
   GetSessionLearningStats200,
   HealthStatus,
   ImageBlocklistEntry,
@@ -1950,6 +1952,136 @@ export const useSearchModelImages = <
 > => {
   return useMutation(getSearchModelImagesMutationOptions(options));
 };
+
+/**
+ * @summary Find model / framework figures for a single paper. Cached on the paper row after the first call.
+ */
+export const getGetPaperModelFiguresUrl = (
+  sessionId: number,
+  paperId: number,
+  params?: GetPaperModelFiguresParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/sessions/${sessionId}/papers/${paperId}/model-figures?${stringifiedParams}`
+    : `/api/sessions/${sessionId}/papers/${paperId}/model-figures`;
+};
+
+export const getPaperModelFigures = async (
+  sessionId: number,
+  paperId: number,
+  params?: GetPaperModelFiguresParams,
+  options?: RequestInit,
+): Promise<GetPaperModelFigures200> => {
+  return customFetch<GetPaperModelFigures200>(
+    getGetPaperModelFiguresUrl(sessionId, paperId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetPaperModelFiguresQueryKey = (
+  sessionId: number,
+  paperId: number,
+  params?: GetPaperModelFiguresParams,
+) => {
+  return [
+    `/api/sessions/${sessionId}/papers/${paperId}/model-figures`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetPaperModelFiguresQueryOptions = <
+  TData = Awaited<ReturnType<typeof getPaperModelFigures>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  sessionId: number,
+  paperId: number,
+  params?: GetPaperModelFiguresParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getPaperModelFigures>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ??
+    getGetPaperModelFiguresQueryKey(sessionId, paperId, params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getPaperModelFigures>>
+  > = ({ signal }) =>
+    getPaperModelFigures(sessionId, paperId, params, {
+      signal,
+      ...requestOptions,
+    });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!(sessionId && paperId),
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getPaperModelFigures>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetPaperModelFiguresQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getPaperModelFigures>>
+>;
+export type GetPaperModelFiguresQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Find model / framework figures for a single paper. Cached on the paper row after the first call.
+ */
+
+export function useGetPaperModelFigures<
+  TData = Awaited<ReturnType<typeof getPaperModelFigures>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  sessionId: number,
+  paperId: number,
+  params?: GetPaperModelFiguresParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getPaperModelFigures>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetPaperModelFiguresQueryOptions(
+    sessionId,
+    paperId,
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
 
 /**
  * @summary Search OpenAlex for papers likely to contain a conceptual model figure on the topic. Returns paper cards plus an AI-judged "model figure likelihood" so the user can quickly find papers worth opening to look at the model diagram inside.

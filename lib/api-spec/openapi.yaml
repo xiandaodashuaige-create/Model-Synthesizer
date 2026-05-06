@@ -648,6 +648,73 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /sessions/{sessionId}/papers/{paperId}/model-figures:
+    get:
+      operationId: getPaperModelFigures
+      tags: [papers]
+      summary: Find model / framework figures for a single paper. Cached on the paper row after the first call.
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: paperId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: refresh
+          in: query
+          required: false
+          schema:
+            type: boolean
+          description: When true, ignores cache and re-runs the upstream search.
+      responses:
+        "200":
+          description: Up to 3 figure thumbnails for this paper (may be empty).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [paperId, results, cached]
+                properties:
+                  paperId:
+                    type: integer
+                  cached:
+                    type: boolean
+                  fetchedAt:
+                    type: string
+                    format: date-time
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      required: [title, thumbnailUrl, sourceUrl, sourceDomain]
+                      properties:
+                        title:
+                          type: string
+                        thumbnailUrl:
+                          type: string
+                        imageUrl:
+                          type: string
+                        sourceUrl:
+                          type: string
+                        sourceDomain:
+                          type: string
+        "404":
+          description: Paper not found in the specified session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Image search provider unavailable or not configured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /sessions/{id}/model-assistant/search-model-papers:
     post:
       operationId: searchModelPapers

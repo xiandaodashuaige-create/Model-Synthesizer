@@ -1,165 +1,66 @@
 # Research Model Builder
-
 A full-stack web application that helps academic researchers discover papers, extract research variables using AI, and generate novel theoretical research model combinations with full citation evidence.
 
-## Architecture
-
-- **Frontend**: React + Vite (TypeScript), TailwindCSS v4, Wouter routing, TanStack Query
-- **Backend**: Express 5 (TypeScript), Pino logging, esbuild bundler
-- **Database**: PostgreSQL via Drizzle ORM
-- **AI**: OpenAI GPT-4o via Replit AI Integrations (`@workspace/integrations-openai-ai-server`)
-- **Paper Search**: OpenAlex API (free, open, no API key required)
-- **Monorepo**: pnpm workspaces
-
-## Workspace Packages
-
-| Package | Path | Purpose |
-|---------|------|---------|
-| `@workspace/api-server` | `artifacts/api-server` | Express REST API server |
-| `@workspace/research-model` | `artifacts/research-model` | React+Vite frontend |
-| `@workspace/api-spec` | `lib/api-spec` | OpenAPI 3.0 spec + Orval codegen config |
-| `@workspace/api-zod` | `lib/api-zod` | Zod validators generated from OpenAPI spec |
-| `@workspace/api-client-react` | `lib/api-client-react` | React Query hooks generated from OpenAPI spec |
-| `@workspace/db` | `lib/db` | Drizzle ORM schema + DB client |
-| `@workspace/integrations-openai-ai-server` | `lib/integrations-openai-ai-server` | OpenAI client via Replit AI Integrations |
-
-## Application Workflow
-
-1. **Create a session** — User enters a session name and research topic
-2. **Search papers** — Uses OpenAlex API to search academic papers by topic
-3. **Add papers** — Papers are saved to the session in the database
-4. **Extract variables** — AI (GPT-4o) analyzes each paper's abstract and extracts research variables (independent, mediator, moderator, dependent) with definitions and citation text
-5. **View variable graph** — SVG visualization showing relationships between variables across papers
-6. **Generate models** — AI combines variables from multiple papers into 3 novel research model proposals with edge relationships and citation evidence per relationship
-7. **Select model** — User marks their preferred model
-
-## Key Routes
-
-### Frontend (React, wouter)
-- `/` — Session dashboard (list all sessions)
-- `/sessions/new` — Create new session
-- `/sessions/:id/papers` — Search & manage papers
-- `/sessions/:id/variables` — View extracted variables + graph
-- `/sessions/:id/models` — Generate & compare model proposals
-- `/sessions/:id/models/:modelId` — Full model detail with citations
-
-### API Endpoints
-- `POST /api/sessions` — Create session
-- `GET /api/sessions` — List sessions
-- `GET /api/sessions/:id` — Get session with counts
-- `GET /api/sessions/:id/summary` — Get detailed summary stats
-- `POST /api/papers/search` — Search papers (OpenAlex, cached 15 min)
-- `GET /api/sessions/:id/papers` — List session papers
-- `POST /api/sessions/:id/papers` — Add paper to session
-- `DELETE /api/sessions/:sessionId/papers/:paperId` — Remove paper
-- `POST /api/sessions/:id/papers/:paperId/extract` — AI extract variables
-- `GET /api/sessions/:id/variables` — List session variables
-- `GET /api/sessions/:id/variable-graph` — Variable relationship graph data
-- `POST /api/sessions/:id/models/generate` — AI generate model proposals
-- `GET /api/sessions/:id/models` — List session models
-- `GET /api/models/:id` — Get model detail
-- `POST /api/models/:id/select` — Mark model as selected
-
-## Database Schema
-
-- `sessions` — Research sessions (name, topic, status)
-- `papers` — Papers added to sessions (metadata + extracted flag)
-- `research_variables` — Extracted variables (type, definition, citation text)
-- `research_models` — Generated models (nodes + edges as JSONB, rationale)
-
-## Codegen
-
-After editing `lib/api-spec/openapi.yaml`, regenerate client code:
+## Run & Operate
 ```bash
+# Regenerate client code after editing lib/api-spec/openapi.yaml
 pnpm --filter @workspace/api-spec run codegen
-```
 
-After editing DB schema, push changes:
-```bash
+# Push DB schema changes after editing schema files
 pnpm --filter @workspace/db run push
 ```
+**Environment Variables:**
+- `DATABASE_URL`: PostgreSQL connection string
+- `SESSION_SECRET`: Session secret
+- `AI_INTEGRATIONS_OPENAI_BASE_URL`: OpenAI proxy base URL
+- `AI_INTEGRATIONS_OPENAI_API_KEY`: OpenAI proxy key
 
-## Environment Variables
+## Stack
+- **Frontend**: React + Vite (TypeScript), TailwindCSS v4, Wouter, TanStack Query
+- **Backend**: Express 5 (TypeScript), Pino, esbuild
+- **Database**: PostgreSQL via Drizzle ORM
+- **AI**: OpenAI GPT-4o via Replit AI Integrations
+- **Paper Search**: OpenAlex API
+- **Monorepo**: pnpm workspaces
 
-- `DATABASE_URL` — PostgreSQL connection string (auto-provided)
-- `SESSION_SECRET` — Session secret
-- `AI_INTEGRATIONS_OPENAI_BASE_URL` — OpenAI proxy base URL (Replit AI Integrations)
-- `AI_INTEGRATIONS_OPENAI_API_KEY` — OpenAI proxy key (Replit AI Integrations)
+## Where things live
+- `artifacts/api-server`: Express REST API server
+- `artifacts/research-model`: React+Vite frontend
+- `lib/api-spec/openapi.yaml`: OpenAPI 3.0 specification (source-of-truth for API contracts)
+- `lib/db/src/schema`: Drizzle ORM database schema (source-of-truth for DB schema)
+- `lib/i18n.tsx`: Internationalization strings (source-of-truth for i18n)
 
-## Notes
+## Architecture decisions
+- **AI Model**: Uses `gpt-5.4` via Replit's AI Integrations proxy for variable extraction and model generation.
+- **Paper Search**: Relies on OpenAlex API for paper search, chosen for its open access, lack of API key requirements, and absence of rate limiting issues.
+- **Client Code Generation**: OpenAPI specification is used to generate Zod validators and React Query hooks, ensuring type safety and consistency between frontend and backend.
+- **Monorepo Structure**: Utilizes pnpm workspaces to manage multiple packages, facilitating shared code and streamlined development.
+- **Image Search Pipeline**: Employs a multi-stage pipeline for finding research model figures, including AI-powered query expansion, parallel search lanes, and relevance filtering, to ensure high-quality, relevant results.
 
-- Paper search uses **OpenAlex** (not Semantic Scholar) — no API key needed, no rate limiting issues
-- AI extraction uses model `gpt-5.4` via Replit's AI Integrations proxy
-- Variable extraction may take ~10 seconds per paper
-- Model generation may take ~20 seconds
-- Search results are cached in-memory for 15 minutes to avoid redundant API calls
+## Product
+- **Session Management**: Users can create sessions, defining a name and research topic.
+- **Paper Discovery & Management**: Search academic papers via OpenAlex, add them to sessions, and manage them.
+- **AI Variable Extraction**: AI extracts research variables (independent, mediator, moderator, dependent) with definitions and citations from paper abstracts.
+- **Variable Visualization**: View extracted variables and their relationships in an SVG graph.
+- **AI Model Generation**: AI proposes novel theoretical research models by combining variables from multiple papers, complete with relationships and citation evidence.
+- **Model Selection**: Users can select their preferred research model.
+- **Live Model Building**: Users can curate a research model per session with provenance-tracked edges.
+- **Model Quality & Review**: Provides a quality report for generated models and can assemble a literature review paragraph with APA-7 citations.
+- **Model Figure Search**: Searches for model figures from published papers to provide visual context.
 
-## P1 LiveModel Feature (我的研究模型)
+## User preferences
+_Populate as you build_
 
-Per-session user-curated research model with provenance-tracked edges. Independent tables (not jsonb).
+## Gotchas
+- Variable extraction via AI can take ~10 seconds per paper.
+- Model generation via AI can take ~20 seconds.
+- Search results are cached in-memory for 15 minutes to reduce redundant API calls.
+- The codegen script for `lib/api-zod` overwrites `index.ts` after Orval generation to fix an `export *` issue.
+- `SERPAPI_API_KEY` is required for fetching paper model figures; if missing, the API returns a 503 error.
 
-**Schema** (`lib/db/src/schema/live-models.ts`):
-- `live_models` — one row per session (unique `session_id`), with `version` counter for change tracking
-- `live_model_nodes` — variables included by the user (unique `(live_model_id, variable_id)`)
-- `live_model_edges` — relationships with provenance fields (`provenance_paper_id`, `provenance_citation_text`, `confidence`, `user_added`)
-
-**Backend** (`artifacts/api-server/src/routes/live-model.ts`): 6 REST endpoints under `/sessions/{id}/live-model`. Race-safe lazy-create (`ON CONFLICT DO NOTHING` + SELECT). All multi-step writes wrapped in `db.transaction`. Session-scope validation on `variableId`, `sourceModelId`, `provenancePaperId` to prevent cross-session leakage.
-
-**Frontend** (`artifacts/research-model/src/pages/sessions/live-model.tsx`):
-- 4th tab "我的模型" with reactive count badge (vars + edges)
-- Graph (dagre auto-layout) + variable pool sidebar (➕ to add) + edge list with inline "+ 添加关系" form
-- Manual edges flagged with "无出处" amber badge until citation added (P2)
-- One-click "作为我的研究模型基础" import button on each AI candidate model
-
-**i18n note**: interpolation uses single-brace `{key}` syntax, NOT `{{key}}`.
-
-## P1+P2 Optimization Push (May 2026)
-
-**Schema additions** (`pnpm --filter @workspace/db run push`):
-- `paper_hypotheses` (`lib/db/src/schema/hypotheses.ts`) — verbatim formal hypotheses extracted from each paper (id, fromVariable, toVariable, viaVariable, relationship, statement, effectSize, pageOrSection).
-- `image_blocklist` (`lib/db/src/schema/image-blocklist.ts`) — per-session image dismissals (sourceUrl, sourceDomain, title, reason).
-- `research_variables` gained `canonicalConstructId` + `constructLayer` (stimulus / cognitive / affective / intention / behavior).
-
-**Theory** (`artifacts/api-server/src/lib/theoryTemplates.ts`): 17 backbones, `recommendBackbones(dvKeywords,k)`, `CONSTRUCT_LAYERS` + `layerIndex()`, structural operators with layer constraints.
-
-**Variables route**: extraction returns `{variables, hypotheses}` with canonical+layer; persists to `paper_hypotheses`. New `GET /sessions/:id/hypotheses` lists them.
-
-**Models route**: `ModelEdge` gained optional `evidenceHypothesisId`, `effectSize`, `evidenceLocation`, `moderatorJustification`. The generator prompt now injects a hypothesesBlock + recommendedBackbonesBlock and enforces Rules 10-13 (layer-ordered chain ≤3, one role per canonical construct, moderator must justify, hypothesis grounding preferred). The `validate()` function rejects edges that violate layer ordering, exceed chain depth, repeat a canonical-construct in conflicting roles, or moderate without justification.
-
-**Image blocklist**: 3 endpoints (`GET/POST /sessions/:id/image-blocklist`, `DELETE /sessions/:id/image-blocklist/{entryId}`). Stage 2.5 of the search pipeline reads `imageBlocklistTable` per session and drops blocked sourceUrls before AI gating. Frontend exposes a ✕ button next to each image (red-on-white, hover-revealed) → `useAddImageBlocklistEntry`.
-
-**Frontend** (`artifacts/research-model/src/pages/sessions/model-detail.tsx`): edge cards render new badges (hypothesisId/effectSize/evidenceLocation) + a purple "调节理由 / Moderation rationale" callout when `relationship === "moderates"`. New "Export APA references" button compiles every cited paper as APA-7 strings and downloads as .txt.
-
-**i18n** (`artifacts/research-model/src/lib/i18n.tsx`): added `md.modJust`, `md.export.{apa,apaTip,done,doneDesc}`, `models.assistant.searchImages.{block,blockTip}` for both zh + en.
-
-## Model Graph Cross-Check (May 2026, round 4)
-
-`ModelGraph` + `buildEdgeHTagMap` + `buildPaperTagMap` extracted to `artifacts/research-model/src/components/model-graph.tsx` (shared by `pages/sessions/models.tsx` and `pages/sessions/model-detail.tsx`). Model-detail page now embeds the graph above the "关系" section and prefixes every edge card with a sequential violet `H#` badge that 1:1 matches the graph labels (distinct from the existing indigo `evidenceHypothesisId` badge — different semantics, both shown). H# is index-based per `displayEdges`, so manual edits stay in sync. New i18n keys: `md.graph.title`, `md.graph.tip` (zh+en).
-
-## P3 Trust+Quality Push (May 2026, round 3)
-
-Three surgical wins focused on transparency & writing-output:
-
-1. **Image filter "why" reason** (`model-assistant.ts:aiRelevanceFilter`) — gate now returns `{i,category,why?}` per kept image; OpenAPI exposes `why` on `imageResults[]`; frontend `model-assistant-chat.tsx` renders an emerald italic caption under each result. Trimmed to ≤120 chars server-side.
-2. **Model quality self-check** (`GET /models/:id/quality-report`) — pure compute, no AI cost. Returns `{structuralScore (0-100, best-fit across 17 backbones), evidenceScore, layerCompliance, duplicateRoleCheck, moderatorJustified, weakEdges[{from,to,reason}], totals}`. Frontend `model-detail.tsx` renders a 5-cell badge bar above the rationale block + a weak-edge list with i18n reason codes (`no_evidence`/`layer_jump`/`duplicate_role`/`missing_moderator_justification`).
-3. **Literature review paragraph** (`POST /models/:id/literature-review`) — AI assembles a publication-ready paragraph (zh or en, `lang` param) with APA-7 in-text citations from model nodes+edges+evidence. Frontend has emerald "生成文献综述段落" button next to APA export → modal with read-only textarea + Copy + Regenerate.
-
-**Codegen note**: orval's auto-generated `lib/api-zod/src/index.ts` keeps re-adding `export * from "./generated/api.schemas"` (which doesn't exist for zod's split mode). Codegen script (`lib/api-spec/package.json`) now overwrites that index.ts back to a single-line export after orval, before typecheck.
-
-## Image Search Pipeline (`POST /sessions/:id/model-assistant/search-model-images`)
-
-Multi-stage pipeline in `artifacts/api-server/src/routes/model-assistant.ts` that finds research-model figures from published papers. Designed for three goals: wide database, queries close to user need, pre-cleaned results.
-
-1. **Stage 0 — session context**: `loadSessionImageCtx(sessionId)` pulls variable names + paper titles from the session (never throws).
-2. **Stage 1 — grounded query expansion**: `expandQueriesWithAI(rawQuery, sessionCtx)` produces 3-5 English academic queries; ≥2 must combine the user's topic with constructs from session variables (e.g. "AI streamer" + "perceived trust" + "purchase intention").
-3. **Stage 2 — parallel search lanes** (SerpAPI; Brave fallback if SerpAPI fails entirely):
-   - Lane A: `<query> conceptual model figure` (5 queries)
-   - Lane B: `<query> conceptual model figure (site:rg OR site:sd OR …)` — top 3 queries, parens REQUIRED so Google parses one disjunction
-4. **Stage 2.5 — hard-negative pre-filter**: drop stock photo domains (Shutterstock/Getty/Pinterest/Freepik/Canva templates) and obvious off-topic titles (gene heatmaps, neural network architecture, PRISMA/swimlane/Gantt) before spending AI tokens.
-5. **Stage 3 — dedupe** by sourceUrl then thumbnail.
-6. **Stage 3.5 — per-paper cap**: max 2 results per article (keyed by extracted DOI / Elsevier PII / PMC id / arXiv id / ResearchGate publication id, falling back to full pathname). Naive "first N path segments" collapses entire publishers — do NOT use that.
-7. **Stage 4-5 — relevance scoring + ranking** (figure-hint regex + academic-source bonus).
-8. **Stage 6 — multi-class AI gate**: `aiRelevanceFilter(rawQuery, expandedQueries, candidates, sessionCtx)` classifies each as `conceptual_model | sem_path | framework | other`; `other` is dropped. Backfill: if approved < `count`, top up from highest-ranked unkept items (no category badge → user sees they're fallbacks).
-9. **Result `category` field** is plumbed through OpenAPI → generated client → frontend, where `model-assistant-chat.tsx` renders a colored top-left badge (emerald=concept, violet=SEM, sky=framework) with i18n labels under `models.assistant.searchImages.category.*`.
-
-Smoke test (session 8, "AI 主播 冲动消费"): 12/12 categorized, 6 different publishers (MDPI/Springer/Wiley/SD/T&F/Frontiers).
+## Pointers
+- **OpenAlex API**: [https://docs.openalex.org/](https://docs.openalex.org/)
+- **Drizzle ORM**: [https://orm.drizzle.team/](https://orm.drizzle.team/)
+- **TanStack Query**: [https://tanstack.com/query/latest](https://tanstack.com/query/latest)
+- **Wouter**: [https://www.npmjs.com/package/wouter](https://www.npmjs.com/package/wouter)
+- **SerpAPI**: [https://serpapi.com/](https://serpapi.com/)

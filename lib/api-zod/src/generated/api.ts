@@ -561,6 +561,36 @@ export const SearchModelImagesResponse = zod.object({
 });
 
 /**
+ * @summary Find model / framework figures for a single paper. Cached on the paper row after the first call.
+ */
+export const GetPaperModelFiguresParams = zod.object({
+  sessionId: zod.coerce.number(),
+  paperId: zod.coerce.number(),
+});
+
+export const GetPaperModelFiguresQueryParams = zod.object({
+  refresh: zod.coerce
+    .boolean()
+    .optional()
+    .describe("When true, ignores cache and re-runs the upstream search."),
+});
+
+export const GetPaperModelFiguresResponse = zod.object({
+  paperId: zod.number(),
+  cached: zod.boolean(),
+  fetchedAt: zod.coerce.date().optional(),
+  results: zod.array(
+    zod.object({
+      title: zod.string(),
+      thumbnailUrl: zod.string(),
+      imageUrl: zod.string().optional(),
+      sourceUrl: zod.string(),
+      sourceDomain: zod.string(),
+    }),
+  ),
+});
+
+/**
  * @summary Search OpenAlex for papers likely to contain a conceptual model figure on the topic. Returns paper cards plus an AI-judged "model figure likelihood" so the user can quickly find papers worth opening to look at the model diagram inside.
  */
 export const SearchModelPapersParams = zod.object({

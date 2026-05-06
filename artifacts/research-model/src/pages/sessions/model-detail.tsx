@@ -7,15 +7,17 @@ import {
   useListSessionVariables,
   useGetModelQualityReport,
   useGenerateModelLiteratureReview,
+  useGetPaperModelFigures,
   getGetModelQueryKey,
   getListSessionModelsQueryKey,
   getListSessionVariablesQueryKey,
   getGetSessionSummaryQueryKey,
   getGetSessionLearningStatsQueryKey,
   getGetModelQualityReportQueryKey,
+  getGetPaperModelFiguresQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Loader2, ArrowLeft, CheckCircle, BookOpen, Quote, Share2, Pencil, Save, X, Trash2, Plus, Download, Hash, BarChart3, MapPin, Info, FileText, AlertTriangle, Copy as CopyIcon, GitBranch } from "lucide-react";
+import { Loader2, ArrowLeft, CheckCircle, BookOpen, Quote, Share2, Pencil, Save, X, Trash2, Plus, Download, Hash, BarChart3, MapPin, Info, FileText, AlertTriangle, Copy as CopyIcon, GitBranch, Image as ImageIcon, ChevronDown, ChevronUp, ExternalLink } from "lucide-react";
 import { ModelGraph, buildEdgeHTagMap, buildPaperTagMap } from "@/components/model-graph";
 import { useToast } from "@/hooks/use-toast";
 import { useT } from "@/lib/i18n";
@@ -68,6 +70,84 @@ function useTypeMeta() {
 }
 
 const REL_OPTIONS = ["positive", "negative", "moderates", "mediates"] as const;
+
+// Lazy per-paper model figure thumbnails. Only fetches when expanded.
+// Compact: max 3 thumbnails, ~96px tall, click to open source page in a new tab.
+function PaperFigures({ sessionId, paperId, edgeIndex }: { sessionId: number; paperId: number; edgeIndex: number }) {
+  const { t } = useT();
+  const [open, setOpen] = useState(false);
+  const { data, isFetching, error } = useGetPaperModelFigures(
+    sessionId,
+    paperId,
+    {},
+    {
+      query: {
+        enabled: open && !!sessionId && !!paperId,
+        queryKey: getGetPaperModelFiguresQueryKey(sessionId, paperId, {}),
+        staleTime: 24 * 60 * 60 * 1000,
+      },
+    },
+  );
+
+  const results = (data?.results ?? []) as Array<{ title: string; thumbnailUrl: string; sourceUrl: string; sourceDomain: string }>;
+
+  return (
+    <div className="mt-3 border-t border-border pt-3">
+      <button
+        type="button"
+        data-testid={`button-show-paper-figures-${edgeIndex}`}
+        onClick={() => setOpen((v) => !v)}
+        className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+      >
+        <ImageIcon className="w-3.5 h-3.5" />
+        <span>{t("md.figures.title" as any)}</span>
+        {open ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+      </button>
+      {open && (
+        <div className="mt-2" data-testid={`panel-paper-figures-${edgeIndex}`}>
+          {isFetching && (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="w-3.5 h-3.5 animate-spin" /> {t("md.figures.loading" as any)}</div>
+          )}
+          {!isFetching && error && (
+            <div className="text-xs text-amber-700">{t("md.figures.error" as any)}</div>
+          )}
+          {!isFetching && !error && results.length === 0 && (
+            <div className="text-xs text-muted-foreground italic">{t("md.figures.empty" as any)}</div>
+          )}
+          {!isFetching && results.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {results.map((fig, idx) => (
+                <a
+                  key={idx}
+                  href={fig.sourceUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  data-testid={`link-paper-figure-${edgeIndex}-${idx}`}
+                  title={`${fig.title || fig.sourceDomain} — ${fig.sourceDomain}`}
+                  className="group relative block border border-border rounded-md overflow-hidden bg-background hover:border-primary/60 transition-colors"
+                  style={{ width: 132, height: 96 }}
+                >
+                  <img
+                    src={fig.thumbnailUrl}
+                    alt={fig.title || "model figure"}
+                    loading="lazy"
+                    referrerPolicy="no-referrer"
+                    className="w-full h-full object-cover"
+                    onError={(e) => { (e.currentTarget.parentElement as HTMLElement).style.display = "none"; }}
+                  />
+                  <span className="absolute bottom-0 inset-x-0 bg-black/55 text-white text-[10px] px-1.5 py-0.5 truncate opacity-0 group-hover:opacity-100 transition-opacity inline-flex items-center gap-1">
+                    <ExternalLink className="w-2.5 h-2.5 shrink-0" />
+                    <span className="truncate">{fig.sourceDomain}</span>
+                  </span>
+                </a>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function SessionModelDetail({ params: routeParams }: { params?: { id?: string; modelId?: string } }) {
   const { t } = useT();
@@ -575,6 +655,9 @@ export default function SessionModelDetail({ params: routeParams }: { params?: {
                     )}
                     {edge.evidencePaperYear && <span>· {edge.evidencePaperYear}</span>}
                   </div>
+                  {!editing && edge.evidencePaperId && (
+                    <PaperFigures sessionId={sessionId} paperId={edge.evidencePaperId} edgeIndex={i} />
+                  )}
                 </div>
               </div>
             ))}

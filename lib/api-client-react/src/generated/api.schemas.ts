@@ -512,6 +512,28 @@ export type SearchModelImages200 = {
   results: SearchModelImages200ResultsItem[];
 };
 
+export type GetPaperModelFiguresParams = {
+  /**
+   * When true, ignores cache and re-runs the upstream search.
+   */
+  refresh?: boolean;
+};
+
+export type GetPaperModelFigures200ResultsItem = {
+  title: string;
+  thumbnailUrl: string;
+  imageUrl?: string;
+  sourceUrl: string;
+  sourceDomain: string;
+};
+
+export type GetPaperModelFigures200 = {
+  paperId: number;
+  cached: boolean;
+  fetchedAt?: string;
+  results: GetPaperModelFigures200ResultsItem[];
+};
+
 export type SearchModelPapersBody = {
   /** Topic / construct to search for. The server will translate Chinese / rough English into precise academic queries unless `raw` is true. */
   query: string;

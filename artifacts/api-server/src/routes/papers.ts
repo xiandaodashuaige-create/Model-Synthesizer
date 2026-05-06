@@ -685,4 +685,145 @@ router.delete("/sessions/:sessionId/papers/:paperId", async (req, res): Promise<
   res.sendStatus(204);
 });
 
+// --- Per-paper model figure search -----------------------------------------
+// Lightweight, lazy: triggered when the user expands "查看论文模型图" on an
+// edge card. Single SerpAPI call (no AI gate, no expansion) keyed by paper
+// title. Result is cached on the paper row so repeated views are free.
+
+const FIGURE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+const STOCK_DOMAINS_FIG = ["shutterstock", "gettyimages", "istockphoto", "pinterest", "freepik", "canva.com", "alamy", "depositphotos", "stock.adobe", "dreamstime"];
+const FIGURE_HINT_PAPER = /\b(framework|model|figure|fig\.|diagram|hypothes|conceptual|theoretical|construct|sem |path|moderat|mediat|antecedent|outcome)/i;
+
+function isStockDomainFig(d: string): boolean {
+  const lower = d.toLowerCase();
+  return STOCK_DOMAINS_FIG.some((s) => lower.includes(s));
+}
+
+interface CachedFigure {
+  title: string;
+  thumbnailUrl: string;
+  imageUrl?: string;
+  sourceUrl: string;
+  sourceDomain: string;
+}
+
+async function searchFiguresForPaperTitle(
+  title: string,
+  log: { warn: (o: object, m: string) => void },
+): Promise<CachedFigure[]> {
+  const serpKey = process.env.SERPAPI_API_KEY;
+  if (!serpKey) return [];
+  const isHttp = (u: string) => /^https?:\/\//i.test(u);
+  // Quote the title so SerpAPI biases hard toward this exact paper.
+  const trimmedTitle = title.length > 140 ? title.slice(0, 140) : title;
+  const q = `"${trimmedTitle}" conceptual model OR framework figure`;
+  const url = new URL("https://serpapi.com/search.json");
+  url.searchParams.set("engine", "google_images");
+  url.searchParams.set("q", q);
+  url.searchParams.set("num", "20");
+  url.searchParams.set("api_key", serpKey);
+  url.searchParams.set("safe", "active");
+  url.searchParams.set("tbs", "isz:m");
+
+  let data: any;
+  try {
+    const r = await fetch(url.toString(), { headers: { Accept: "application/json" } });
+    if (!r.ok) {
+      log.warn({ status: r.status, q }, "Per-paper figure search HTTP error");
+      return [];
+    }
+    data = await r.json();
+  } catch (err) {
+    log.warn({ err: (err as Error).message, q }, "Per-paper figure search threw");
+    return [];
+  }
+  if (data.error) {
+    log.warn({ error: data.error, q }, "Per-paper figure search SerpAPI error");
+    return [];
+  }
+  const items = (data.images_results ?? []) as Array<{
+    title?: string; link?: string; source?: string; original?: string; thumbnail?: string;
+  }>;
+
+  const seenSrc = new Set<string>();
+  const seenThumb = new Set<string>();
+  const out: CachedFigure[] = [];
+  for (const it of items) {
+    const sourceUrl = it.link ?? "";
+    const thumbnailUrl = it.thumbnail ?? "";
+    if (!sourceUrl || !thumbnailUrl || !isHttp(sourceUrl) || !isHttp(thumbnailUrl)) continue;
+    let domain = it.source ?? "";
+    if (!domain) {
+      try { domain = new URL(sourceUrl).hostname; } catch { continue; }
+    }
+    if (isStockDomainFig(domain)) continue;
+    if (seenSrc.has(sourceUrl) || seenThumb.has(thumbnailUrl)) continue;
+    // Prefer items with figure-hint title OR academic-looking domain.
+    const looksFigure = FIGURE_HINT_PAPER.test(it.title ?? "") || /\b(rg|sd|sciencedirect|springer|wiley|tandfonline|emerald|sagepub|frontiersin|mdpi|ncbi|researchgate|arxiv|nature|cambridge|oup)\b/i.test(domain);
+    if (!looksFigure) continue;
+    seenSrc.add(sourceUrl);
+    seenThumb.add(thumbnailUrl);
+    out.push({
+      title: (it.title ?? "").slice(0, 200),
+      thumbnailUrl,
+      imageUrl: it.original && isHttp(it.original) ? it.original : undefined,
+      sourceUrl,
+      sourceDomain: domain,
+    });
+    if (out.length >= 3) break;
+  }
+  return out;
+}
+
+router.get("/sessions/:sessionId/papers/:paperId/model-figures", async (req, res): Promise<void> => {
+  const sessionId = parseInt(req.params.sessionId, 10);
+  const paperId = parseInt(req.params.paperId, 10);
+  if (!Number.isFinite(sessionId) || !Number.isFinite(paperId)) {
+    res.status(400).json({ error: "Invalid session or paper id" });
+    return;
+  }
+  const refresh = String(req.query.refresh ?? "").toLowerCase() === "true";
+
+  const [paper] = await db
+    .select()
+    .from(papersTable)
+    .where(and(eq(papersTable.id, paperId), eq(papersTable.sessionId, sessionId)))
+    .limit(1);
+  if (!paper) {
+    res.status(404).json({ error: "Paper not found in this session" });
+    return;
+  }
+
+  const cachedAt = paper.figuresFetchedAt ? new Date(paper.figuresFetchedAt).getTime() : 0;
+  const fresh = cachedAt && Date.now() - cachedAt < FIGURE_TTL_MS;
+  if (!refresh && fresh && Array.isArray(paper.figureResults)) {
+    res.json({
+      paperId,
+      cached: true,
+      fetchedAt: new Date(cachedAt).toISOString(),
+      results: paper.figureResults as CachedFigure[],
+    });
+    return;
+  }
+
+  if (!process.env.SERPAPI_API_KEY) {
+    res.status(503).json({ error: "Image search is not configured (missing SERPAPI_API_KEY)" });
+    return;
+  }
+
+  const results = await searchFiguresForPaperTitle(paper.title, req.log);
+  const now = new Date();
+  await db
+    .update(papersTable)
+    .set({ figureResults: results, figuresFetchedAt: now })
+    .where(eq(papersTable.id, paperId));
+
+  res.json({
+    paperId,
+    cached: false,
+    fetchedAt: now.toISOString(),
+    results,
+  });
+});
+
 export default router;

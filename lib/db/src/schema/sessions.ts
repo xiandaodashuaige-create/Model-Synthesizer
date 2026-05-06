@@ -30,6 +30,8 @@ export const papersTable = pgTable("papers", {
   fullText: text("full_text"),
   extracted: text("extracted").notNull().default("false"),
   researchModel: jsonb("research_model"),
+  figureResults: jsonb("figure_results"),
+  figuresFetchedAt: timestamp("figures_fetched_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
