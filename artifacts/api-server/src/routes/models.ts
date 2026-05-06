@@ -545,13 +545,20 @@ ${userPrompt}
 """
 \n`
     : "";
+  // Note: keep two blank lines between this reminder and the OUTPUT FORMAT
+  // block above, and prefix it with a horizontal rule so the AI doesn't
+  // mistake it for part of the JSON schema definition.
   const directiveReminder = userPrompt
-    ? `\n\n================================================================
-REMINDER — THE USER'S PRIMARY DIRECTIVE (repeated here so you don't lose it after reading the long context above):
+    ? `
+
+================================================================
+END OF OUTPUT FORMAT.
+================================================================
+FINAL REMINDER — RE-READ THE PRIMARY USER DIRECTIVE BEFORE YOU EMIT JSON:
 """
 ${userPrompt}
 """
-Before emitting your JSON, sanity-check each model against this directive. If a model doesn't visibly honor it, REPLACE that model with one that does, even if it means a less novel structure.`
+Sanity-check each model against this directive. If a model doesn't visibly honor it, REPLACE that model with one that does — even if it means a less novel structure or fewer models.`
     : "";
 
   // Synthesis prompt: explicit STRUCTURAL OPERATORS + theory backbones.
@@ -594,7 +601,9 @@ ${learnedBlock}${userPersonalizationBlock}
 HARD RULES (violations = invalid output):
 1. **Operator-driven + alignment header**: each model's \`rationale\` MUST start with "[OPERATOR: <PRIMARY>+<SECONDARY>] [BASE: <Pn>+<Pm>(+<Pk>...)] [BACKBONE: <id or NONE>]" so the recombination logic is auditable. IMMEDIATELY after that prefix, the rationale MUST contain the three alignment lines required by the ALIGNMENT CONTRACT in the UNIFIED USER INTENT block at the top of this prompt: [TOPIC FIT] / [FOCUS FIT] / [USER PROMPT FIT]. ONLY AFTER those four prefix lines may you write the free-form 3-5 sentences explaining the operator application.
 2. **Chained operators (CRITICAL)**: each model MUST apply TWO operators in sequence — a PRIMARY operator that defines the spine of the model, then a SECONDARY operator (must be different from the primary) that enriches it (e.g. INSERT_MODERATOR after EXTEND, PARALLEL_MEDIATORS after THEORY_GRAFT). Single-operator models are too weak and will be rejected.
-3. **Distinct operator pairs**: across the ${perCallNumModels} models, no two models may use the same (primary, secondary) operator pair OR the same base paper set.
+3. **Distinct operator pairs**: ${perCallNumModels === 1
+      ? "(this call produces a single model — pick the most defensible operator pair for the user's intent; the server runs other parallel calls with different operator-pair seeds for diversity, so do not artificially diversify within this call)"
+      : `across the ${perCallNumModels} models, no two models may use the same (primary, secondary) operator pair OR the same base paper set.`}
 4. **Cross-paper synthesis**: ${userPrompt ? "The user has provided a custom prompt — honor its scope strictly. Multi-paper synthesis is still preferred when compatible with the user's intent, but a focused single-paper model that faithfully matches the user's request is acceptable." : "each model MUST include nodes from ≥ 3 DIFFERENT source papers (not 2). The whole point is multi-paper recombination — a model that only fuses 2 papers is a weak combination and will be rejected."}
 5. **Respect original directions**: when an edge connects two variables that already appeared together in a paper's hypothesis, use the SAME direction and sign that paper proposed. Do not flip causality unless explicitly justified in the rationale.
 6. **Citation grounding**: every "evidenceCitationText" MUST be a verbatim sentence either from the variable's "Citation" field or from the paper graph's "evidence" field above. If you cannot find such a sentence, omit that edge.
@@ -690,8 +699,12 @@ OUTPUT FORMAT — return ONLY a JSON array, no markdown:
       "All parallel model-generation calls failed",
     );
     if (anyTimeout) {
+      const budgetSec = Math.round(callTimeoutMs / 1000);
+      const speedupHint = PARALLEL_MODE
+        ? `（已采用并行加速仍未及时完成，超时 ${budgetSec} 秒）`
+        : `（单模型生成超时 ${budgetSec} 秒）`;
       res.status(504).json({
-        error: "AI 生成模型时间超过 50 秒（已采用并行加速仍未及时完成）。请尝试：(1) 减少本会话中的论文数量；(2) 在『自定义提示词』里写得更聚焦、更短；(3) 把部署类型切到 Reserved VM 以解除超时限制。",
+        error: `AI 生成模型超时${speedupHint}。请尝试：(1) 减少本会话中的论文数量；(2) 在『自定义提示词』里写得更聚焦、更短；(3) 把部署类型切到 Reserved VM 以解除超时限制。`,
       });
       return;
     }

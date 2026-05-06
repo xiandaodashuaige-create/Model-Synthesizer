@@ -90,6 +90,38 @@ function AIAurora({ children, fixed = false }: { children: React.ReactNode; fixe
   );
 }
 
+// Tiny floating language switcher used only on the unauthenticated screens
+// (sign-in card + session-expired overlay). Once the user is authenticated,
+// the persistent app shell already provides a switcher. Without this, an
+// English-speaking visitor lands on the (default) zh-CN UI with no way to
+// switch before signing in.
+function AuthLangSwitcher() {
+  const { lang, setLang } = useT();
+  const opts: Array<{ code: "zh" | "zhTW" | "en"; label: string }> = [
+    { code: "zh", label: "简" },
+    { code: "zhTW", label: "繁" },
+    { code: "en", label: "EN" },
+  ];
+  return (
+    <div className="absolute top-5 right-5 z-10 flex items-center gap-1 rounded-full border border-white/10 bg-slate-950/40 backdrop-blur-md px-1 py-1 text-xs">
+      {opts.map((o) => (
+        <button
+          key={o.code}
+          onClick={() => setLang(o.code)}
+          data-testid={`auth-lang-${o.code}`}
+          className={`rounded-full px-2.5 py-1 transition-colors ${
+            lang === o.code
+              ? "bg-cyan-400/20 text-cyan-100 ring-1 ring-cyan-300/50"
+              : "text-slate-300/80 hover:text-white hover:bg-white/5"
+          }`}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function LoginGate() {
   const { t } = useT();
   const { isLoading, isAuthenticated, login } = useAuth();
@@ -120,6 +152,7 @@ function LoginGate() {
   if (!isAuthenticated) {
     return (
       <AIAurora>
+        <AuthLangSwitcher />
         <div className="relative min-h-screen flex items-center justify-center px-4 py-10">
           <div
             data-testid="login-card"
