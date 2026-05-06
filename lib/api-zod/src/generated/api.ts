@@ -693,6 +693,32 @@ export const ChatModelAssistantResponse = zod.object({
     .describe(
       "Set when the AI judges the existing session materials are insufficient to answer the user's research question.",
     ),
+  liveModelApplied: zod
+    .object({
+      summary: zod.string(),
+      liveModelVersion: zod.number(),
+      applied: zod.array(
+        zod.object({
+          type: zod.enum(["addNode", "removeNode", "addEdge", "removeEdge"]),
+          label: zod.string(),
+          variableId: zod.number().optional(),
+          fromVariableId: zod.number().optional(),
+          toVariableId: zod.number().optional(),
+          relationship: zod.string().optional(),
+        }),
+      ),
+      rejected: zod.array(
+        zod.object({
+          type: zod.enum(["addNode", "removeNode", "addEdge", "removeEdge"]),
+          label: zod.string(),
+          reason: zod.string(),
+        }),
+      ),
+    })
+    .optional()
+    .describe(
+      "Set when the assistant emitted a `liveModelOps` block and the server applied (or attempted to apply) one or more direct edits to the session's live model. The frontend should refetch the live model after seeing this.",
+    ),
 });
 
 /**

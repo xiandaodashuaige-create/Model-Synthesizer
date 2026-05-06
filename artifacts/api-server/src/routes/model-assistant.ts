@@ -1,12 +1,151 @@
 import { Router, type IRouter } from "express";
-import { eq, and, desc } from "drizzle-orm";
-import { db, papersTable, variablesTable, researchModelsTable, imageBlocklistTable, modelAssistantMessagesTable, sessionsTable } from "@workspace/db";
+import { eq, and, desc, or, inArray, sql } from "drizzle-orm";
+import { db, papersTable, variablesTable, researchModelsTable, imageBlocklistTable, modelAssistantMessagesTable, sessionsTable, liveModelsTable, liveModelNodesTable, liveModelEdgesTable } from "@workspace/db";
 import { asc } from "drizzle-orm";
 import { ChatModelAssistantParams, ChatModelAssistantBody } from "@workspace/api-zod";
 import { openai } from "@workspace/integrations-openai-ai-server";
 import { logAiUsageFromOpenAI } from "../lib/ai-usage";
 import { backbonesAsPromptBlock, operatorsAsPromptBlock } from "../lib/theoryTemplates.js";
 import { buildUserPersonalizationContext, scheduleProfileRefresh } from "../lib/personalization";
+
+// Allowed relationship values mirror live-model.ts. Kept inline here so this
+// route doesn't need to import from another route module.
+const ALLOWED_REL = new Set(["positive", "negative", "mediates", "moderates"]);
+
+// Apply a batch of chat-driven liveModelOps to the session's live model.
+// Returns per-op outcome so the chat UI can show "applied / rejected" pills.
+// All ops are validated against session-scoped variables — the AI cannot
+// invent ids that don't belong here. If any op references a variable from
+// another session, it's rejected, never silently swapped.
+type LiveOp =
+  | { type: "addNode"; variableId: number }
+  | { type: "removeNode"; variableId: number }
+  | { type: "addEdge"; fromVariableId: number; toVariableId: number; relationship: string; provenancePaperId?: number | null; provenanceCitationText?: string | null }
+  | { type: "removeEdge"; fromVariableId: number; toVariableId: number; relationship: string };
+
+type AppliedOp = {
+  type: LiveOp["type"];
+  label: string;
+  variableId?: number;
+  fromVariableId?: number;
+  toVariableId?: number;
+  relationship?: string;
+};
+type RejectedOp = { type: LiveOp["type"]; label: string; reason: string };
+
+async function applyLiveModelOps(
+  sessionId: number,
+  ops: LiveOp[],
+  ctx: { sessionVarIds: Set<number>; varNameById: Map<number, string>; sessionPaperIds: Set<number> },
+): Promise<{ applied: AppliedOp[]; rejected: RejectedOp[]; liveModelVersion: number }> {
+  const applied: AppliedOp[] = [];
+  const rejected: RejectedOp[] = [];
+
+  const nameOf = (id: number) => ctx.varNameById.get(id) ?? `#${id}`;
+  const labelEdge = (op: { fromVariableId: number; toVariableId: number; relationship: string }) =>
+    `${nameOf(op.fromVariableId)} —[${op.relationship}]→ ${nameOf(op.toVariableId)}`;
+  const labelNode = (vid: number) => nameOf(vid);
+
+  await db.insert(liveModelsTable).values({ sessionId }).onConflictDoNothing({ target: liveModelsTable.sessionId });
+  const [liveModel] = await db.select().from(liveModelsTable).where(eq(liveModelsTable.sessionId, sessionId)).limit(1);
+  if (!liveModel) {
+    return { applied, rejected: ops.map((o) => ({ type: o.type, label: "(live model)", reason: "无法创建活跃模型" })), liveModelVersion: 0 };
+  }
+
+  await db.transaction(async (tx) => {
+    for (const op of ops) {
+      try {
+        if (op.type === "addNode") {
+          if (!ctx.sessionVarIds.has(op.variableId)) {
+            rejected.push({ type: op.type, label: labelNode(op.variableId), reason: "变量不属于当前项目" });
+            continue;
+          }
+          await tx.insert(liveModelNodesTable).values({
+            liveModelId: liveModel.id,
+            variableId: op.variableId,
+            userAdded: true,
+          }).onConflictDoNothing();
+          applied.push({ type: op.type, label: labelNode(op.variableId), variableId: op.variableId });
+        } else if (op.type === "removeNode") {
+          if (!ctx.sessionVarIds.has(op.variableId)) {
+            rejected.push({ type: op.type, label: labelNode(op.variableId), reason: "变量不属于当前项目" });
+            continue;
+          }
+          await tx.delete(liveModelEdgesTable).where(and(
+            eq(liveModelEdgesTable.liveModelId, liveModel.id),
+            or(
+              eq(liveModelEdgesTable.fromVariableId, op.variableId),
+              eq(liveModelEdgesTable.toVariableId, op.variableId),
+            ),
+          ));
+          await tx.delete(liveModelNodesTable).where(and(
+            eq(liveModelNodesTable.liveModelId, liveModel.id),
+            eq(liveModelNodesTable.variableId, op.variableId),
+          ));
+          applied.push({ type: op.type, label: labelNode(op.variableId), variableId: op.variableId });
+        } else if (op.type === "addEdge") {
+          if (!ALLOWED_REL.has(op.relationship)) {
+            rejected.push({ type: op.type, label: labelEdge(op), reason: "未知关系类型" });
+            continue;
+          }
+          if (op.fromVariableId === op.toVariableId) {
+            rejected.push({ type: op.type, label: labelEdge(op), reason: "不允许自环" });
+            continue;
+          }
+          if (!ctx.sessionVarIds.has(op.fromVariableId) || !ctx.sessionVarIds.has(op.toVariableId)) {
+            rejected.push({ type: op.type, label: labelEdge(op), reason: "变量不属于当前项目" });
+            continue;
+          }
+          const provPaperId = op.provenancePaperId != null && ctx.sessionPaperIds.has(op.provenancePaperId)
+            ? op.provenancePaperId : null;
+          const provCit = provPaperId != null && typeof op.provenanceCitationText === "string"
+            ? op.provenanceCitationText.slice(0, 600) : null;
+          // Auto-add endpoint nodes
+          for (const vid of [op.fromVariableId, op.toVariableId]) {
+            await tx.insert(liveModelNodesTable).values({
+              liveModelId: liveModel.id, variableId: vid, userAdded: true,
+            }).onConflictDoNothing();
+          }
+          await tx.insert(liveModelEdgesTable).values({
+            liveModelId: liveModel.id,
+            fromVariableId: op.fromVariableId,
+            toVariableId: op.toVariableId,
+            relationship: op.relationship,
+            provenancePaperId: provPaperId,
+            provenanceCitationText: provCit,
+            confidence: "medium",
+            userAdded: true,
+          }).onConflictDoNothing({
+            target: [liveModelEdgesTable.liveModelId, liveModelEdgesTable.fromVariableId, liveModelEdgesTable.toVariableId, liveModelEdgesTable.relationship],
+          });
+          applied.push({ type: op.type, label: labelEdge(op), fromVariableId: op.fromVariableId, toVariableId: op.toVariableId, relationship: op.relationship });
+        } else if (op.type === "removeEdge") {
+          if (!ALLOWED_REL.has(op.relationship)) {
+            rejected.push({ type: op.type, label: labelEdge(op), reason: "未知关系类型" });
+            continue;
+          }
+          await tx.delete(liveModelEdgesTable).where(and(
+            eq(liveModelEdgesTable.liveModelId, liveModel.id),
+            eq(liveModelEdgesTable.fromVariableId, op.fromVariableId),
+            eq(liveModelEdgesTable.toVariableId, op.toVariableId),
+            eq(liveModelEdgesTable.relationship, op.relationship),
+          ));
+          applied.push({ type: op.type, label: labelEdge(op), fromVariableId: op.fromVariableId, toVariableId: op.toVariableId, relationship: op.relationship });
+        }
+      } catch (err) {
+        rejected.push({ type: op.type, label: "(op)", reason: (err as Error).message?.slice(0, 200) ?? "未知错误" });
+      }
+    }
+    if (applied.length > 0) {
+      await tx.update(liveModelsTable)
+        .set({ version: sql`${liveModelsTable.version} + 1`, updatedAt: new Date() })
+        .where(eq(liveModelsTable.id, liveModel.id));
+    }
+  });
+
+  const [refreshed] = await db.select({ version: liveModelsTable.version }).from(liveModelsTable).where(eq(liveModelsTable.id, liveModel.id)).limit(1);
+  return { applied, rejected, liveModelVersion: refreshed?.version ?? liveModel.version };
+}
 
 const router: IRouter = Router();
 
@@ -35,12 +174,33 @@ router.post("/sessions/:id/model-assistant", async (req, res) => {
   // the single most important alignment signal for the assistant — without
   // it the chat would suggest variable combinations that ignore what the
   // user actually wants to study.
-  const [papers, variables, models, sessionRows] = await Promise.all([
+  const [papers, variables, models, sessionRows, liveModelRows] = await Promise.all([
     db.select().from(papersTable).where(eq(papersTable.sessionId, sessionId)),
     db.select().from(variablesTable).where(eq(variablesTable.sessionId, sessionId)),
     db.select().from(researchModelsTable).where(eq(researchModelsTable.sessionId, sessionId)),
     db.select({ topic: sessionsTable.topic, name: sessionsTable.name }).from(sessionsTable).where(eq(sessionsTable.id, sessionId)).limit(1),
+    db.select().from(liveModelsTable).where(eq(liveModelsTable.sessionId, sessionId)).limit(1),
   ]);
+  // Load CURRENT live-model content (nodes + edges) so the assistant can
+  // suggest precise add/remove ops referencing existing variables, instead
+  // of guessing what's already on the canvas.
+  let liveNodes: Array<{ variableId: number; userAdded: boolean }> = [];
+  let liveEdges: Array<{ fromVariableId: number; toVariableId: number; relationship: string; userAdded: boolean }> = [];
+  if (liveModelRows[0]) {
+    const lmId = liveModelRows[0].id;
+    const [nRows, eRows] = await Promise.all([
+      db.select({ variableId: liveModelNodesTable.variableId, userAdded: liveModelNodesTable.userAdded })
+        .from(liveModelNodesTable).where(eq(liveModelNodesTable.liveModelId, lmId)),
+      db.select({
+        fromVariableId: liveModelEdgesTable.fromVariableId,
+        toVariableId: liveModelEdgesTable.toVariableId,
+        relationship: liveModelEdgesTable.relationship,
+        userAdded: liveModelEdgesTable.userAdded,
+      }).from(liveModelEdgesTable).where(eq(liveModelEdgesTable.liveModelId, lmId)),
+    ]);
+    liveNodes = nRows;
+    liveEdges = eRows;
+  }
   const sessionTopic = (sessionRows[0]?.topic ?? "").trim();
   const sessionName = (sessionRows[0]?.name ?? "").trim();
 
@@ -98,7 +258,27 @@ Only emit the suggestion block when you are recommending the user click "套用�
 
 The suggestion will pre-fill the generation form and select variables — keep userPrompt under 600 chars, focusVariableIds 2-6 items, requiredOperators 1-2 items.
 
-5. **CRITICAL — material-sufficiency check**: BEFORE you emit a suggestion block, judge whether the existing papers and variables actually cover the user's research question. If a key construct is missing (e.g. user wants a moderator type that no current paper measures, or wants a context/population not represented), DO NOT pretend — instead emit a needs-more-papers block in fences exactly like:
+5. **DIRECT EDITS to the live model (the "我的研究模型" diagram)**: When the user explicitly asks you to add / remove / modify the active research-model diagram (e.g. "把 X 节点去掉"、"加上感知信任 → 购买意愿 正向"、"把 A→B 改成中介"), DO NOT just suggest a regeneration — emit a direct-edit block that the server will apply to the live model immediately:
+\`\`\`liveModelOps
+{
+  "summary": "<one-sentence Chinese summary of what you changed>",
+  "ops": [
+    {"type": "addNode", "variableId": <int>},
+    {"type": "removeNode", "variableId": <int>},
+    {"type": "addEdge", "fromVariableId": <int>, "toVariableId": <int>, "relationship": "positive|negative|mediates|moderates", "provenancePaperId": <int|null>, "provenanceCitationText": "<short excerpt or null>"},
+    {"type": "removeEdge", "fromVariableId": <int>, "toVariableId": <int>, "relationship": "positive|negative|mediates|moderates"}
+  ]
+}
+\`\`\`
+RULES for liveModelOps:
+- Only emit when the user EXPLICITLY asks for a direct edit. For exploratory questions ("能不能这样设计?") OMIT this block — use \`suggestion\` instead.
+- Every \`variableId\` MUST be a real id from the VARIABLES list below. Never invent ids.
+- Modifying an edge = removeEdge + addEdge in the same block.
+- For addEdge, prefer to set \`provenancePaperId\` + a short \`provenanceCitationText\` (≤ 200 chars) drawn from the paper's abstract; if the user is making an exploratory link without paper backing, set both to null and the system will mark the edge as user-added.
+- Keep ops ≤ 6 per turn so the user can review them. If a request needs more, do the most important ones and tell the user what was deferred.
+- You can emit liveModelOps AND a chat reply explaining what you did. You may ALSO emit a follow-up suggestion block if a regeneration would further refine things.
+
+6. **CRITICAL — material-sufficiency check**: BEFORE you emit a suggestion block, judge whether the existing papers and variables actually cover the user's research question. If a key construct is missing (e.g. user wants a moderator type that no current paper measures, or wants a context/population not represented), DO NOT pretend — instead emit a needs-more-papers block in fences exactly like:
 \`\`\`needs_more_papers
 {
   "reason": "<one short Chinese sentence explaining what is missing and why current materials can't cover it>",
@@ -124,6 +304,21 @@ ${varLines}
 
 EXISTING GENERATED MODELS:
 ${existingModelLines}
+
+CURRENT LIVE MODEL (the user's "我的研究模型" diagram — this is the canvas your liveModelOps will edit):
+${(() => {
+  if (liveNodes.length === 0 && liveEdges.length === 0) return "  (empty — no nodes or edges yet)";
+  const nodeLines = liveNodes.length === 0 ? "  (no nodes)" : liveNodes.map((n) => {
+    const v = variables.find((vv) => vv.id === n.variableId);
+    return `    - variableId=${n.variableId} [${v?.type ?? "?"}] "${v?.name ?? `#${n.variableId}`}"${n.userAdded ? " (user-added)" : ""}`;
+  }).join("\n");
+  const edgeLines = liveEdges.length === 0 ? "  (no edges)" : liveEdges.map((e) => {
+    const fv = variables.find((v) => v.id === e.fromVariableId);
+    const tv = variables.find((v) => v.id === e.toVariableId);
+    return `    - ${e.fromVariableId} "${fv?.name ?? "?"}" —[${e.relationship}]→ ${e.toVariableId} "${tv?.name ?? "?"}"${e.userAdded ? " (user-added)" : ""}`;
+  }).join("\n");
+  return `  Nodes (${liveNodes.length}):\n${nodeLines}\n  Edges (${liveEdges.length}):\n${edgeLines}`;
+})()}
 
 AVAILABLE STRUCTURAL OPERATORS:
 ${operatorsAsPromptBlock()}
@@ -209,6 +404,59 @@ Be specific. Reference variables and papers BY NAME. Never invent variables that
       }
     }
 
+    // Extract optional ```liveModelOps {...}``` block and apply directly to
+    // the session's live model. This is the "chat ↔ diagram" bridge: when the
+    // user asks "去掉 X" or "加上 A→B 正向", the AI emits ops, the server
+    // applies them in this same request, and the frontend invalidates its
+    // live-model query so the diagram updates immediately.
+    let liveModelApplied: { summary: string; applied: AppliedOp[]; rejected: RejectedOp[]; liveModelVersion: number } | undefined;
+    const lm = raw.match(/```liveModelOps\s*([\s\S]*?)```/i);
+    if (lm) {
+      try {
+        const parsed = JSON.parse(lm[1].trim());
+        const opsRaw = Array.isArray(parsed.ops) ? parsed.ops : [];
+        const summary = typeof parsed.summary === "string" ? parsed.summary.slice(0, 240) : "";
+        const ops: LiveOp[] = [];
+        for (const o of opsRaw.slice(0, 12)) {
+          if (typeof o !== "object" || o === null) continue;
+          const t = (o as { type?: unknown }).type;
+          if (t === "addNode" || t === "removeNode") {
+            const vid = Number((o as { variableId?: unknown }).variableId);
+            if (Number.isFinite(vid)) ops.push({ type: t, variableId: vid });
+          } else if (t === "addEdge" || t === "removeEdge") {
+            const fr = Number((o as { fromVariableId?: unknown }).fromVariableId);
+            const to = Number((o as { toVariableId?: unknown }).toVariableId);
+            const rel = String((o as { relationship?: unknown }).relationship ?? "");
+            if (!Number.isFinite(fr) || !Number.isFinite(to) || !rel) continue;
+            if (t === "addEdge") {
+              const pid = (o as { provenancePaperId?: unknown }).provenancePaperId;
+              const ct = (o as { provenanceCitationText?: unknown }).provenanceCitationText;
+              ops.push({
+                type: "addEdge",
+                fromVariableId: fr,
+                toVariableId: to,
+                relationship: rel,
+                provenancePaperId: typeof pid === "number" && Number.isFinite(pid) ? pid : null,
+                provenanceCitationText: typeof ct === "string" ? ct : null,
+              });
+            } else {
+              ops.push({ type: "removeEdge", fromVariableId: fr, toVariableId: to, relationship: rel });
+            }
+          }
+        }
+        if (ops.length > 0) {
+          const sessionVarIds = new Set(variables.map((v) => v.id));
+          const varNameById = new Map(variables.map((v) => [v.id, v.name] as const));
+          const sessionPaperIds = new Set(papers.map((p) => p.id));
+          const result = await applyLiveModelOps(sessionId, ops, { sessionVarIds, varNameById, sessionPaperIds });
+          liveModelApplied = { summary: summary || `已应用 ${result.applied.length} 项改动`, ...result };
+        }
+        reply = reply.replace(lm[0], "").trim();
+      } catch (err) {
+        req.log.warn({ err, block: lm[1] }, "Failed to parse liveModelOps block");
+      }
+    }
+
     // Extract optional ```needs_more_papers {...}``` block.
     let needsMorePapers: { reason: string; searchQuery?: string; missingConstructs?: string[] } | undefined;
     const nm = raw.match(/```needs_more_papers\s*([\s\S]*?)```/i);
@@ -251,7 +499,7 @@ Be specific. Reference variables and papers BY NAME. Never invent variables that
       req.log.warn({ err }, "Failed to persist model-assistant messages (non-fatal)");
     }
 
-    res.json({ reply, suggestion, needsMorePapers });
+    res.json({ reply, suggestion, needsMorePapers, liveModelApplied });
   } catch (err: unknown) {
     const e = err as { name?: string; message?: string };
     const aborted = e?.name === "AbortError" || e?.name === "TimeoutError" || /aborted|timeout/i.test(e?.message ?? "");

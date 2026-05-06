@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useChatModelAssistant, useSearchModelImages, useSearchModelPapers, useAddImageBlocklistEntry, useListImageBlocklist, useDeleteImageBlocklistEntry, useGetModelAssistantMessages, useClearModelAssistantMessages, getGetModelAssistantMessagesQueryKey, getListImageBlocklistQueryKey } from "@workspace/api-client-react";
+import { useChatModelAssistant, useSearchModelImages, useSearchModelPapers, useAddImageBlocklistEntry, useListImageBlocklist, useDeleteImageBlocklistEntry, useGetModelAssistantMessages, useClearModelAssistantMessages, getGetModelAssistantMessagesQueryKey, getListImageBlocklistQueryKey, getGetLiveModelQueryKey } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { BookOpen, BookPlus, ChevronDown, ChevronUp, Download, ExternalLink, FileText, Heart, Image as ImageIcon, LayoutGrid, Loader2, MessageSquare, Paperclip, RefreshCw, RotateCcw, Search, Send, Sparkles, Trash2, X } from "lucide-react";
 import { useT } from "@/lib/i18n";
@@ -46,6 +46,21 @@ type Attachment = { name: string; kind: "image" | "text"; data: string };
 type ChatMsg = { role: "user" | "assistant"; content: string; attachments?: Attachment[] };
 type Suggestion = { userPrompt?: string; focusVariableIds?: number[]; requiredOperators?: string[] };
 type NeedsMore = { reason: string; searchQuery?: string; missingConstructs?: string[] };
+type LiveAppliedOp = {
+  type: "addNode" | "removeNode" | "addEdge" | "removeEdge";
+  label: string;
+  variableId?: number;
+  fromVariableId?: number;
+  toVariableId?: number;
+  relationship?: string;
+};
+type LiveRejectedOp = { type: LiveAppliedOp["type"]; label: string; reason: string };
+type LiveModelApplied = {
+  summary: string;
+  applied: LiveAppliedOp[];
+  rejected: LiveRejectedOp[];
+  liveModelVersion: number;
+};
 
 export function ModelAssistantChat({
   sessionId,
@@ -88,6 +103,7 @@ export function ModelAssistantChat({
   const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([]);
   const [lastSuggestion, setLastSuggestion] = useState<Suggestion | null>(null);
   const [lastNeedsMore, setLastNeedsMore] = useState<NeedsMore | null>(null);
+  const [lastLiveApplied, setLastLiveApplied] = useState<LiveModelApplied | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -401,6 +417,17 @@ export function ModelAssistantChat({
         if (resp.needsMorePapers && resp.needsMorePapers.reason) {
           setLastNeedsMore(resp.needsMorePapers as NeedsMore);
         }
+        // Chat-driven direct edits to the live model: when the AI emits a
+        // liveModelOps block, the server applies it in the same request.
+        // We surface the applied/rejected ops in a green card and refetch
+        // the live-model query so the diagram updates on screen immediately.
+        const lma = (resp as { liveModelApplied?: LiveModelApplied }).liveModelApplied;
+        if (lma && (lma.applied.length > 0 || lma.rejected.length > 0)) {
+          setLastLiveApplied(lma);
+          if (lma.applied.length > 0) {
+            qc.invalidateQueries({ queryKey: getGetLiveModelQueryKey(sessionId) });
+          }
+        }
         // Refresh persisted history so refresh-after-send shows the new turn.
         qc.invalidateQueries({ queryKey: getGetModelAssistantMessagesQueryKey(sessionId) });
       },
@@ -415,6 +442,7 @@ export function ModelAssistantChat({
     setPendingAttachments([]);
     setLastSuggestion(null);
     setLastNeedsMore(null);
+    setLastLiveApplied(null);
     clearHistoryMut.mutate({ id: sessionId }, {
       onSettled: () => {
         qc.invalidateQueries({ queryKey: getGetModelAssistantMessagesQueryKey(sessionId) });
@@ -490,6 +518,61 @@ export function ModelAssistantChat({
           </div>
         )}
       </div>
+
+      {lastLiveApplied && (
+        <div className="border-t border-sky-200 bg-sky-50/80 px-4 py-3 space-y-2" data-testid="panel-live-model-applied">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5 text-xs font-semibold text-sky-900">
+              <LayoutGrid className="w-3.5 h-3.5" /> {t("models.assistant.liveApplied.title" as any)}
+            </div>
+            <button
+              type="button"
+              onClick={() => setLastLiveApplied(null)}
+              className="text-sky-700 hover:text-sky-900 p-0.5"
+              aria-label="dismiss"
+              data-testid="button-dismiss-live-applied"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          {lastLiveApplied.summary && (
+            <p className="text-xs text-sky-900 bg-white/70 rounded p-2 border border-sky-200">{lastLiveApplied.summary}</p>
+          )}
+          {lastLiveApplied.applied.length > 0 && (
+            <div className="text-xs text-sky-900 space-y-1">
+              <div className="font-medium">{t("models.assistant.liveApplied.appliedLabel" as any)} ({lastLiveApplied.applied.length})</div>
+              <ul className="space-y-0.5">
+                {lastLiveApplied.applied.map((op, i) => (
+                  <li key={i} className="flex items-start gap-1.5">
+                    <span className="inline-block bg-sky-600 text-white rounded px-1.5 py-0.5 text-[10px] font-mono shrink-0">{op.type}</span>
+                    <span className="bg-white border border-sky-200 rounded px-1.5 py-0.5 break-all">{op.label}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {lastLiveApplied.rejected.length > 0 && (
+            <div className="text-xs text-rose-800 space-y-1">
+              <div className="font-medium">{t("models.assistant.liveApplied.rejectedLabel" as any)} ({lastLiveApplied.rejected.length})</div>
+              <ul className="space-y-0.5">
+                {lastLiveApplied.rejected.map((op, i) => (
+                  <li key={i} className="flex items-start gap-1.5">
+                    <span className="inline-block bg-rose-600 text-white rounded px-1.5 py-0.5 text-[10px] font-mono shrink-0">{op.type}</span>
+                    <span className="bg-white border border-rose-200 rounded px-1.5 py-0.5 break-all">{op.label} — {op.reason}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <a
+            href={`/sessions/${sessionId}/live-model`}
+            data-testid="link-open-live-model"
+            className="inline-flex items-center gap-1.5 rounded-md bg-sky-600 hover:bg-sky-700 text-white text-xs font-semibold px-3 py-1.5"
+          >
+            <LayoutGrid className="w-3.5 h-3.5" /> {t("models.assistant.liveApplied.openLive" as any)}
+          </a>
+        </div>
+      )}
 
       {lastNeedsMore && (
         <div className="border-t border-amber-200 bg-amber-50/80 px-4 py-3 space-y-2" data-testid="panel-needs-more-papers">

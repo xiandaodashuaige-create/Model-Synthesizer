@@ -166,6 +166,7 @@ export async function refreshUserPersonalization(userId: string): Promise<Person
   let models: ResearchModel[] = [];
   let feedback: GenerationFeedback[] = [];
   let chatTurns = 0;
+  let chatContentTokens: string[] = [];
 
   if (sessionIds.length > 0) {
     // SCOPED queries — never full-table-scan. Required to (a) avoid loading
@@ -179,8 +180,11 @@ export async function refreshUserPersonalization(userId: string): Promise<Person
         .select()
         .from(generationFeedbackTable)
         .where(and(isNotNull(generationFeedbackTable.selectedModelSnapshot), inArray(generationFeedbackTable.sessionId, sessionIds))),
+      // Pull user-role chat *content* (not just count) so the assistant
+      // dialogue becomes real learning material — what the user actually
+      // talks about when refining models flows into topDomainKeywords.
       db
-        .select({ id: modelAssistantMessagesTable.id })
+        .select({ content: modelAssistantMessagesTable.content })
         .from(modelAssistantMessagesTable)
         .where(and(eq(modelAssistantMessagesTable.role, "user"), inArray(modelAssistantMessagesTable.sessionId, sessionIds))),
     ]);
@@ -189,6 +193,9 @@ export async function refreshUserPersonalization(userId: string): Promise<Person
     models = mRows;
     feedback = fRows;
     chatTurns = chatRows.length;
+    // Tokenize chat content into a separate bucket and merge into domainTokens
+    // below; we keep the count for diagnostics on the personalization card.
+    chatContentTokens = chatRows.flatMap((r) => tokenize(r.content ?? "")).slice(0, 4000);
   }
 
   const acceptedModels = models.filter((m) => m.selected === "true");
@@ -203,6 +210,11 @@ export async function refreshUserPersonalization(userId: string): Promise<Person
   const domainTokens: string[] = [];
   for (const s of sessions) for (const t of tokenize(s.topic)) domainTokens.push(t);
   for (const v of variables) for (const t of tokenize(v.name)) domainTokens.push(t);
+  // What the user TYPES in chat is the strongest direct-intent signal we have
+  // (typed in their own language, free of AI-extracted variable noise). Feed
+  // those tokens into the same domain-keyword bucket so chat turns measurably
+  // shape future generations' personalization context.
+  for (const t of chatContentTokens) domainTokens.push(t);
   const topDomainKeywords = topN(domainTokens, 8);
 
   const acceptedTags = acceptedModels.map((m) => parseRationaleTags(m.rationale ?? ""));

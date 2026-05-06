@@ -734,11 +734,58 @@ export type ChatModelAssistant200NeedsMorePapers = {
   missingConstructs?: string[];
 };
 
+export type ChatModelAssistant200LiveModelAppliedAppliedItemType =
+  (typeof ChatModelAssistant200LiveModelAppliedAppliedItemType)[keyof typeof ChatModelAssistant200LiveModelAppliedAppliedItemType];
+
+export const ChatModelAssistant200LiveModelAppliedAppliedItemType = {
+  addNode: "addNode",
+  removeNode: "removeNode",
+  addEdge: "addEdge",
+  removeEdge: "removeEdge",
+} as const;
+
+export type ChatModelAssistant200LiveModelAppliedAppliedItem = {
+  type: ChatModelAssistant200LiveModelAppliedAppliedItemType;
+  label: string;
+  variableId?: number;
+  fromVariableId?: number;
+  toVariableId?: number;
+  relationship?: string;
+};
+
+export type ChatModelAssistant200LiveModelAppliedRejectedItemType =
+  (typeof ChatModelAssistant200LiveModelAppliedRejectedItemType)[keyof typeof ChatModelAssistant200LiveModelAppliedRejectedItemType];
+
+export const ChatModelAssistant200LiveModelAppliedRejectedItemType = {
+  addNode: "addNode",
+  removeNode: "removeNode",
+  addEdge: "addEdge",
+  removeEdge: "removeEdge",
+} as const;
+
+export type ChatModelAssistant200LiveModelAppliedRejectedItem = {
+  type: ChatModelAssistant200LiveModelAppliedRejectedItemType;
+  label: string;
+  reason: string;
+};
+
+/**
+ * Set when the assistant emitted a `liveModelOps` block and the server applied (or attempted to apply) one or more direct edits to the session's live model. The frontend should refetch the live model after seeing this.
+ */
+export type ChatModelAssistant200LiveModelApplied = {
+  summary: string;
+  liveModelVersion: number;
+  applied: ChatModelAssistant200LiveModelAppliedAppliedItem[];
+  rejected: ChatModelAssistant200LiveModelAppliedRejectedItem[];
+};
+
 export type ChatModelAssistant200 = {
   reply: string;
   suggestion?: ChatModelAssistant200Suggestion;
   /** Set when the AI judges the existing session materials are insufficient to answer the user's research question. */
   needsMorePapers?: ChatModelAssistant200NeedsMorePapers;
+  /** Set when the assistant emitted a `liveModelOps` block and the server applied (or attempted to apply) one or more direct edits to the session's live model. The frontend should refetch the live model after seeing this. */
+  liveModelApplied?: ChatModelAssistant200LiveModelApplied;
 };
 
 export type GetModelAssistantMessages200MessagesItemRole =

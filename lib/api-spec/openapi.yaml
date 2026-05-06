@@ -779,6 +779,47 @@ paths:
                         type: array
                         items:
                           type: string
+                  liveModelApplied:
+                    type: object
+                    description: Set when the assistant emitted a `liveModelOps` block and the server applied (or attempted to apply) one or more direct edits to the session's live model. The frontend should refetch the live model after seeing this.
+                    required: [applied, rejected, summary, liveModelVersion]
+                    properties:
+                      summary:
+                        type: string
+                      liveModelVersion:
+                        type: integer
+                      applied:
+                        type: array
+                        items:
+                          type: object
+                          required: [type, label]
+                          properties:
+                            type:
+                              type: string
+                              enum: [addNode, removeNode, addEdge, removeEdge]
+                            label:
+                              type: string
+                            variableId:
+                              type: integer
+                            fromVariableId:
+                              type: integer
+                            toVariableId:
+                              type: integer
+                            relationship:
+                              type: string
+                      rejected:
+                        type: array
+                        items:
+                          type: object
+                          required: [type, label, reason]
+                          properties:
+                            type:
+                              type: string
+                              enum: [addNode, removeNode, addEdge, removeEdge]
+                            label:
+                              type: string
+                            reason:
+                              type: string
 
   /sessions/{id}/model-assistant/messages:
     get:
