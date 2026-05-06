@@ -30,25 +30,30 @@ function VariableGraph({ sessionId }: { sessionId: number }) {
   if (isLoading) return <div className="flex justify-center py-8"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>;
   if (!graph || graph.nodes.length === 0) return null;
 
-  const WIDTH = 700;
-  const HEIGHT = 320;
-  const NODE_W = 140;
-  const NODE_H = 44;
+  const NODE_W = 170;
+  const NODE_H = 52;
+  const ROW_GAP = 14;
+  const COL_GAP = 60;
+  const PAD_X = 24;
+  const PAD_Y = 24;
   const groups: Record<string, typeof graph.nodes> = {};
   for (const n of graph.nodes) {
     if (!groups[n.type]) groups[n.type] = [];
     groups[n.type].push(n);
   }
   const typeOrder = ["independent", "mediator", "moderator", "dependent"];
+  const cols = typeOrder.filter((t) => (groups[t]?.length ?? 0) > 0);
+  const maxRows = Math.max(1, ...cols.map((t) => groups[t]!.length));
+  const WIDTH = PAD_X * 2 + cols.length * NODE_W + (cols.length - 1) * COL_GAP;
+  const HEIGHT = PAD_Y * 2 + maxRows * NODE_H + (maxRows - 1) * ROW_GAP;
   const positions = new Map<string, { x: number; y: number }>();
-  const cols = typeOrder.filter((t) => groups[t]?.length > 0);
   cols.forEach((type, colIdx) => {
     const nodes = groups[type] ?? [];
-    const colX = ((colIdx + 0.5) / cols.length) * WIDTH;
+    const colX = PAD_X + colIdx * (NODE_W + COL_GAP) + NODE_W / 2;
+    const totalH = nodes.length * NODE_H + (nodes.length - 1) * ROW_GAP;
+    const startY = PAD_Y + (HEIGHT - PAD_Y * 2 - totalH) / 2;
     nodes.forEach((node, rowIdx) => {
-      const totalH = nodes.length * (NODE_H + 16) - 16;
-      const startY = (HEIGHT - totalH) / 2;
-      positions.set(node.id, { x: colX, y: startY + rowIdx * (NODE_H + 16) + NODE_H / 2 });
+      positions.set(node.id, { x: colX, y: startY + rowIdx * (NODE_H + ROW_GAP) + NODE_H / 2 });
     });
   });
 
@@ -56,13 +61,41 @@ function VariableGraph({ sessionId }: { sessionId: number }) {
     independent: "#2563eb", mediator: "#d97706", moderator: "#7c3aed", dependent: "#16a34a",
   };
 
+  // Wrap label across up to 2 lines so longer names stay readable.
+  const wrapLabel = (label: string, maxPerLine = 22): string[] => {
+    if (label.length <= maxPerLine) return [label];
+    const words = label.split(/\s+/);
+    const lines: string[] = [];
+    let cur = "";
+    for (const w of words) {
+      if ((cur + " " + w).trim().length > maxPerLine) {
+        if (cur) lines.push(cur.trim());
+        cur = w;
+      } else {
+        cur = (cur + " " + w).trim();
+      }
+      if (lines.length >= 2) break;
+    }
+    if (lines.length < 2 && cur) lines.push(cur.trim());
+    if (lines.length === 0) lines.push(label.slice(0, maxPerLine));
+    // If still overflowing the second line, ellipsize.
+    if (lines[1] && lines[1].length > maxPerLine) lines[1] = lines[1].slice(0, maxPerLine - 1) + "…";
+    return lines.slice(0, 2);
+  };
+
   const drawnEdges = new Set<string>();
 
   return (
     <div className="bg-card border border-border rounded-lg p-5">
       <h3 className="text-sm font-semibold text-foreground mb-4">{t("vars.graph.title" as any)}</h3>
-      <div className="overflow-x-auto">
-        <svg width={WIDTH} height={HEIGHT} viewBox={`0 0 ${WIDTH} ${HEIGHT}`} className="text-foreground">
+      <div className="overflow-auto max-h-[640px]">
+        <svg
+          width={WIDTH}
+          height={HEIGHT}
+          viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
+          className="text-foreground"
+          style={{ minWidth: WIDTH, minHeight: HEIGHT }}
+        >
           <defs>
             <marker id="arrowhead" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
               <path d="M0,0 L0,6 L8,3 z" fill="currentColor" opacity={0.5} />
@@ -77,23 +110,46 @@ function VariableGraph({ sessionId }: { sessionId: number }) {
             if (!from || !to) return null;
             const fromX = from.x + NODE_W / 2;
             const toX = to.x - NODE_W / 2;
+            // Cubic bezier — horizontal-ish handles produce gentle curves and visibly fewer crossings.
+            const dx = Math.max(40, (toX - fromX) * 0.5);
+            const c1x = fromX + dx;
+            const c2x = toX - dx;
             return (
-              <line key={i} x1={fromX} y1={from.y} x2={toX} y2={to.y}
-                stroke="currentColor" strokeOpacity={0.25} strokeWidth={1.5}
-                markerEnd="url(#arrowhead)" />
+              <path
+                key={i}
+                d={`M ${fromX} ${from.y} C ${c1x} ${from.y}, ${c2x} ${to.y}, ${toX} ${to.y}`}
+                fill="none"
+                stroke="currentColor"
+                strokeOpacity={0.28}
+                strokeWidth={1.4}
+                markerEnd="url(#arrowhead)"
+              />
             );
           })}
           {graph.nodes.map((node) => {
             const pos = positions.get(node.id);
             if (!pos) return null;
             const color = colorMap[node.type] ?? "#888";
+            const lines = wrapLabel(node.label);
             return (
               <g key={node.id} transform={`translate(${pos.x - NODE_W / 2}, ${pos.y - NODE_H / 2})`}>
+                <title>{node.label}</title>
                 <rect width={NODE_W} height={NODE_H} rx={6} fill={color} fillOpacity={0.12} stroke={color} strokeOpacity={0.4} strokeWidth={1.5} />
-                <text x={NODE_W / 2} y={NODE_H / 2 - 4} textAnchor="middle" fontSize={10} fontWeight={600} fill={color}>
-                  {node.label.length > 18 ? node.label.slice(0, 17) + "…" : node.label}
-                </text>
-                <text x={NODE_W / 2} y={NODE_H / 2 + 10} textAnchor="middle" fontSize={9} fill={color} opacity={0.7}>
+                {lines.length === 1 ? (
+                  <text x={NODE_W / 2} y={NODE_H / 2 - 2} textAnchor="middle" fontSize={11} fontWeight={600} fill={color}>
+                    {lines[0]}
+                  </text>
+                ) : (
+                  <>
+                    <text x={NODE_W / 2} y={NODE_H / 2 - 6} textAnchor="middle" fontSize={10.5} fontWeight={600} fill={color}>
+                      {lines[0]}
+                    </text>
+                    <text x={NODE_W / 2} y={NODE_H / 2 + 6} textAnchor="middle" fontSize={10.5} fontWeight={600} fill={color}>
+                      {lines[1]}
+                    </text>
+                  </>
+                )}
+                <text x={NODE_W / 2} y={NODE_H - 6} textAnchor="middle" fontSize={9} fill={color} opacity={0.7}>
                   {node.paperCount}
                 </text>
               </g>
