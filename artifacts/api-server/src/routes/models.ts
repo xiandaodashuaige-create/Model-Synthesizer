@@ -1176,8 +1176,15 @@ OUTPUT FORMAT — return ONLY a JSON array, no markdown:
       }
       req.log.warn({ candidates: softFails.length, salvaged }, "Rescue mode: salvaged soft-fail models because zero passed strict validation");
       if (accepted.length === 0) {
+        // Even the rescue path (which lowers the bar to soft-fail-only and
+        // dedups again) couldn't salvage anything. Surface the top reasons
+        // so the user knows what to adjust — same shape as the strict-fail
+        // path above for UI consistency.
+        const topReasons = rejected.slice(0, 3)
+          .map((r) => `• ${r.m?.name ?? "未命名模型"}: ${r.v.reason}`)
+          .join("\n");
         res.status(502).json({
-          error: "AI 生成的模型都没通过基础数据校验。请重试一次，或精简你的『自定义提示词』。",
+          error: `AI 生成的模型即使在救援模式下也未能保留。\n本次拒绝原因（前 ${Math.min(3, rejected.length)} 条，共 ${rejected.length} 条）：\n${topReasons}\n请重试一次，或在『自定义提示词』里把范围写得更具体（例如指定主要 IV / DV 与首选论文）。`,
           rejected: rejected.map((r) => ({ name: r.m?.name ?? "(unnamed)", reason: r.v.reason })),
         });
         return;
