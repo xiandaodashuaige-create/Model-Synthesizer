@@ -461,11 +461,11 @@ router.post("/sessions/:id/models/generate", async (req, res): Promise<void> => 
     ? focusPicks.map((p) => `  - id ${p.id} | ${p.type.toUpperCase()} | "${p.name}" (from paper id ${p.paperId})`).join("\n")
     : "(none — AI may freely choose variables from the extracted pool)";
   const focusRules = focusPicks.length > 0
-    ? `Mandatory focus rules:
-- EVERY generated model MUST include AT LEAST ${Math.min(focusPicks.length, 2)} of these picks as STRUCTURAL nodes (IV, mediator, moderator, or DV — never as a passive label).
+    ? `Mandatory focus rules (SERVER-ENFORCED — models that fail these are programmatically rejected, NOT just frowned upon):
+- EVERY generated model MUST include AT LEAST ${Math.min(focusPicks.length, 2)} of the picks above as STRUCTURAL nodes in the \`nodes\` array (IV, mediator, moderator, or DV — never as a passive label, and NEVER merely mentioned in the rationale text). The server will count node↔pick matches by variable id (${focusPicks.map((p) => p.id).join(", ")}), by canonical construct id, and by exact lower-cased name. A model that talks about a pick in the rationale but doesn't include it as an actual node WILL BE REJECTED.
 - AT LEAST ${Math.ceil(numModels / 2)} of the ${numModels} models MUST include AT LEAST ${Math.min(focusPicks.length, 3)} picks forming the structural spine.
-- The model's \`description\` MUST name the picks it builds on (in the user's language, by the variable's natural-language name, NOT by id).
-- If a focus pick conflicts with the TOPIC's domain or outcome lock below, OMIT the entire model rather than (a) silently keeping the pick and drifting the topic, or (b) silently keeping the topic and dropping the pick.
+- Each model's \`description\` MUST name the picks it builds on (in the user's language, by the variable's natural-language name, NOT by id).
+- If a focus pick conflicts with the TOPIC's domain or outcome lock below, OMIT the entire model rather than (a) silently keeping the pick and drifting the topic, or (b) silently keeping the topic and dropping the pick. Returning fewer well-aligned models is acceptable; returning a full set that drops focus picks is NOT.
 `
     : "";
   const hasAnyIntent = !!(sessionTopic || userPrompt || focusPicks.length > 0);
@@ -753,10 +753,53 @@ OUTPUT FORMAT — return ONLY a JSON array, no markdown:
       return null;
     }
 
+    // Focus-pick enforcement (structural, not just "asked nicely in the prompt").
+    // The unified-intent block REQUIRES every model to include ≥ N of the user's
+    // hand-picked focus variables as STRUCTURAL nodes. Pre-fix the AI would
+    // routinely satisfy the prompt by *naming* the picks in the rationale while
+    // the actual `nodes[]` contained none of them — silently dropping the third
+    // dimension (focus picks) of the user's three-dimension intent (topic +
+    // papers + focus picks). Now we count node↔pick matches by BOTH variableId
+    // and canonicalConstructId (the latter survives re-extraction renames).
+    const focusVarIdSet = new Set(focusPicks.map((p) => p.id));
+    const focusCanonSet = new Set(
+      focusPicks.map((p) => p.canonicalConstructId).filter((c): c is string => !!c),
+    );
+    const focusNameSet = new Set(focusPicks.map((p) => p.name.toLowerCase().trim()));
+    const requiredFocusHits = focusPicks.length > 0 ? Math.min(focusPicks.length, 2) : 0;
+    function countFocusHits(nodes: ModelNode[]): number {
+      const hitCanon = new Set<string>();
+      const hitId = new Set<number>();
+      const hitName = new Set<string>();
+      for (const n of nodes) {
+        if (focusVarIdSet.has(n.variableId)) {
+          hitId.add(n.variableId);
+          continue;
+        }
+        const v = varById.get(n.variableId);
+        if (v?.canonicalConstructId && focusCanonSet.has(v.canonicalConstructId)) {
+          hitCanon.add(v.canonicalConstructId);
+          continue;
+        }
+        const nm = (n.variableName ?? v?.name ?? "").toLowerCase().trim();
+        if (nm && focusNameSet.has(nm)) hitName.add(nm);
+      }
+      return hitId.size + hitCanon.size + hitName.size;
+    }
+
     function validate(m: typeof generated[number] & { secondaryOperator?: string }): { ok: true } | { ok: false; reason: string } {
       if (!m || typeof m.name !== "string" || !Array.isArray(m.nodes) || !Array.isArray(m.edges)) return { ok: false, reason: "missing required fields" };
       const alignErr = checkAlignment(m.rationale ?? "");
       if (alignErr) return { ok: false, reason: alignErr };
+      if (requiredFocusHits > 0) {
+        const hits = countFocusHits(m.nodes);
+        if (hits < requiredFocusHits) {
+          return {
+            ok: false,
+            reason: `focus-pick contract violated — model includes only ${hits} of the user's hand-picked focus variables as structural nodes (need ≥ ${requiredFocusHits})`,
+          };
+        }
+      }
       if (!m.operator || !ALLOWED_OPERATORS.has(m.operator)) return { ok: false, reason: `invalid operator: ${m.operator}` };
       if (!m.secondaryOperator || !ALLOWED_OPERATORS.has(m.secondaryOperator)) return { ok: false, reason: `missing/invalid secondaryOperator: ${m.secondaryOperator}` };
       if (m.secondaryOperator === m.operator) return { ok: false, reason: "secondaryOperator must differ from primary operator" };
@@ -868,6 +911,7 @@ OUTPUT FORMAT — return ONLY a JSON array, no markdown:
       /edge count out of range/i,
       /requires nodes from/i,
       /alignment contract violated/i,
+      /focus-pick contract violated/i,
     ];
     const isSoftFail = (reason: string) => SOFT_FAIL_PATTERNS.some((re) => re.test(reason));
 

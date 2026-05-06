@@ -324,23 +324,50 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
   // Hydration is SYNCHRONOUS so the auto-gen useEffect below (which lists
   // `focusHydrated` in its deps) sees the picks in the same render pass and
   // can't race ahead with an empty focus set.
-  const focusHydratedRef = useRef<number | null>(null);
+  // Tracks the last (sessionId, keys-string) pair we synced from localStorage,
+  // so we can re-hydrate when the user navigates back from /variables having
+  // pinned more clusters, without clobbering an active chat-suggestion override.
+  const lastAppliedFocusRef = useRef<string>("");
   const [focusHydrated, setFocusHydrated] = useState(false);
+  // Tracks "I had picks saved in localStorage but couldn't map any of them to
+  // a current variable id" — usually because re-extraction renamed the
+  // variable. Surfaced in the UI so the user knows their pins didn't silently
+  // get applied (vs. being told "your picks are loaded" when they aren't).
+  const [focusPicksOrphaned, setFocusPicksOrphaned] = useState(false);
   useEffect(() => {
     if (!sessionId) return;
     if (variables === undefined) return;
-    if (focusHydratedRef.current === sessionId) return;
-    focusHydratedRef.current = sessionId;
     const keys = loadFocusedClusterKeys(sessionId);
-    if (keys.length > 0) {
+    // Variable-pool fingerprint MUST be part of the signature: after a
+    // re-extraction the saved cluster keys are unchanged but the variable IDs
+    // they expand to are completely new. Without folding the pool identity
+    // into the signature we'd short-circuit and keep stale IDs in
+    // focusVariableIds, silently dropping the user's picks at the server.
+    const poolSig = variables.map((v) => `${v.id}:${v.type}:${v.name.toLowerCase().trim()}`).join("|");
+    const sig = `${sessionId}|${keys.join("|")}|${poolSig}`;
+    if (lastAppliedFocusRef.current === sig && focusHydrated) return;
+    // Preserve an active chat-suggestion override: if the current focus state
+    // didn't come from /variables but is non-empty, the user just accepted an
+    // AI suggestion — don't silently overwrite it with the localStorage picks.
+    if (!focusFromVariablesPage && focusVariableIds.length > 0) {
+      if (!focusHydrated) setFocusHydrated(true);
+      return;
+    }
+    lastAppliedFocusRef.current = sig;
+    if (keys.length === 0) {
+      setFocusVariableIds([]);
+      setFocusFromVariablesPage(false);
+      setFocusPicksOrphaned(false);
+    } else {
       const ids = expandToVariableIds(keys, variables);
-      if (ids.length > 0) {
-        setFocusVariableIds(ids);
-        setFocusFromVariablesPage(true);
-      }
+      setFocusVariableIds(ids);
+      setFocusFromVariablesPage(ids.length > 0);
+      // Saved pins exist but none mapped to a live variable — almost always
+      // a re-extraction rename. Tell the user instead of silently dropping.
+      setFocusPicksOrphaned(ids.length === 0);
     }
     setFocusHydrated(true);
-  }, [sessionId, variables]);
+  }, [sessionId, variables, focusFromVariablesPage, focusVariableIds.length, focusHydrated]);
 
   // ── Auto initial recommendation ────────────────────────────────────────
   // Once per browser session per sessionId, when the user has done all the
@@ -518,6 +545,30 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
           >
             {t("models.focusPrefilled.clear" as any)}
           </button>
+        </div>
+      )}
+
+      {/* Orphan-picks banner: user pinned focus clusters on /variables but none
+          of those keys map to a current variable id (usually a re-extraction
+          rename). Without this banner the picks would silently drop and the
+          user would think their three-dimension intent was being honored. */}
+      {focusPicksOrphaned && (
+        <div
+          data-testid="banner-focus-orphaned"
+          className="rounded-lg border border-rose-300 bg-rose-50/60 dark:border-rose-800/60 dark:bg-rose-950/30 p-3 flex items-start gap-3"
+        >
+          <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-rose-600" />
+          <div className="flex-1 min-w-0 text-xs">
+            <p className="font-semibold text-foreground mb-0.5">{t("models.focusOrphaned.title" as any)}</p>
+            <p className="text-muted-foreground leading-relaxed">{t("models.focusOrphaned.body" as any)}</p>
+          </div>
+          <Link
+            href={`/sessions/${sessionId}/variables`}
+            data-testid="link-refocus-variables"
+            className="shrink-0 text-xs text-primary hover:underline"
+          >
+            {t("models.focusOrphaned.cta" as any)}
+          </Link>
         </div>
       )}
 

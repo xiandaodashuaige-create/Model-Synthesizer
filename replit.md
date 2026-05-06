@@ -40,6 +40,7 @@ pnpm --filter @workspace/db run push # Push DB schema changes
 - **Chat ↔ Live Model Bridge**: Enables direct modification of live models from chat suggestions, enhancing interactivity.
 - **Variable Extraction (System-Characteristic IV Emphasis)**: Rewritten prompt for `routes/variables.ts` to focus on system characteristics as independent variables for specific paper types.
 - **Global 401 Interceptor**: Provides a throttled `window` event for 401 errors, triggering a re-login overlay for improved user recovery.
+- **Three-Dimension Intent Enforcement (topic + papers + focus picks)**: Server-side `validate()` rejects any generated model that doesn't include ≥ min(focusPicks, 2) of the user's hand-picked focus variables as STRUCTURAL nodes (matched by variableId, canonicalConstructId, or exact lower-cased name); soft-fail so rescue mode can salvage. Frontend re-hydrates `/models` focus state from localStorage on every variables change (not once-per-mount), preserves chat-suggestion overrides via `focusFromVariablesPage`, and surfaces a rose-colored "orphan picks" banner when saved cluster keys can't be expanded to current variable ids (typically after a re-extraction rename).
 
 ## Product
 - **Session Management**: Create and manage research sessions with defined topics.
