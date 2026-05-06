@@ -132,6 +132,10 @@ Per-session user-curated research model with provenance-tracked edges. Independe
 
 **i18n** (`artifacts/research-model/src/lib/i18n.tsx`): added `md.modJust`, `md.export.{apa,apaTip,done,doneDesc}`, `models.assistant.searchImages.{block,blockTip}` for both zh + en.
 
+## Model Graph Cross-Check (May 2026, round 4)
+
+`ModelGraph` + `buildEdgeHTagMap` + `buildPaperTagMap` extracted to `artifacts/research-model/src/components/model-graph.tsx` (shared by `pages/sessions/models.tsx` and `pages/sessions/model-detail.tsx`). Model-detail page now embeds the graph above the "关系" section and prefixes every edge card with a sequential violet `H#` badge that 1:1 matches the graph labels (distinct from the existing indigo `evidenceHypothesisId` badge — different semantics, both shown). H# is index-based per `displayEdges`, so manual edits stay in sync. New i18n keys: `md.graph.title`, `md.graph.tip` (zh+en).
+
 ## P3 Trust+Quality Push (May 2026, round 3)
 
 Three surgical wins focused on transparency & writing-output:

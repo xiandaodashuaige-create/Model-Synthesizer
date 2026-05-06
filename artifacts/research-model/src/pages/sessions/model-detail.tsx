@@ -15,7 +15,8 @@ import {
   getGetModelQualityReportQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Loader2, ArrowLeft, CheckCircle, BookOpen, Quote, Share2, Pencil, Save, X, Trash2, Plus, Download, Hash, BarChart3, MapPin, Info, FileText, AlertTriangle, Copy as CopyIcon } from "lucide-react";
+import { Loader2, ArrowLeft, CheckCircle, BookOpen, Quote, Share2, Pencil, Save, X, Trash2, Plus, Download, Hash, BarChart3, MapPin, Info, FileText, AlertTriangle, Copy as CopyIcon, GitBranch } from "lucide-react";
+import { ModelGraph, buildEdgeHTagMap, buildPaperTagMap } from "@/components/model-graph";
 import { useToast } from "@/hooks/use-toast";
 import { useT } from "@/lib/i18n";
 
@@ -474,10 +475,27 @@ export default function SessionModelDetail({ params: routeParams }: { params?: {
       {(displayEdges.length > 0 || editing) && (
         <div>
           <h2 className="text-lg font-semibold text-foreground mb-4">{t("md.relations" as any)}</h2>
+          {displayNodes.length > 0 && displayEdges.length > 0 && (() => {
+            const edgeHTagByKey = buildEdgeHTagMap(displayEdges);
+            const paperTagById = buildPaperTagMap(displayNodes, displayEdges);
+            return (
+              <div className="mb-4 bg-background/50 rounded-lg p-4 border border-border overflow-hidden" data-testid="panel-model-graph">
+                <div className="flex items-center gap-2 mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  <GitBranch className="w-3.5 h-3.5 text-violet-600" />
+                  <span>{t("md.graph.title" as any)}</span>
+                  <span className="font-normal normal-case tracking-normal text-[11px] text-muted-foreground/80">{t("md.graph.tip" as any)}</span>
+                </div>
+                <ModelGraph nodes={displayNodes} edges={displayEdges} paperTagById={paperTagById} edgeHTagByKey={edgeHTagByKey} />
+              </div>
+            );
+          })()}
           <div className="space-y-4">
             {displayEdges.map((edge, i) => (
-              <div key={i} data-testid={`card-model-edge-${i}`} className="bg-card border border-border rounded-lg p-5">
+              <div key={i} data-testid={`card-model-edge-${i}`} className="bg-card border border-border rounded-lg p-5 scroll-mt-4" id={`edge-h${i + 1}`}>
                 <div className="flex items-center gap-3 mb-4">
+                  <span data-testid={`badge-edge-htag-${i}`} className="inline-flex items-center justify-center min-w-[36px] h-6 px-2 rounded-full bg-violet-100 text-violet-800 border border-violet-300 text-xs font-bold">
+                    H{i + 1}
+                  </span>
                   <span className="text-sm font-semibold text-foreground">{edge.fromVariableName}</span>
                   <div className="flex-1 flex items-center gap-2">
                     <div className="flex-1 h-px bg-border" />
