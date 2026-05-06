@@ -1,0 +1,288 @@
+主要审核问题
+1. 高优先级：模型学习数据跨 session 混用
+位置：artifacts/api-server/src/routes/models.ts
+
+问题在这里：
+
+const pastFeedback = await db
+  .select()
+  .from(generationFeedbackTable)
+  .where(isNotNull(generationFeedbackTable.selectedModelSnapshot))
+它没有按 sessionId 过滤。
+
+影响：
+
+A 项目的模型选择会影响 B 项目的生成。
+不同研究主题之间会互相污染。
+如果未来有用户体系，这是隐私和研究严谨性问题。
+同类问题还在：
+
+GET /sessions/:id/learning-stats
+当前也是全库统计，不是当前 session 统计。
+
+建议下一版首先修：
+
+.where(and(
+  eq(generationFeedbackTable.sessionId, sessionId),
+  isNotNull(generationFeedbackTable.selectedModelSnapshot)
+))
+2. 高优先级：正式假设已经抽取，但模型边没有强校验
+位置：artifacts/api-server/src/routes/models.ts
+
+现在 prompt 要求：
+
+evidenceHypothesisId
+effectSize
+evidenceLocation
+但 validator 只检查：
+
+edge 是否连到已有 node
+evidenceCitationText 是否非空
+evidencePaperId 是否存在
+没有检查：
+
+evidenceHypothesisId 是否真的存在于 paper_hypotheses
+该 hypothesis 是否属于这个 evidencePaperId
+evidenceCitationText 是否等于该 hypothesis 的 statement
+edge 的 from/to 是否匹配 hypothesis 的 from/to
+relationship 是否匹配 hypothesis relationship
+影响：
+
+AI 仍可能生成“看起来有 H1/H2a”的证据，但实际上没有绑定数据库中的真实假设。
+
+下一版建议加一个 hypothesisByKey 校验：
+
+evidencePaperId + evidenceHypothesisId
+必须能查到对应 row，并校验：
+
+edge.fromVariableName ~= hypothesis.fromVariable
+edge.toVariableName ~= hypothesis.toVariable
+edge.relationship == hypothesis.relationship
+edge.evidenceCitationText == hypothesis.statement
+如果只是类比关系，应该明确标为：
+
+evidenceType: analogical
+不要伪装成 formal hypothesis。
+
+3. 高优先级：图片搜索仍没有真正使用 session topic
+位置：artifacts/api-server/src/routes/model-assistant.ts
+
+当前：
+
+return {
+  topic: null,
+  variableNames: ...
+}
+但是 sessionsTable 已经有 topic 字段。
+
+影响：
+
+图片搜索 query expansion 和 AI relevance gate 主要靠用户输入、变量名、论文标题，缺少当前项目主题 grounding。
+
+建议下一版：
+
+在 loadSessionImageCtx() 同时读取 sessionsTable.topic
+用 session topic 参与：
+query expansion
+image relevance filter
+paper model likelihood rating
+这是低成本高收益优化。
+
+4. 中高优先级：AI 图片筛选后又回填未验证结果
+位置：artifacts/api-server/src/routes/model-assistant.ts
+
+逻辑是：
+
+if (approved.length < count) {
+  finalList = [...approved, ...fallbacks];
+}
+问题：
+
+AI gate 已经判断哪些是模型图，但如果数量不足，又把未通过 AI gate 的候选补回去。
+
+影响：
+
+用户看到的结果仍可能混入不相关图，只是没有 category badge。对用户来说仍然是“筛选不准”。
+
+建议下一版增加模式：
+
+strict: 只返回 AI-approved
+balanced: 返回 approved + fallback，但 fallback 明确标记
+raw: 完全不筛
+并在 UI 明确显示：
+
+已验证模型图
+未验证候选
+用户可一键屏蔽
+5. 中高优先级：变量图仍然按变量类型自动连线，没用正式假设
+位置：artifacts/api-server/src/routes/variables.ts
+
+当前 /variable-graph 还是：
+
+independent → dependent
+independent → mediator
+mediator → dependent
+但现在系统已经有 paper_hypotheses 了。
+
+影响：
+
+变量页显示的关系图仍可能暗示不存在的论文关系。
+
+建议下一版：
+
+优先用 paper_hypotheses 构图：
+
+hypothesis.fromVariable → hypothesis.toVariable
+没有 hypotheses 的论文才 fallback 到类型启发式，并在 UI 标注：
+
+推断关系 / 正式假设关系
+6. 中优先级：新增理论骨架很多，但 prompt 输出格式仍只列旧骨架
+位置：artifacts/api-server/src/routes/models.ts
+
+你现在有 17 个 backbones，但输出格式里仍写：
+
+"backbone": "SOR|TAM|UTAUT|ELM|TPB|TRUST_TRANSFER|PARASOCIAL|FLOW|NONE"
+影响：
+
+虽然 validator 允许 17 个，但 LLM 看到输出格式可能仍只用旧 8 个，导致新增骨架利用率低。
+
+建议改成动态生成：
+
+THEORY_BACKBONES.map(b => b.id).join("|")
+7. 中优先级：手工编辑模型时无法绑定正式假设
+位置：artifacts/research-model/src/pages/sessions/model-detail.tsx
+
+现在手工新增 edge 只能填：
+
+from
+to
+relationship
+evidence text
+不能选择：
+
+hypothesisId
+effectSize
+evidenceLocation
+source hypothesis statement
+moderatorJustification
+影响：
+
+AI 生成的边证据越来越结构化，但用户手动改模型时会把证据结构退化成普通文本。
+
+建议下一版：
+
+在“添加关系”里增加：
+
+选择来源论文
+选择该论文中的 hypothesis
+自动填充 statement / effectSize / location
+8. 中优先级：image blocklist 可屏蔽，但没有管理和撤销入口
+位置：
+
+artifacts/research-model/src/components/model-assistant-chat.tsx
+artifacts/api-server/src/routes/model-assistant.ts
+当前：
+
+点 X 后会加入 blocklist
+但是失败无提示
+前端没有 blocklist 管理页
+lightbox 里不能屏蔽
+URL 是精确匹配，URL 参数不同可能绕过屏蔽
+建议下一版：
+
+屏蔽失败 toast
+已屏蔽列表
+撤销屏蔽
+lightbox 也能屏蔽
+规范化 URL：
+去掉 tracking query
+统一 trailing slash
+http/https 统一
+可选按 articleKey 屏蔽，而不是只按 sourceUrl
+9. 中优先级：中文变量 canonicalize 风险
+位置：artifacts/api-server/src/routes/variables.ts
+
+当前：
+
+.replace(/[^\w\s-]/g, "")
+JS 的 \w 主要是 ASCII，中文构念可能被清掉。
+
+影响：
+
+如果 AI 返回中文 canonicalConstruct，例如“信任”“购买意愿”，可能变空或严重碰撞。
+
+建议：
+
+要求 canonicalConstruct 始终英文
+或 canonicalize 支持 Unicode letters
+如果结果为空，fallback 到原始变量名或重新请求模型规范化
+下一版本能力建议
+P0：先修稳定性和研究严谨性
+修复 generationFeedbackTable 跨 session 污染。
+修复 /learning-stats 全局统计问题。
+图片搜索接入 session topic。
+模型边强校验 formal hypothesis。
+/variable-graph 优先用正式假设构图。
+这几项会直接影响生成模型的可靠性。
+
+P1：把证据体系做成闭环
+建议新增 evidenceType：
+
+direct_hypothesis
+direct_statement
+analogical
+theory_backbone
+user_added
+每条 edge 都要清楚说明：
+
+这个关系是：
+1. 某篇论文明确假设过？
+2. 某篇论文结果支持过？
+3. 理论骨架推导？
+4. 相似构念类比？
+5. 用户手工添加？
+这样用户写博士论文时可以直接解释模型来源。
+
+P2：把“模型生成”拆成多阶段
+现在虽然 validator 增强了，但还是一次性让 AI 生成完整模型。
+
+建议下一版改成：
+
+先选目标 DV。
+找历史前因变量。
+找历史中介变量。
+找可作为调节变量的边界条件。
+选择理论骨架。
+组装模型。
+程序校验。
+AI reviewer 复审。
+输出模型 + 证据表。
+这样比一次 prompt 稳定很多。
+
+P3：模型图片搜索升级成“模型图抽取库”
+现在还是网页图片搜索。下一版建议做：
+
+论文搜索 → PDF/HTML 获取 → figure caption 抽取 → OCR → 模型图分类 → 构念识别 → 入库
+最终形成自己的：
+
+model_figures
+figure_constructs
+figure_edges
+figure_evidence
+这会显著改善“搜到的模型图不对题”的问题。
+
+P4：前端增强博士论文写作输出
+建议增加：
+
+模型依据总表：
+路径	关系	来源	假设编号	原文依据	证据类型	置信度
+一键导出：
+
+Markdown
+Word
+APA
+GB/T 7714
+BibTeX / RIS
+图上点击边，右侧展示证据卡片。
+
+验证限制
