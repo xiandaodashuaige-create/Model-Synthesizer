@@ -18,6 +18,7 @@ import {
   getBezierPath,
   EdgeLabelRenderer,
   BaseEdge,
+  useStore,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import dagre from "@dagrejs/dagre";
@@ -192,24 +193,62 @@ interface RelEdgeData extends Record<string, unknown> {
   warning?: boolean;
   readOnly: boolean;
   onDelete?: (edgeId: string) => void;
+  // For "moderates" edges: when present, the moderator's arrow is rerouted to
+  // land on the midpoint of the primary edge between these two nodes,
+  // visually indicating that it moderates the *relationship* (not a node).
+  primaryFromNodeId?: string;
+  primaryToNodeId?: string;
 }
 type RelEdge = Edge<RelEdgeData, "rel">;
 
 function RelEdge(props: EdgeProps<RelEdge>) {
   const { id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerEnd, data } = props;
-  const [path, labelX, labelY] = getBezierPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition });
   const rel = data?.relationship ?? "positive";
   const color = data?.warning ? "#f59e0b" : (REL_COLOR[rel] ?? "#475569");
   const dash = rel === "moderates" ? "5 4" : undefined;
   const relLabel = REL_LABEL[rel] ?? "?";
+
+  // Live midpoint of the primary edge this moderator targets. We select a
+  // primitive string so React Flow's store subscription only re-renders this
+  // edge when the relevant node geometry actually changes (not on every pan,
+  // zoom, or selection event).
+  const midpointKey = useStore((state) => {
+    if (rel !== "moderates" || !data?.primaryFromNodeId || !data?.primaryToNodeId) return "";
+    const a = state.nodeLookup.get(data.primaryFromNodeId);
+    const b = state.nodeLookup.get(data.primaryToNodeId);
+    if (!a || !b) return "";
+    const aPos = a.internals?.positionAbsolute ?? a.position;
+    const bPos = b.internals?.positionAbsolute ?? b.position;
+    const aw = a.measured?.width ?? NODE_W;
+    const ah = a.measured?.height ?? NODE_H;
+    const bw = b.measured?.width ?? NODE_W;
+    const bh = b.measured?.height ?? NODE_H;
+    const mx = (aPos.x + aw / 2 + bPos.x + bw / 2) / 2;
+    const my = (aPos.y + ah / 2 + bPos.y + bh / 2) / 2;
+    return `${mx},${my}`;
+  });
+  const primaryMidpoint = useMemo(() => {
+    if (!midpointKey) return null;
+    const [mx, my] = midpointKey.split(",").map(Number);
+    return { x: mx, y: my };
+  }, [midpointKey]);
+
+  const tX = primaryMidpoint?.x ?? targetX;
+  const tY = primaryMidpoint?.y ?? targetY;
+  const [path, labelX, labelY] = getBezierPath({ sourceX, sourceY, targetX: tX, targetY: tY, sourcePosition, targetPosition });
+  const useMidpoint = !!primaryMidpoint;
   return (
     <>
       <BaseEdge
         id={id}
         path={path}
-        markerEnd={markerEnd}
+        markerEnd={useMidpoint ? undefined : markerEnd}
         style={{ stroke: color, strokeWidth: 1.8, strokeDasharray: dash, opacity: 0.85 }}
       />
+      {useMidpoint && (
+        // Small filled disc at the attachment point so it visibly "lands on" the moderated edge.
+        <circle cx={tX} cy={tY} r={5} fill={color} stroke="white" strokeWidth={1.5} opacity={0.95} />
+      )}
       <EdgeLabelRenderer>
         <div
           className="nodrag nopan group flex items-center gap-1"
@@ -369,19 +408,45 @@ function EditableModelGraphInner(props: EditableModelGraphProps) {
   const rfEdges = useMemo<Edge[]>(() => {
     const idByVar = new Map<number, string>();
     inputNodes.forEach((n) => idByVar.set(n.variableId, n.id));
+    // For each potential "moderated edge target" node, remember the first
+    // non-moderates incoming edge — that's what a moderator pointing at the
+    // same target is interpreted as moderating. Heuristic, but matches the
+    // common research-diagram convention where M → B means "M moderates A→B".
+    const primaryByTargetVar = new Map<number, { fromVar: number; toVar: number }>();
+    for (const e of inputEdges) {
+      if (e.relationship === "moderates") continue;
+      if (!primaryByTargetVar.has(e.toVariableId)) {
+        primaryByTargetVar.set(e.toVariableId, { fromVar: e.fromVariableId, toVar: e.toVariableId });
+      }
+    }
     return inputEdges
       .map((e) => {
         const source = idByVar.get(e.fromVariableId);
         const target = idByVar.get(e.toVariableId);
         if (!source || !target) return null;
         const color = e.warning ? "#f59e0b" : (REL_COLOR[e.relationship] ?? "#475569");
+        const data: RelEdgeData = {
+          relationship: e.relationship,
+          hTag: e.hTag,
+          warning: e.warning,
+          readOnly,
+          onDelete: onEdgeDelete,
+        };
+        if (e.relationship === "moderates") {
+          const primary = primaryByTargetVar.get(e.toVariableId);
+          // Skip self-pointing degenerate cases (would compute a midpoint = node center).
+          if (primary && primary.fromVar !== e.fromVariableId && primary.toVar !== e.fromVariableId) {
+            data.primaryFromNodeId = idByVar.get(primary.fromVar);
+            data.primaryToNodeId = idByVar.get(primary.toVar);
+          }
+        }
         return {
           id: e.id,
           source,
           target,
           type: "rel",
           markerEnd: { type: MarkerType.ArrowClosed, color, width: 14, height: 14 },
-          data: { relationship: e.relationship, hTag: e.hTag, warning: e.warning, readOnly, onDelete: onEdgeDelete } satisfies RelEdgeData,
+          data,
         } as Edge;
       })
       .filter((x): x is Edge => !!x);
