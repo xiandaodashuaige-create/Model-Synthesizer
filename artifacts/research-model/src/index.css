@@ -173,3 +173,63 @@
     @apply font-sans antialiased bg-background text-foreground;
   }
 }
+
+/* ----- AI auth screen FX ------------------------------------------------- */
+/* Used by AIAurora in App.tsx for the sign-in screen and the session-expired
+   overlay. Keep these effect classes here (not Tailwind utilities) so we have
+   one place for the keyframes. */
+@keyframes ai-orb-drift {
+  0%   { transform: translate3d(0, 0, 0) scale(1); opacity: 0.55; }
+  50%  { transform: translate3d(40px, -30px, 0) scale(1.08); opacity: 0.75; }
+  100% { transform: translate3d(0, 0, 0) scale(1); opacity: 0.55; }
+}
+.ai-orb {
+  animation: ai-orb-drift 14s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+
+@keyframes ai-scan {
+  0%   { transform: translateY(0%); opacity: 0; }
+  10%  { opacity: 1; }
+  90%  { opacity: 1; }
+  100% { transform: translateY(100vh); opacity: 0; }
+}
+.ai-scanline {
+  background: linear-gradient(90deg,
+    transparent 0%,
+    rgba(56, 189, 248, 0.0) 5%,
+    rgba(56, 189, 248, 0.55) 50%,
+    rgba(56, 189, 248, 0.0) 95%,
+    transparent 100%);
+  box-shadow: 0 0 18px 1px rgba(56, 189, 248, 0.45);
+  animation: ai-scan 8s linear infinite;
+  will-change: transform, opacity;
+}
+
+@keyframes ai-card-rise {
+  from { opacity: 0; transform: translateY(12px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+.ai-card { animation: ai-card-rise 0.55s cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+@keyframes ai-logo-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.45); }
+  50%      { box-shadow: 0 0 0 10px rgba(56, 189, 248, 0); }
+}
+.ai-logo-glow { animation: ai-logo-pulse 2.6s ease-in-out infinite; }
+
+.ai-cta {
+  background-size: 200% 100%;
+  animation: ai-cta-shine 6s linear infinite;
+  box-shadow: 0 8px 30px -10px rgba(56, 189, 248, 0.6);
+}
+@keyframes ai-cta-shine {
+  0%   { background-position: 0% 50%; }
+  100% { background-position: 200% 50%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-orb, .ai-scanline, .ai-card, .ai-logo-glow, .ai-cta {
+    animation: none !important;
+  }
+}
