@@ -16,6 +16,7 @@ import { Loader2, Database, ArrowRight, Quote, BookOpen, ChevronDown, ChevronRig
 import { useT } from "@/lib/i18n";
 import { useToast } from "@/hooks/use-toast";
 import { NextStepHint, BigNextStep } from "@/components/onboarding-stepper";
+import { beginExtraction, updateExtraction, endExtraction, useExtractionProgress } from "@/lib/extraction-progress";
 
 function useTypeMeta() {
   const { t } = useT();
@@ -35,7 +36,11 @@ function ReExtractAllButton({ sessionId }: { sessionId: number }) {
     query: { enabled: !!sessionId, queryKey: getListSessionPapersQueryKey(sessionId) },
   });
   const extractVariables = useExtractVariables();
-  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  // Subscribe to the per-session shared extraction-progress store so the
+  // BigNextStep at the page level can disable itself while bulk extraction
+  // is in flight (regardless of whether it was kicked off here or from the
+  // papers page).
+  const progress = useExtractionProgress(sessionId);
 
   // Block accidental tab close / refresh / navigation while extraction is in
   // flight. The browser shows a generic "Leave site?" dialog (the custom
@@ -57,7 +62,7 @@ function ReExtractAllButton({ sessionId }: { sessionId: number }) {
   const handleClick = async () => {
     const all = papers ?? [];
     if (all.length === 0) return;
-    setProgress({ done: 0, total: all.length });
+    const runId = beginExtraction(sessionId, all.length);
     let ok = 0, fail = 0, completed = 0, failToastsShown = 0;
 
     // Concurrency-limited pool: process up to CONCURRENCY papers in flight at
@@ -89,7 +94,7 @@ function ReExtractAllButton({ sessionId }: { sessionId: number }) {
         }
       } finally {
         completed++;
-        setProgress({ done: completed, total: all.length });
+        updateExtraction(sessionId, runId, completed, all.length);
       }
     };
 
@@ -100,10 +105,13 @@ function ReExtractAllButton({ sessionId }: { sessionId: number }) {
       }
     };
 
-    await Promise.all(
-      Array.from({ length: Math.min(CONCURRENCY, all.length) }, () => worker()),
-    );
-    setProgress(null);
+    try {
+      await Promise.all(
+        Array.from({ length: Math.min(CONCURRENCY, all.length) }, () => worker()),
+      );
+    } finally {
+      endExtraction(sessionId, runId);
+    }
     queryClient.invalidateQueries({ queryKey: getListSessionPapersQueryKey(sessionId) });
     queryClient.invalidateQueries({ queryKey: getListSessionVariablesQueryKey(sessionId) });
     queryClient.invalidateQueries({ queryKey: getGetVariableGraphQueryKey(sessionId) });
@@ -474,6 +482,7 @@ export default function SessionVariables({ params: routeParams }: { params?: { i
   const TYPE_META = useTypeMeta();
   const params = useParams<{ id: string }>();
   const sessionId = parseInt(routeParams?.id ?? params.id ?? "0", 10);
+  const extractionProgress = useExtractionProgress(sessionId);
 
   const { data: variables, isLoading } = useListSessionVariables(sessionId, {
     query: { enabled: !!sessionId, queryKey: getListSessionVariablesQueryKey(sessionId) },
@@ -525,6 +534,12 @@ export default function SessionVariables({ params: routeParams }: { params?: { i
         body={t("nextstep.vars.body" as any)}
         href={`/sessions/${sessionId}/models`}
         cta={t("nextstep.vars.cta" as any)}
+        disabled={!!extractionProgress}
+        disabledReason={
+          extractionProgress
+            ? t("nextstep.disabled.extracting" as any, { done: extractionProgress.done, total: extractionProgress.total })
+            : undefined
+        }
       />
 
       <VariableGraph sessionId={sessionId} />

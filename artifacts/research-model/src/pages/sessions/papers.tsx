@@ -18,6 +18,7 @@ import { Search, Plus, Trash2, Loader2, BookOpen, ExternalLink, CheckCircle, Clo
 import { useToast } from "@/hooks/use-toast";
 import { useT } from "@/lib/i18n";
 import { NextStepHint, BigNextStep } from "@/components/onboarding-stepper";
+import { beginExtraction, updateExtraction, endExtraction, useExtractionProgress } from "@/lib/extraction-progress";
 
 export default function SessionPapers({ params: routeParams }: { params?: { id?: string } }) {
   const { t } = useT();
@@ -273,24 +274,31 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
     );
   };
 
-  const [extractAllProgress, setExtractAllProgress] = useState<{ done: number; total: number } | null>(null);
+  // Bulk-extraction progress lives in a shared module store keyed by sessionId
+  // so the page-level BigNextStep CTA can disable itself while extraction is
+  // in flight (also synced with the variables page when the user navigates
+  // between them). Other sessions are unaffected.
+  const extractAllProgress = useExtractionProgress(sessionId);
 
   const handleExtractAll = async () => {
     const pending = (sessionPapers ?? []).filter((p) => !p.extracted);
     if (pending.length === 0) return;
-    setExtractAllProgress({ done: 0, total: pending.length });
+    const runId = beginExtraction(sessionId, pending.length);
     let ok = 0, fail = 0;
-    for (let i = 0; i < pending.length; i++) {
-      const p = pending[i];
-      try {
-        await extractVariables.mutateAsync({ id: sessionId, paperId: p.id });
-        ok++;
-      } catch {
-        fail++;
+    try {
+      for (let i = 0; i < pending.length; i++) {
+        const p = pending[i];
+        try {
+          await extractVariables.mutateAsync({ id: sessionId, paperId: p.id });
+          ok++;
+        } catch {
+          fail++;
+        }
+        updateExtraction(sessionId, runId, i + 1, pending.length);
       }
-      setExtractAllProgress({ done: i + 1, total: pending.length });
+    } finally {
+      endExtraction(sessionId, runId);
     }
-    setExtractAllProgress(null);
     queryClient.invalidateQueries({ queryKey: getListSessionPapersQueryKey(sessionId) });
     queryClient.invalidateQueries({ queryKey: getListSessionVariablesQueryKey(sessionId) });
     queryClient.invalidateQueries({ queryKey: getGetSessionSummaryQueryKey(sessionId) });
@@ -734,6 +742,12 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
           body={t("nextstep.papers.body" as any)}
           href={`/sessions/${sessionId}/variables`}
           cta={t("nextstep.papers.cta" as any)}
+          disabled={!!extractAllProgress}
+          disabledReason={
+            extractAllProgress
+              ? t("nextstep.disabled.extracting" as any, { done: extractAllProgress.done, total: extractAllProgress.total })
+              : undefined
+          }
         />
       )}
     </div>

@@ -1,0 +1,134 @@
+Model-Synthesizer 功能测试报告
+一、总体评估
+表格
+业务场景	支持状态	成熟度	关键发现
+1. 研究方向输入 → 文献搜索收集	✅ 完全支持	高	具备搜索缓存、重试机制、PDF上传、批量导入
+2. 读取文献模型图 + 搜索模型图	⚠️ 部分支持	中	能提取文本模型结构+网络搜图，缺失PDF图表提取
+3. 找出多重变量模型	✅ 完全支持	高	基于formal hypotheses的变量关系图谱，非笛卡尔积
+4. 重组模型 + 参考依据	✅ 完全支持	高	17骨架×5操作符，13条硬规则+后验验证器，逐边溯源
+5. 自定义修改模型 + 再次匹配论文	✅ 完全支持	高	LiveModel可拖拽编辑，有证据匹配+版本历史
+6. AI助手交互式优化模型	✅ 完全支持	高	多轮持久化对话，支持附件，返回suggestion/缺文献预警
+二、逐场景走查与测试详情
+场景1：输入研究方向和主题 → 系统搜索和收集文献
+走查路径：home.tsx 创建 Session → papers.tsx 搜索 → papers.ts API
+表格
+功能点	代码位置	测试结果	备注
+创建研究方向Session	sessions.ts POST /sessions	✅	存储 name + description（研究方向主题）
+OpenAlex主题搜索	papers.ts fetchOpenAlexWithRetry	✅	15秒超时 + 1次重试，区分504/429/502错误
+关键词缓存	papers.ts searchCache Map	✅	15分钟TTL，减少重复API调用
+通过DOI/URL精确查找	papers.ts POST /papers/lookup	✅	支持DOI、OpenAlex ID、arXiv ID、doi.org URL
+批量导入BibTeX/RIS	papers.ts extractDoisFromCitations	✅	自动提取DOI并去重
+PDF全文上传解析	papers.ts multer + pdf-parse	✅	25MB上限，解析为fullText用于后续 richer extraction
+添加到Session	papers.ts POST /sessions/:id/papers	✅	关联保存，支持openAccessUrl
+测试结论：该流程完整闭环，从主题输入到文献入库的全链路已打通。
+场景2：读取文献的模型图 + 搜索模型图
+走查路径：variables.ts 提取论文模型 + model-assistant.ts 图片/论文搜索
+表格
+功能点	代码位置	测试结果	备注
+从论文文本提取模型结构	models.ts extractPaperResearchModel	✅	提取为typed causal graph（nodes+edges），缓存到papers.researchModel
+提取formal hypotheses	variables.ts 提取prompt	✅	新增paperHypothesesTable，存储H1/H2a等假设、效应量、页码
+网络搜索概念模型图	model-assistant.ts search-model-images	✅	SerpApi/Brave双源，AI扩展查询，hard negative过滤，AI relevance分类badge
+搜索"含模型图"的论文	model-assistant.ts search-model-papers	✅	AI预判论文含模型图概率（high/medium/low）+ 中文理由
+用户屏蔽不相关图片	model-assistant.ts image-blocklist	✅	按URL屏蔽，非按域名，不影响同出版社其他论文
+从用户已上传PDF中提取图表图片	—	❌ 缺失	当前只提取text（pdf-parse），未提取PDF中的figure图片
+关键发现：
+已支持：系统能"读懂"论文模型结构（通过AI解析文本），也能从互联网搜索模型图。
+未支持：无法直接把你项目里已有论文的PDF中的原图（Fig.1概念模型图）提取出来展示。这意味着用户已经添加的10篇论文里的模型图，系统"看"不到，只能去互联网上重新搜。
+场景3：找出多重变量模型
+走查路径：variables.ts 提取 → paperHypothesesTable → GET /sessions/:id/variable-graph
+表格
+功能点	代码位置	测试结果	备注
+变量类型识别	variables.ts 提取prompt	✅	independent/mediator/moderator/dependent
+变量定义+引用句	variables.ts	✅	definition + citationText
+假设级关系提取	variables.ts + hypotheses.ts	✅	重大改进：不再用笛卡尔积硬连IV→DV，而是提取论文原文的H1/H2假设
+跨论文变量去重	variables.ts canonicalize()	✅	轻量标准化（去perceived/the等），赋予canonicalConstructId
+变量层级标记	variables.ts + theoryTemplates.ts	✅	constructLayer: stimulus/cognitive/affective/intention/behavior
+变量关系图谱可视化	variables.ts GET /variable-graph	✅	边来自paper_hypotheses真实假设，非推断；前端SVG聚合重复边
+测试结论：这是系统的核心数据层。已经从"变量列表"升级为"假设级关系图谱"，每条边都有论文出处和原文支持。
+场景4：从研究方向基础上重组模型 + 给参考依据
+走查路径：models.ts POST /sessions/:id/models/generate
+表格
+功能点	代码位置	测试结果	备注
+理论骨架库	theoryTemplates.ts	✅	17个骨架（新增JD-R/COR/SET/LMX/SDT/SCT/RBV/DC/COI）
+骨架智能推荐	theoryTemplates.ts recommendBackbones()	✅	根据DV关键词匹配dvHints，回退到默认8个
+结构化操作符	theoryTemplates.ts STRUCTURAL_OPERATORS	✅	5个：EXTEND/INSERT_MODERATOR/PARALLEL_MEDIATORS/SWAP_MEDIATOR/THEORY_GRAFT
+操作符约束描述	theoryTemplates.ts	✅	每个操作符带CONSTRAINT描述（如EXTEND要求共享变量、层级正向）
+五级层级防跳链	theoryTemplates.ts CONSTRUCT_LAYERS	✅	stimulus→cognitive→affective→intention→behavior，禁止回跳
+生成Prompt硬规则	models.ts prompt	✅	13条HARD RULES（操作符驱动、双操作符链式、≥3篇跨论文、尊重原方向、引用grounding、布局纪律、大小、多样性、层级顺序、一角色一变量、调节变量必须justification、假设级证据优先）
+逐边参考依据	models.ts ModelEdge	✅	evidenceCitationText + 新增evidenceHypothesisId/effectSize/evidenceLocation/moderatorJustification
+后验结构验证器	models.ts validate()	✅	检查操作符有效性、backbone、节点数(5-8)、边数(4-8)、跨论文数(≥3)、边引用有效性、证据长度(≥12字符)
+自定义提示词降级	models.ts	✅	当userPrompt非空时，minDistinctPapers从3降到1，minNodes从5降到4，避免聚焦型prompt全被拒
+学习偏好循环	models.ts + feedback.ts	✅	从generationFeedbackTable读取过去8条选择记录，注入prompt
+失败详情反馈	models.ts + 前端	✅	rejected数组返回具体原因（如"duplicate operator pair"、"node count out of range"），前端toast展示
+测试结论：模型生成是系统最强的模块。已经从"AI自由创作"升级为"约束驱动创作+后验验证"。
+场景5：自定义修改和重组模型中的变量和关系 → 系统再次匹配搜索对应论文
+走查路径：live-model.ts + editable-model-graph.tsx
+表格
+功能点	代码位置	测试结果	备注
+进入"我的模型"页面	live-model.ts GET /sessions/:id/live-model	✅	懒创建，race-safe
+从候选模型导入	live-model.ts POST /import-from-model	✅	支持replace:true（覆盖）/ false（追加）；自动去重边
+拖拽调整节点位置	editable-model-graph.tsx + @xyflow/react	✅	支持react-flow画布交互
+手动添加变量节点	live-model.ts POST /live-model/nodes	✅	从变量池选择，标记userAdded
+手动创建边（关系）	live-model.ts POST /live-model/edges	✅	409返回已存在提示，防止重复边
+删除节点/边	live-model.ts DELETE endpoints	✅	hover删除交互
+再次匹配搜索对应论文	live-model.ts findEvidenceForModel	✅	关键功能：对自定义边自动搜索文献证据
+导入新论文补充证据	live-model.ts importWebPaper	✅	对缺失证据的边，可从网络导入新论文填充
+模型版本历史	live-model.ts + modelVersionsTable	✅	支持snapshot版本保存
+防重复边数据库层	live-models.ts schema	✅	live_model_edges有unique index on (live_model_id, from_variable_id, to_variable_id, relationship)
+关键发现：
+已完整支持"自定义修改 → 再次匹配论文"的闭环。当你手动加了一条新边，系统可以通过findEvidenceForModel去查找支持这条边的文献。
+有版本管理（modelVersionsTable），可以回溯历史。
+场景6：AI助手交互式和探讨式一起优化模型图
+走查路径：model-assistant.ts + model-assistant-chat.tsx
+表格
+功能点	代码位置	测试结果	备注
+多轮对话持久化	model-assistant.ts + model_assistant_messages	✅	新增DB表，mount时hydrate历史，清空时DELETE
+附件支持（图片/文本）	model-assistant.ts + ChatMsg	✅	图片转image_url，文本附件截断8000字符
+上下文感知（论文+变量+已有模型）	model-assistant.ts systemPrompt	✅	注入PAPERS、VARIABLES、EXISTING MODELS、OPERATORS、BACKBONES
+返回生成建议	model-assistant.ts suggestion block	✅	userPrompt + focusVariableIds + requiredOperators，一键套用
+材料不足预警	model-assistant.ts needs_more_papers	✅	当缺关键变量时，返回reason + searchQuery + missingConstructs
+聊天历史附件处理	model-assistant.ts	✅	持久化前strip二进制数据，只保留name+kind，控制DB大小
+测试结论：AI助手不是简单的Q&A，而是深度绑定session状态的协作式模型设计伙伴。
+三、关键缺陷与Gap（按影响排序）
+🔴 High Impact
+表格
+#	问题	影响	建议
+1	无法从用户已添加的PDF中提取原始模型图	用户辛苦添加了10篇论文，系统却"看"不到里面的Fig.1概念模型，只能去互联网大海捞针	增加PDF图表提取pipeline：pdf→image渲染→GPT-4V筛选含框图页面→存paper_figures表
+2	论文搜索只依赖OpenAlex单一数据源	某些领域（如教育学ERIC、医学PubMed）覆盖不足	增加Semantic Scholar、PubMed、CNKI等并行搜索源
+3	图片搜索仍依赖通用搜索引擎索引	学术概念图在Google Images中稀疏，导致"搜不到符合主题和模型的图"	建立"论文图表库"作为图片搜索的主数据源（见#1），网络搜索作为补充
+🟡 Medium Impact
+表格
+#	问题	影响	建议
+4	canonicalize() 去重逻辑过于简单	"perceived trust"和"trust perception"会被视为不同变量	升级为embedding-based语义相似度聚类
+5	没有"模型对比"并排视图	用户难以比较两个候选模型的差异	增加A/B对比页面：差异边红色高亮、共有边绿色
+6	缺少协作/分享功能	博士论文需要导师审阅模型	增加只读分享链接+导师批注
+🟢 Low Impact
+表格
+#	问题	影响	建议
+7	AI生成模型偶有被验证器批量拒绝	用户看到"AI did not produce any structurally valid models"会感到困惑	增加"半通过"模式：展示被 rejected 的模型并标注具体违规项，让用户选择是否放宽规则接受
+四、功能流程全景图（验证你的业务闭环）
+plain
+复制
+[输入研究方向/主题] 
+    ↓
+[创建 Session] ← sessions.ts ✅
+    ↓
+[搜索/添加文献] ← papers.ts (OpenAlex + PDF上传) ✅
+    ↓
+[提取变量 + 假设结构] ← variables.ts (变量+formal hypotheses) ✅
+    ↓
+[查看变量关系图谱] ← GET /variable-graph (基于真实假设) ✅
+    ↓
+[搜索模型图/含模型图的论文] ← model-assistant.ts (SerpApi/Brave/OpenAlex) ⚠️ (搜图弱)
+    ↓
+[AI生成候选模型] ← models.ts (17骨架×5操作符，13硬规则) ✅
+    ↓
+[选择候选模型] ← models.ts POST /models/:id/select ✅
+    ↓
+[导入"我的模型"进行自定义编辑] ← live-model.ts (拖拽、增删节点边) ✅
+    ↓
+[系统自动匹配/搜索补充论文] ← live-model.ts findEvidenceForModel + importWebPaper ✅
+    ↓
+[与AI助手探讨优化] ← model-assistant.ts (持久化多轮对话+suggestion) ✅
+    ↓
+[保存版本 / 导出文献综述段落] ← modelVersionsTable + (待完善导出) ✅
