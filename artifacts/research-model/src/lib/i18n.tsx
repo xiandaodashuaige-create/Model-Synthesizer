@@ -465,6 +465,7 @@ const dict = {
     "models.toast.generatedDesc": "AI 为你生成了 {count} 个研究模型方案。",
     "models.toast.failed": "生成失败",
     "models.toast.failedDesc": "请确认已经提取过变量。",
+    "models.toast.timeoutHint": "AI 生成耗时过长。会话较大时可以试试：减少论文数（例如先聚焦 10–15 篇核心文献）、缩小钉选的重点变量数量，或稍后重试。",
     "models.toast.selected": "已选用此模型",
     "models.toast.selectedDesc": "「{name}」已设为当前研究模型。",
 
@@ -1061,6 +1062,7 @@ const dict = {
     "models.toast.generatedDesc": "AI generated {count} model proposals for you.",
     "models.toast.failed": "Generation failed",
     "models.toast.failedDesc": "Make sure you've extracted variables first.",
+    "models.toast.timeoutHint": "AI generation took too long. For larger sessions, try narrowing to 10–15 core papers, fewer pinned focus variables, or retry shortly.",
     "models.toast.selected": "Model selected",
     "models.toast.selectedDesc": "\"{name}\" is now your selected research model.",
 

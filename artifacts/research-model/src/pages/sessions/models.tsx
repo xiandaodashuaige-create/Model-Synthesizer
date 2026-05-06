@@ -38,6 +38,33 @@ import { useToast } from "@/hooks/use-toast";
 import { useT } from "@/lib/i18n";
 import { loadFocusedClusterKeys, saveFocusedClusterKeys, expandToVariableIds } from "@/lib/focus-selection";
 
+// Surface the *real* server error in the toast. Previously we only checked
+// `err.data.error`, which is empty when:
+//   - the platform proxy returns a 502/504 with an HTML body (`err.data` is
+//     a string, not an object) — happens on long-running generations,
+//   - the LLM itself timed out and we returned a JSON 504 body (we want the
+//     Chinese explanation surfaced, not "请确认已经提取过变量"),
+//   - any other ApiError where `data` isn't shaped like `{error: string}`.
+// Fall through to status-code, message, then the i18n fallback.
+function extractGenerationErrorMessage(err: any, t: (k: any, p?: any) => string): string {
+  const dataErr = typeof err?.data?.error === "string" ? err.data.error : null;
+  const dataStr = typeof err?.data === "string" && err.data.trim() ? err.data.trim().slice(0, 240) : null;
+  const msg = typeof err?.message === "string" ? err.message : null;
+  const status = typeof err?.status === "number" ? err.status : null;
+  const rejected = err?.data?.rejected ?? err?.response?.data?.rejected;
+  const rejectedSummary = Array.isArray(rejected) && rejected.length > 0
+    ? "\n" + rejected.map((r: { name?: string; reason?: string }) => `• ${r.name ?? "?"}: ${r.reason ?? ""}`).join("\n")
+    : "";
+  // Status-aware hints for the two timeouts the user actually hits.
+  let timeoutHint = "";
+  if (status === 504 || status === 502 || /timeout|timed out|超时|55\s*秒/i.test(msg ?? "")) {
+    timeoutHint = "\n" + t("models.toast.timeoutHint" as any);
+  }
+  const body = dataErr ?? dataStr ?? msg ?? t("models.toast.failedDesc" as any);
+  const prefix = status ? `[${status}] ` : "";
+  return prefix + body + timeoutHint + rejectedSummary;
+}
+
 // (ModelGraph + buildEdgeHTagMap + buildPaperTagMap moved to @/components/model-graph)
 function HypothesisLegend({ items }: { items: Array<{ tag: string; from: string; to: string; rel: string; paperTag: string }> }) {
   if (!items.length) return null;
@@ -180,14 +207,9 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
         });
       },
       onError: (err: any) => {
-        const apiMsg = err?.data?.error ?? err?.response?.data?.error;
-        const rejected = err?.data?.rejected ?? err?.response?.data?.rejected;
-        const rejectedSummary = Array.isArray(rejected) && rejected.length > 0
-          ? "\n" + rejected.map((r: { name?: string; reason?: string }) => `• ${r.name ?? "?"}: ${r.reason ?? ""}`).join("\n")
-          : "";
         toast({
           title: t("models.toast.failed" as any),
-          description: (apiMsg ? String(apiMsg) : t("models.toast.failedDesc" as any)) + rejectedSummary,
+          description: extractGenerationErrorMessage(err, t),
           variant: "destructive",
         });
       },
@@ -224,14 +246,9 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
         });
       },
       onError: (err: any) => {
-        const apiMsg = err?.data?.error ?? err?.response?.data?.error;
-        const rejected = err?.data?.rejected ?? err?.response?.data?.rejected;
-        const rejectedSummary = Array.isArray(rejected) && rejected.length > 0
-          ? "\n" + rejected.map((r: { name?: string; reason?: string }) => `• ${r.name ?? "?"}: ${r.reason ?? ""}`).join("\n")
-          : "";
         toast({
           title: t("models.toast.failed" as any),
-          description: (apiMsg ? String(apiMsg) : t("models.toast.failedDesc" as any)) + rejectedSummary,
+          description: extractGenerationErrorMessage(err, t),
           variant: "destructive",
         });
       },
@@ -423,10 +440,9 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
           });
         },
         onError: (err: any) => {
-          const apiMsg = err?.data?.error ?? err?.response?.data?.error;
           toast({
             title: t("models.toast.autoGenFailed" as any),
-            description: apiMsg ? String(apiMsg) : t("models.toast.autoGenFailedDesc" as any),
+            description: extractGenerationErrorMessage(err, t),
             variant: "destructive",
           });
         },

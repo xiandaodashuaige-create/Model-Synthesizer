@@ -317,14 +317,36 @@ router.post("/sessions/:id/models/generate", async (req, res): Promise<void> => 
   });
   const paperTagById = new Map(paperRefs.map((r) => [r.id, r.tag]));
 
-  const variableList = variables.map((v) => {
+  // Variable list is the single largest prompt contributor (each line is
+  // ~250 chars; 275 vars × 250 ≈ 70 KB ≈ 17k input tokens). For sessions
+  // with many variables we drop the per-line definition + citation text
+  // (the AI can still recover them from the per-paper typed graphs and
+  // hypotheses pool below) and shorten the source label. Focus-pinned
+  // variables ALWAYS get the full line so the user's intent stays loud.
+  // Threshold chosen so a typical 10-paper session keeps full detail and
+  // only large 30+-paper sessions get compacted.
+  const VAR_COMPACT_THRESHOLD = 120;
+  const compactMode = variables.length > VAR_COMPACT_THRESHOLD;
+  const renderVarFull = (v: typeof variables[number]) => {
     const paper = paperMap.get(v.paperId);
     const tag = paperTagById.get(v.paperId) ?? "?";
     const focus = focusVariableIds.includes(v.id) ? " [USER-PRIORITY]" : "";
     const canonical = v.canonicalConstructId ? ` | Canonical: "${v.canonicalConstructId}"` : "";
     const layer = v.constructLayer ? ` | Layer: ${v.constructLayer}` : "";
     return `- ID:${v.id}${focus} | Name: "${v.name}" | Type: ${v.type}${canonical}${layer} | Source: ${tag} ${paper?.title} (${(paper?.authors ?? []).slice(0, 2).join(", ")}, ${paper?.year ?? "n.d."}) | Definition: ${v.definition} | Citation: "${v.citationText}"`;
-  }).join("\n");
+  };
+  const renderVarCompact = (v: typeof variables[number]) => {
+    const tag = paperTagById.get(v.paperId) ?? "?";
+    const focus = focusVariableIds.includes(v.id) ? " [USER-PRIORITY]" : "";
+    const canonical = v.canonicalConstructId ? ` | Canonical: "${v.canonicalConstructId}"` : "";
+    return `- ID:${v.id}${focus} | "${v.name}" (${v.type}) | ${tag}${canonical}`;
+  };
+  const variableList = variables
+    .map((v) => (compactMode && !focusVariableIds.includes(v.id) ? renderVarCompact(v) : renderVarFull(v)))
+    .join("\n")
+    + (compactMode
+      ? `\n\n(NOTE: ${variables.length} variables total; non-priority entries shown in compact form to keep the prompt within latency budget. Full definitions/citations live in the per-paper typed graphs and the FORMAL HYPOTHESES POOL below — consult those when you need exact wording for evidenceCitationText.)`
+      : "");
 
   // Pull formal hypotheses from the database (extracted by /papers/:paperId/extract).
   const allHyps = await db.select().from(paperHypothesesTable).where(eq(paperHypothesesTable.sessionId, sessionId));
