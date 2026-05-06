@@ -3,11 +3,18 @@ import { useParams, Link } from "wouter";
 import {
   useListSessionVariables,
   useGetVariableGraph,
+  useListSessionPapers,
+  useExtractVariables,
   getListSessionVariablesQueryKey,
   getGetVariableGraphQueryKey,
+  getListSessionPapersQueryKey,
+  getGetSessionSummaryQueryKey,
+  getGetSessionQueryKey,
 } from "@workspace/api-client-react";
-import { Loader2, Database, ArrowRight, Quote, BookOpen, ChevronDown, ChevronRight as ChevronRightIcon, Layers } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { Loader2, Database, ArrowRight, Quote, BookOpen, ChevronDown, ChevronRight as ChevronRightIcon, Layers, RotateCcw } from "lucide-react";
 import { useT } from "@/lib/i18n";
+import { useToast } from "@/hooks/use-toast";
 import { NextStepHint, BigNextStep } from "@/components/onboarding-stepper";
 
 function useTypeMeta() {
@@ -18,6 +25,56 @@ function useTypeMeta() {
     moderator: { label: t("vars.type.moderator" as any), color: "text-purple-700 dark:text-purple-300", bg: "bg-purple-50 dark:bg-purple-950/40", border: "border-purple-200 dark:border-purple-800" },
     dependent: { label: t("vars.type.dependent" as any), color: "text-green-700 dark:text-green-300", bg: "bg-green-50 dark:bg-green-950/40", border: "border-green-200 dark:border-green-800" },
   } as Record<string, { label: string; color: string; bg: string; border: string }>;
+}
+
+function ReExtractAllButton({ sessionId }: { sessionId: number }) {
+  const { t } = useT();
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const { data: papers } = useListSessionPapers(sessionId, {
+    query: { enabled: !!sessionId, queryKey: getListSessionPapersQueryKey(sessionId) },
+  });
+  const extractVariables = useExtractVariables();
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+
+  const handleClick = async () => {
+    const all = papers ?? [];
+    if (all.length === 0) return;
+    setProgress({ done: 0, total: all.length });
+    let ok = 0, fail = 0;
+    for (let i = 0; i < all.length; i++) {
+      try {
+        await extractVariables.mutateAsync({ id: sessionId, paperId: all[i].id });
+        ok++;
+      } catch {
+        fail++;
+      }
+      setProgress({ done: i + 1, total: all.length });
+    }
+    setProgress(null);
+    queryClient.invalidateQueries({ queryKey: getListSessionPapersQueryKey(sessionId) });
+    queryClient.invalidateQueries({ queryKey: getListSessionVariablesQueryKey(sessionId) });
+    queryClient.invalidateQueries({ queryKey: getGetVariableGraphQueryKey(sessionId) });
+    queryClient.invalidateQueries({ queryKey: getGetSessionSummaryQueryKey(sessionId) });
+    queryClient.invalidateQueries({ queryKey: getGetSessionQueryKey(sessionId) });
+    toast({ title: t("papers.toast.extractAllDone" as any, { ok, fail }) });
+  };
+
+  const label = progress
+    ? t("vars.graph.empty.reextractProgress" as any, { done: progress.done, total: progress.total })
+    : t("vars.graph.empty.reextractAll" as any);
+
+  return (
+    <button
+      type="button"
+      onClick={handleClick}
+      disabled={progress !== null || !papers || papers.length === 0}
+      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-amber-900 text-amber-50 hover:bg-amber-800 dark:bg-amber-100 dark:text-amber-950 dark:hover:bg-amber-200 text-sm font-medium disabled:opacity-60 disabled:cursor-not-allowed"
+    >
+      {progress ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5" />}
+      {label}
+    </button>
+  );
 }
 
 function VariableGraph({ sessionId }: { sessionId: number }) {
@@ -45,12 +102,15 @@ function VariableGraph({ sessionId }: { sessionId: number }) {
           <p className="text-sm text-amber-900/80 dark:text-amber-200/80 leading-relaxed">
             {t("vars.graph.empty.body" as any)}
           </p>
-          <Link
-            href={`/sessions/${sessionId}/papers`}
-            className="inline-flex items-center gap-1.5 mt-3 text-sm font-medium text-amber-900 dark:text-amber-100 hover:underline"
-          >
-            {t("vars.graph.empty.cta" as any)} <ArrowRight className="w-4 h-4" />
-          </Link>
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <ReExtractAllButton sessionId={sessionId} />
+            <Link
+              href={`/sessions/${sessionId}/papers`}
+              className="inline-flex items-center gap-1.5 text-sm font-medium text-amber-900 dark:text-amber-100 hover:underline"
+            >
+              {t("vars.graph.empty.cta" as any)} <ArrowRight className="w-4 h-4" />
+            </Link>
+          </div>
         </div>
       </div>
     );
