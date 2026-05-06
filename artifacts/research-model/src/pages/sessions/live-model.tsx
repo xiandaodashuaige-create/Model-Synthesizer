@@ -226,12 +226,18 @@ export default function LiveModelPage({ params }: { params?: { id: string } }) {
     positionX: n.positionX ?? null,
     positionY: n.positionY ?? null,
   }));
+  // Assign sequential H1, H2, … tags by edge order, mirroring the candidate
+  // model's `buildEdgeHTagMap`. Used in both the canvas badge and the
+  // relations list so the user can cross-reference the graph and the list.
+  const hTagByEdgeId = new Map<number, string>();
+  edges.forEach((e, i) => hTagByEdgeId.set(e.id, `H${i + 1}`));
   const canvasEdges: CanvasEdge[] = edges.map((e) => ({
     id: String(e.id),
     fromVariableId: e.fromVariableId,
     toVariableId: e.toVariableId,
     relationship: e.relationship,
     warning: !e.hasProvenance,
+    hTag: hTagByEdgeId.get(e.id),
   }));
   const variablePool: VariablePoolEntry[] = (variables ?? []).map((v) => ({ variableId: v.id, name: v.name, type: v.type }));
 
@@ -436,6 +442,14 @@ export default function LiveModelPage({ params }: { params?: { id: string } }) {
                     <li key={e.id} data-testid={`edge-row-${e.id}`} className="flex items-start gap-3 px-4 py-3 group">
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 text-sm">
+                          {hTagByEdgeId.get(e.id) && (
+                            <span
+                              className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-violet-50 text-violet-700 border border-violet-200"
+                              title={t("models.evidence.title" as any) as string}
+                            >
+                              {hTagByEdgeId.get(e.id)}
+                            </span>
+                          )}
                           <span className="font-medium text-foreground">{e.fromVariableName}</span>
                           <span className="text-muted-foreground">{REL_STYLE[e.relationship]?.label ?? e.relationship}</span>
                           <span className="font-medium text-foreground">{e.toVariableName}</span>
