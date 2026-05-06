@@ -62,7 +62,15 @@ export default function LiveModelPage({ params }: { params?: { id: string } }) {
 
   // Pending edge from canvas drag-to-connect: shows a tiny relationship picker
   // before persisting (LiveModel edges must declare a relationship).
-  const [pendingEdge, setPendingEdge] = useState<{ from: number; to: number; rel: "positive" | "negative" | "mediates" | "moderates" } | null>(null);
+  // `moderatesEdgeId` is set when the user dropped the arrow on an EXISTING
+  // edge between two other variables — locks rel to "moderates" and makes the
+  // arrow tip render at that edge's midpoint.
+  const [pendingEdge, setPendingEdge] = useState<{
+    from: number;
+    to: number;
+    rel: "positive" | "negative" | "mediates" | "moderates";
+    moderatesEdgeId?: number;
+  } | null>(null);
 
   const [isAddingEdge, setIsAddingEdge] = useState(false);
   const [edgeFrom, setEdgeFrom] = useState<number | "">("");
@@ -175,6 +183,22 @@ export default function LiveModelPage({ params }: { params?: { id: string } }) {
     setPendingEdge({ from: fromVariableId, to: toVariableId, rel: "positive" });
   };
 
+  // User dragged from a node and dropped on an existing edge between two OTHER
+  // variables. Treat it as "moderate this relationship": create a moderates
+  // edge whose target is the moderated edge's TO variable, with an explicit
+  // `moderatesEdgeId` so the canvas can route the arrow tip to the midpoint.
+  const handleCanvasEdgeOnEdge = (fromVariableId: number, targetEdgeId: string) => {
+    const targetEdge = (detail?.edges ?? []).find((e) => String(e.id) === targetEdgeId);
+    if (!targetEdge) return;
+    if (targetEdge.fromVariableId === fromVariableId || targetEdge.toVariableId === fromVariableId) return;
+    setPendingEdge({
+      from: fromVariableId,
+      to: targetEdge.toVariableId,
+      rel: "moderates",
+      moderatesEdgeId: targetEdge.id,
+    });
+  };
+
   const confirmPendingEdge = () => {
     if (!pendingEdge) return;
     addEdge.mutate(
@@ -185,6 +209,9 @@ export default function LiveModelPage({ params }: { params?: { id: string } }) {
           toVariableId: pendingEdge.to,
           relationship: pendingEdge.rel,
           userAdded: true,
+          ...(pendingEdge.moderatesEdgeId != null && pendingEdge.rel === "moderates"
+            ? { moderatesEdgeId: pendingEdge.moderatesEdgeId }
+            : {}),
         },
       },
       {
@@ -238,6 +265,7 @@ export default function LiveModelPage({ params }: { params?: { id: string } }) {
     relationship: e.relationship,
     warning: !e.hasProvenance,
     hTag: hTagByEdgeId.get(e.id),
+    moderatesEdgeId: e.moderatesEdgeId != null ? String(e.moderatesEdgeId) : undefined,
   }));
   const variablePool: VariablePoolEntry[] = (variables ?? []).map((v) => ({ variableId: v.id, name: v.name, type: v.type }));
 
@@ -307,6 +335,7 @@ export default function LiveModelPage({ params }: { params?: { id: string } }) {
               onNodeDelete={handleCanvasNodeDelete}
               onEdgeDelete={(edgeId) => handleRemoveEdge(parseInt(edgeId, 10))}
               onEdgeCreate={handleCanvasEdgeCreate}
+              onEdgeCreateOnEdge={handleCanvasEdgeOnEdge}
               onAddVariable={handleAddVar}
             />
 

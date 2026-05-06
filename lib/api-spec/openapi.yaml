@@ -1262,6 +1262,10 @@ paths:
                 userAdded:
                   type: boolean
                   default: false
+                moderatesEdgeId:
+                  type: integer
+                  nullable: true
+                  description: Required only when relationship="moderates" AND the user dropped the connection on an existing edge. Points to the edge being moderated; the canvas uses it to route the arrow to that edge's midpoint.
       responses:
         "200":
           description: Updated live model
@@ -2131,6 +2135,9 @@ components:
           type: ["integer", "null"]
         userAdded:
           type: boolean
+        moderatesEdgeId:
+          type: ["integer", "null"]
+          description: When relationship="moderates", optionally points to another edge that this edge moderates. The canvas reroutes the moderator's arrow tip to land on the midpoint of the referenced edge.
         hasProvenance:
           type: boolean
           description: True if a paperId+citationText backs this edge.

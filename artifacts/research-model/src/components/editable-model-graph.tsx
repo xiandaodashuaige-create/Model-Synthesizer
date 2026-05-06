@@ -15,10 +15,12 @@ import {
   type NodeChange,
   type NodeProps,
   type EdgeProps,
+  type FinalConnectionState,
   getBezierPath,
   EdgeLabelRenderer,
   BaseEdge,
   useStore,
+  useReactFlow,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import dagre from "@dagrejs/dagre";
@@ -49,6 +51,20 @@ const REL_LABEL: Record<string, string> = {
 const NODE_W = 170;
 const NODE_H = 56;
 
+// Shortest distance from a point to a line segment, used to hit-test which
+// existing edge a drop-on-canvas connection landed on.
+function pointToSegmentDistance(p: { x: number; y: number }, a: { x: number; y: number }, b: { x: number; y: number }): number {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq === 0) return Math.hypot(p.x - a.x, p.y - a.y);
+  let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq;
+  t = Math.max(0, Math.min(1, t));
+  const cx = a.x + t * dx;
+  const cy = a.y + t * dy;
+  return Math.hypot(p.x - cx, p.y - cy);
+}
+
 // ---------------------------------------------------------------------------
 // Public input shape — agnostic of which page (LiveModel vs AI candidate model)
 // is using the canvas. Each integration converts to/from this shape.
@@ -71,6 +87,10 @@ export interface CanvasEdge {
   relationship: string; // positive | negative | moderates | mediates
   hTag?: string; // optional "H1" etc.
   warning?: boolean; // amber tone for edges lacking provenance
+  // For relationship="moderates": explicit pointer to the OTHER edge whose midpoint
+  // this moderator's arrow tip should land on. Takes precedence over the heuristic
+  // "first non-moderates incoming edge of the target node".
+  moderatesEdgeId?: string;
 }
 
 export interface VariablePoolEntry {
@@ -91,6 +111,12 @@ export interface EditableModelGraphProps {
   onNodeDelete?: (canvasNodeId: string, variableId: number) => void;
   onEdgeDelete?: (edgeId: string) => void;
   onEdgeCreate?: (fromVariableId: number, toVariableId: number) => void;
+  // Fired when the user drags a connection from a variable node and DROPS the
+  // arrow tip onto an existing edge between two other variables. Used to model
+  // a moderator: "this variable moderates the A→B relationship".
+  // Implementations should create a "moderates" edge from `fromVariableId` to
+  // the moderated edge's TARGET variable, with `moderatesEdgeId = targetEdgeId`.
+  onEdgeCreateOnEdge?: (fromVariableId: number, targetEdgeId: string) => void;
   onAddVariable?: (variableId: number) => void;
 }
 
@@ -352,7 +378,8 @@ const edgeTypes = { rel: RelEdge };
 
 function EditableModelGraphInner(props: EditableModelGraphProps) {
   const { t } = useT();
-  const { nodes: inputNodes, edges: inputEdges, variablePool, readOnly = false, height = 480, onNodeMove, onNodeDelete, onEdgeDelete, onEdgeCreate, onAddVariable } = props;
+  const { nodes: inputNodes, edges: inputEdges, variablePool, readOnly = false, height = 480, onNodeMove, onNodeDelete, onEdgeDelete, onEdgeCreate, onEdgeCreateOnEdge, onAddVariable } = props;
+  const rfInstance = useReactFlow();
 
   // Compute initial positions once per node-set change. We keep an internal
   // Node[] that we mutate during drag (for smooth UI) and only call onNodeMove
@@ -419,6 +446,10 @@ function EditableModelGraphInner(props: EditableModelGraphProps) {
         primaryByTargetVar.set(e.toVariableId, { fromVar: e.fromVariableId, toVar: e.toVariableId });
       }
     }
+    // Build a quick id→edge index so explicit moderatesEdgeId pointers can resolve.
+    const edgeById = new Map<string, CanvasEdge>();
+    inputEdges.forEach((e) => edgeById.set(e.id, e));
+
     return inputEdges
       .map((e) => {
         const source = idByVar.get(e.fromVariableId);
@@ -433,11 +464,27 @@ function EditableModelGraphInner(props: EditableModelGraphProps) {
           onDelete: onEdgeDelete,
         };
         if (e.relationship === "moderates") {
-          const primary = primaryByTargetVar.get(e.toVariableId);
-          // Skip self-pointing degenerate cases (would compute a midpoint = node center).
-          if (primary && primary.fromVar !== e.fromVariableId && primary.toVar !== e.fromVariableId) {
-            data.primaryFromNodeId = idByVar.get(primary.fromVar);
-            data.primaryToNodeId = idByVar.get(primary.toVar);
+          // Prefer the EXPLICIT pointer from the user's drop-on-edge interaction.
+          // Fall back to the heuristic only when no explicit pointer is set.
+          let pFrom: number | undefined;
+          let pTo: number | undefined;
+          if (e.moderatesEdgeId) {
+            const moderated = edgeById.get(e.moderatesEdgeId);
+            if (moderated && moderated.id !== e.id) {
+              pFrom = moderated.fromVariableId;
+              pTo = moderated.toVariableId;
+            }
+          }
+          if (pFrom == null || pTo == null) {
+            const primary = primaryByTargetVar.get(e.toVariableId);
+            if (primary && primary.fromVar !== e.fromVariableId && primary.toVar !== e.fromVariableId) {
+              pFrom = primary.fromVar;
+              pTo = primary.toVar;
+            }
+          }
+          if (pFrom != null && pTo != null) {
+            data.primaryFromNodeId = idByVar.get(pFrom);
+            data.primaryToNodeId = idByVar.get(pTo);
           }
         }
         return {
@@ -477,6 +524,57 @@ function EditableModelGraphInner(props: EditableModelGraphProps) {
       if (fromVar && toVar) onEdgeCreate(fromVar, toVar);
     },
     [readOnly, onEdgeCreate, inputNodes],
+  );
+
+  // When the user drops a connection on EMPTY canvas (not on a node handle),
+  // hit-test against existing edges. If close to one, treat the drop as
+  // "moderate this relationship" — fire onEdgeCreateOnEdge with the source
+  // variable and the target edge id.
+  const handleConnectEnd = useCallback(
+    (event: MouseEvent | TouchEvent, connectionState: FinalConnectionState) => {
+      if (readOnly || !onEdgeCreateOnEdge) return;
+      // Only handle the case where it didn't land on a node (handleConnect
+      // already covers that path).
+      if (connectionState.isValid) return;
+      const fromNodeId = connectionState.fromNode?.id;
+      if (!fromNodeId) return;
+      const fromVar = inputNodes.find((n) => n.id === fromNodeId)?.variableId;
+      if (fromVar == null) return;
+
+      // Get drop point in flow coords.
+      const point = "changedTouches" in event ? event.changedTouches[0] : (event as MouseEvent);
+      if (!point) return;
+      const flowPos = rfInstance.screenToFlowPosition({ x: point.clientX, y: point.clientY });
+
+      // Build node center lookup from current rfNodes.
+      const centerById = new Map<string, { x: number; y: number }>();
+      for (const n of rfNodes) {
+        const w = (n.measured?.width ?? NODE_W);
+        const h = (n.measured?.height ?? NODE_H);
+        centerById.set(n.id, { x: n.position.x + w / 2, y: n.position.y + h / 2 });
+      }
+      const idByVar = new Map<number, string>();
+      inputNodes.forEach((n) => idByVar.set(n.variableId, n.id));
+
+      // Find nearest non-moderates edge by point-to-segment distance.
+      // Skip edges that touch the source node (can't moderate yourself).
+      let best: { edgeId: string; dist: number } | null = null;
+      const THRESHOLD = 32; // flow units
+      for (const e of inputEdges) {
+        if (e.relationship === "moderates") continue;
+        if (e.fromVariableId === fromVar || e.toVariableId === fromVar) continue;
+        const sId = idByVar.get(e.fromVariableId);
+        const tId = idByVar.get(e.toVariableId);
+        if (!sId || !tId) continue;
+        const a = centerById.get(sId);
+        const b = centerById.get(tId);
+        if (!a || !b) continue;
+        const d = pointToSegmentDistance(flowPos, a, b);
+        if (d <= THRESHOLD && (!best || d < best.dist)) best = { edgeId: e.id, dist: d };
+      }
+      if (best) onEdgeCreateOnEdge(fromVar, best.edgeId);
+    },
+    [readOnly, onEdgeCreateOnEdge, inputNodes, inputEdges, rfNodes, rfInstance],
   );
 
   // Add-variable popover
@@ -558,6 +656,7 @@ function EditableModelGraphInner(props: EditableModelGraphProps) {
         onNodesChange={onNodesChange}
         onNodeDragStop={handleNodeDragStop}
         onConnect={handleConnect}
+        onConnectEnd={handleConnectEnd}
         nodesConnectable={!readOnly}
         nodesDraggable={!readOnly}
         elementsSelectable={!readOnly}

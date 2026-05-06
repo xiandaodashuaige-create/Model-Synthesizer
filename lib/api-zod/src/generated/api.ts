@@ -1308,6 +1308,12 @@ export const GetLiveModelResponse = zod.object({
       confidence: zod.string(),
       sourceModelId: zod.number().nullish(),
       userAdded: zod.boolean(),
+      moderatesEdgeId: zod
+        .number()
+        .nullish()
+        .describe(
+          'When relationship=\"moderates\", optionally points to another edge that this edge moderates. The canvas reroutes the moderator\'s arrow tip to land on the midpoint of the referenced edge.',
+        ),
       hasProvenance: zod
         .boolean()
         .describe("True if a paperId+citationText backs this edge."),
@@ -1405,6 +1411,12 @@ export const AddLiveModelNodeResponse = zod.object({
       confidence: zod.string(),
       sourceModelId: zod.number().nullish(),
       userAdded: zod.boolean(),
+      moderatesEdgeId: zod
+        .number()
+        .nullish()
+        .describe(
+          'When relationship=\"moderates\", optionally points to another edge that this edge moderates. The canvas reroutes the moderator\'s arrow tip to land on the midpoint of the referenced edge.',
+        ),
       hasProvenance: zod
         .boolean()
         .describe("True if a paperId+citationText backs this edge."),
@@ -1490,6 +1502,12 @@ export const RemoveLiveModelNodeResponse = zod.object({
       confidence: zod.string(),
       sourceModelId: zod.number().nullish(),
       userAdded: zod.boolean(),
+      moderatesEdgeId: zod
+        .number()
+        .nullish()
+        .describe(
+          'When relationship=\"moderates\", optionally points to another edge that this edge moderates. The canvas reroutes the moderator\'s arrow tip to land on the midpoint of the referenced edge.',
+        ),
       hasProvenance: zod
         .boolean()
         .describe("True if a paperId+citationText backs this edge."),
@@ -1580,6 +1598,12 @@ export const UpdateLiveModelNodePositionResponse = zod.object({
       confidence: zod.string(),
       sourceModelId: zod.number().nullish(),
       userAdded: zod.boolean(),
+      moderatesEdgeId: zod
+        .number()
+        .nullish()
+        .describe(
+          'When relationship=\"moderates\", optionally points to another edge that this edge moderates. The canvas reroutes the moderator\'s arrow tip to land on the midpoint of the referenced edge.',
+        ),
       hasProvenance: zod
         .boolean()
         .describe("True if a paperId+citationText backs this edge."),
@@ -1631,6 +1655,12 @@ export const AddLiveModelEdgeBody = zod.object({
     .default(addLiveModelEdgeBodyConfidenceDefault),
   sourceModelId: zod.number().nullish(),
   userAdded: zod.boolean().default(addLiveModelEdgeBodyUserAddedDefault),
+  moderatesEdgeId: zod
+    .number()
+    .nullish()
+    .describe(
+      'Required only when relationship=\"moderates\" AND the user dropped the connection on an existing edge. Points to the edge being moderated; the canvas uses it to route the arrow to that edge\'s midpoint.',
+    ),
 });
 
 export const AddLiveModelEdgeResponse = zod.object({
@@ -1683,6 +1713,12 @@ export const AddLiveModelEdgeResponse = zod.object({
       confidence: zod.string(),
       sourceModelId: zod.number().nullish(),
       userAdded: zod.boolean(),
+      moderatesEdgeId: zod
+        .number()
+        .nullish()
+        .describe(
+          'When relationship=\"moderates\", optionally points to another edge that this edge moderates. The canvas reroutes the moderator\'s arrow tip to land on the midpoint of the referenced edge.',
+        ),
       hasProvenance: zod
         .boolean()
         .describe("True if a paperId+citationText backs this edge."),
@@ -1768,6 +1804,12 @@ export const RemoveLiveModelEdgeResponse = zod.object({
       confidence: zod.string(),
       sourceModelId: zod.number().nullish(),
       userAdded: zod.boolean(),
+      moderatesEdgeId: zod
+        .number()
+        .nullish()
+        .describe(
+          'When relationship=\"moderates\", optionally points to another edge that this edge moderates. The canvas reroutes the moderator\'s arrow tip to land on the midpoint of the referenced edge.',
+        ),
       hasProvenance: zod
         .boolean()
         .describe("True if a paperId+citationText backs this edge."),
@@ -2329,6 +2371,12 @@ export const ApplyLiveModelEvidenceResponse = zod.object({
       confidence: zod.string(),
       sourceModelId: zod.number().nullish(),
       userAdded: zod.boolean(),
+      moderatesEdgeId: zod
+        .number()
+        .nullish()
+        .describe(
+          'When relationship=\"moderates\", optionally points to another edge that this edge moderates. The canvas reroutes the moderator\'s arrow tip to land on the midpoint of the referenced edge.',
+        ),
       hasProvenance: zod
         .boolean()
         .describe("True if a paperId+citationText backs this edge."),
@@ -2434,6 +2482,12 @@ export const RevertLiveModelToVersionResponse = zod.object({
       confidence: zod.string(),
       sourceModelId: zod.number().nullish(),
       userAdded: zod.boolean(),
+      moderatesEdgeId: zod
+        .number()
+        .nullish()
+        .describe(
+          'When relationship=\"moderates\", optionally points to another edge that this edge moderates. The canvas reroutes the moderator\'s arrow tip to land on the midpoint of the referenced edge.',
+        ),
       hasProvenance: zod
         .boolean()
         .describe("True if a paperId+citationText backs this edge."),
@@ -2528,6 +2582,12 @@ export const ImportLiveModelFromModelResponse = zod.object({
       confidence: zod.string(),
       sourceModelId: zod.number().nullish(),
       userAdded: zod.boolean(),
+      moderatesEdgeId: zod
+        .number()
+        .nullish()
+        .describe(
+          'When relationship=\"moderates\", optionally points to another edge that this edge moderates. The canvas reroutes the moderator\'s arrow tip to land on the midpoint of the referenced edge.',
+        ),
       hasProvenance: zod
         .boolean()
         .describe("True if a paperId+citationText backs this edge."),

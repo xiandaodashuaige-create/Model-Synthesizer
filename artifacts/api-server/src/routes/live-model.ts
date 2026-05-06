@@ -66,6 +66,7 @@ async function loadLiveModelDetail(sessionId: number) {
       confidence: liveModelEdgesTable.confidence,
       sourceModelId: liveModelEdgesTable.sourceModelId,
       userAdded: liveModelEdgesTable.userAdded,
+      moderatesEdgeId: liveModelEdgesTable.moderatesEdgeId,
       additionalEvidence: liveModelEdgesTable.additionalEvidence,
       createdAt: liveModelEdgesTable.createdAt,
     })
@@ -123,6 +124,7 @@ async function loadLiveModelDetail(sessionId: number) {
       confidence: e.confidence,
       sourceModelId: e.sourceModelId,
       userAdded: e.userAdded,
+      moderatesEdgeId: e.moderatesEdgeId,
       hasProvenance,
       additionalEvidence: (e.additionalEvidence as unknown as unknown[]) ?? [],
       createdAt: e.createdAt.toISOString(),
@@ -276,6 +278,10 @@ router.post("/sessions/:id/live-model/edges", async (req, res) => {
   const provenanceCitationText = req.body?.provenanceCitationText ?? null;
   const userAdded = Boolean(req.body?.userAdded);
   const sourceModelId = req.body?.sourceModelId != null ? Number(req.body.sourceModelId) : null;
+  const moderatesEdgeId = req.body?.moderatesEdgeId != null ? Number(req.body.moderatesEdgeId) : null;
+  if (moderatesEdgeId != null && relationship !== "moderates") {
+    return res.status(400).json({ error: "moderatesEdgeId only valid when relationship=moderates" });
+  }
 
   if (!userAdded && (!provenancePaperId || !provenanceCitationText)) {
     return res.status(400).json({
@@ -315,6 +321,16 @@ router.post("/sessions/:id/live-model/edges", async (req, res) => {
       }).onConflictDoNothing();
     }
 
+    // Validate moderated edge belongs to this live model.
+    let validModeratesEdgeId: number | null = null;
+    if (moderatesEdgeId != null) {
+      const target = await tx.select({ id: liveModelEdgesTable.id })
+        .from(liveModelEdgesTable)
+        .where(and(eq(liveModelEdgesTable.id, moderatesEdgeId), eq(liveModelEdgesTable.liveModelId, liveModel.id)))
+        .limit(1);
+      if (target[0]) validModeratesEdgeId = target[0].id;
+    }
+
     await tx.insert(liveModelEdgesTable).values({
       liveModelId: liveModel.id,
       fromVariableId,
@@ -328,6 +344,7 @@ router.post("/sessions/:id/live-model/edges", async (req, res) => {
       confidence: ["high", "medium", "low"].includes(req.body?.confidence) ? req.body.confidence : "medium",
       sourceModelId,
       userAdded,
+      moderatesEdgeId: validModeratesEdgeId,
     });
     await tx.update(liveModelsTable)
       .set({ version: sql`${liveModelsTable.version} + 1`, updatedAt: new Date() })

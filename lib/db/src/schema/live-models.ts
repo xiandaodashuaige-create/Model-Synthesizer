@@ -54,6 +54,11 @@ export const liveModelEdgesTable = pgTable("live_model_edges", {
   // Origin tracking
   sourceModelId: integer("source_model_id").references(() => researchModelsTable.id, { onDelete: "set null" }),
   userAdded: boolean("user_added").notNull().default(false),
+  // For relationship="moderates": optional pointer to the OTHER edge that this one moderates.
+  // When set, the canvas reroutes the moderator's arrow to land on the midpoint of the
+  // referenced edge (visually conveying "this moderates the A→B relationship", not the node).
+  // Self-FK with set-null cascade so deleting the moderated edge doesn't break the moderator.
+  moderatesEdgeId: integer("moderates_edge_id").references((): any => liveModelEdgesTable.id, { onDelete: "set null" }),
   // Extra evidence rows attached after the fact via the AI evidence-matching feature.
   // Schema: Array<{ paperId, paperTitle, paperAuthors, paperYear, citationText, source: "library"|"web", score? }>
   additionalEvidence: jsonb("additional_evidence").notNull().default([]),

@@ -408,6 +408,11 @@ export interface LiveModelEdgeOut {
   /** @nullable */
   sourceModelId?: number | null;
   userAdded: boolean;
+  /**
+   * When relationship="moderates", optionally points to another edge that this edge moderates. The canvas reroutes the moderator's arrow tip to land on the midpoint of the referenced edge.
+   * @nullable
+   */
+  moderatesEdgeId?: number | null;
   /** True if a paperId+citationText backs this edge. */
   hasProvenance: boolean;
   additionalEvidence?: AdditionalEvidence[];
@@ -900,6 +905,8 @@ export type AddLiveModelEdgeBody = {
   confidence?: AddLiveModelEdgeBodyConfidence;
   sourceModelId?: number | null;
   userAdded?: boolean;
+  /** Required only when relationship="moderates" AND the user dropped the connection on an existing edge. Points to the edge being moderated; the canvas uses it to route the arrow to that edge's midpoint. */
+  moderatesEdgeId?: number | null;
 };
 
 export type ImportLiveModelFromModelBody = {
