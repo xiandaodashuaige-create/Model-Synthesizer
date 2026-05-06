@@ -928,7 +928,14 @@ async function fetchPapersFromOpenAlex(query: string, perPage: number, page: num
   const safe = query.replace(/["',:|]+/g, " ").replace(/\s+/g, " ").trim();
   if (!safe) return [];
   const url = new URL("https://api.openalex.org/works");
-  url.searchParams.set("filter", `title_and_abstract.search:${safe},is_paratext:false,has_abstract:true`);
+  // Only real research papers — exclude books, book-chapters (which include
+  // index/contents/front-matter "papers"), datasets, editorials, errata,
+  // letters, paratext, peer-reviews, reference-entries, etc. that are
+  // pollution for "find a paper that contains a model figure".
+  url.searchParams.set(
+    "filter",
+    `title_and_abstract.search:${safe},is_paratext:false,has_abstract:true,type:article|review|preprint`,
+  );
   url.searchParams.set("per-page", String(Math.min(perPage, 50)));
   url.searchParams.set("sort", "relevance_score:desc");
   if (page > 1) url.searchParams.set("page", String(page));
@@ -943,6 +950,19 @@ async function fetchPapersFromOpenAlex(query: string, perPage: number, page: num
   if (!r.ok) return [];
   const data = (await r.json()) as { results?: OpenAlexLite[] };
   return data.results ?? [];
+}
+
+// Cheap title-based junk filter — drops things that slipped past the
+// type filter: book index pages, tables of contents, front/back matter,
+// editorials, acknowledgments, etc. Case-insensitive exact match on a
+// short whitelist of well-known non-paper titles, plus a "too short to be
+// a real paper title" guard.
+const JUNK_TITLE_RX = /^(index|contents|table of contents|references|bibliography|front matter|back matter|cover|cover page|about the authors?|editorial|acknowledg(e)?ments?|preface|foreword|copyright page|title page|errata|erratum|notes? on contributors)\.?$/i;
+function isJunkPaper(w: OpenAlexLite): boolean {
+  const title = (w.title ?? "").trim();
+  if (title.length < 8) return true; // "Index", "Notes" — way too short
+  if (JUNK_TITLE_RX.test(title)) return true;
+  return false;
 }
 
 type ModelFigureRating = { likelihood: "high" | "medium" | "low"; reason: string };
@@ -981,6 +1001,9 @@ Negative signals (→ "low"):
 - methodology / scale validation paper
 - experimental study with no theoretical framework figure
 - literature review with no synthesis diagram
+- non-research content: book index, table of contents, editorial, front/back matter, acknowledgments, references list, cover page
+- the "abstract" looks like a list of index entries, page numbers, or chapter summaries instead of a research abstract
+- the title is just "Index", "Contents", "References" or similar book paratext
 
 Return ONLY JSON: {"ratings":[{"i":0,"likelihood":"high|medium|low","reason":"≤20-word Chinese explanation"}, ...]} — one entry per input paper, indices 0..N-1.`,
         },
@@ -1056,6 +1079,7 @@ router.post("/sessions/:id/model-assistant/search-model-papers", async (req, res
     const byId = new Map<string, OpenAlexLite>();
     for (const w of all) {
       if (!w.id) continue;
+      if (isJunkPaper(w)) continue; // drop book index pages, ToC, front matter, etc.
       if (!byId.has(w.id)) byId.set(w.id, w);
     }
     const deduped = Array.from(byId.values());
@@ -1108,6 +1132,13 @@ router.post("/sessions/:id/model-assistant/search-model-papers", async (req, res
       return (b.citationCount ?? 0) - (a.citationCount ?? 0);
     });
 
+    // Hide "low likelihood" results — the user explicitly asked for papers
+    // that likely contain a research-model figure, so showing irrelevant
+    // ones (textbook chapters, scale-validation papers, etc.) is noise.
+    // Only fall back to "low" results if everything we have is "low",
+    // so the user always sees *something* and can broaden the query.
+    const nonLow = enriched.filter((p) => p.modelFigureLikelihood !== "low");
+    const finalList = nonLow.length > 0 ? nonLow : enriched;
     const hasMore = page < 10 && deduped.length >= count;
 
     res.json({
@@ -1116,7 +1147,7 @@ router.post("/sessions/:id/model-assistant/search-model-papers", async (req, res
       expandedQueries,
       page,
       hasMore,
-      papers: enriched.slice(0, count),
+      papers: finalList.slice(0, count),
     });
   } catch (err) {
     req.log.error({ err }, "Paper search threw");
