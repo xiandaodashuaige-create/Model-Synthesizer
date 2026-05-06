@@ -12,6 +12,7 @@ import { ChevronRight, Loader2, Home as HomeIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useT } from "@/lib/i18n";
 import { OnboardingStepper } from "@/components/onboarding-stepper";
+import { AiUsagePanel } from "@/components/ai-usage-panel";
 
 export default function SessionLayout({ children }: { children: React.ReactNode }) {
   const { t } = useT();
@@ -87,6 +88,10 @@ export default function SessionLayout({ children }: { children: React.ReactNode 
           modelCount={summary?.modelCount ?? 0}
           hasSelectedModel={hasSelectedModel}
         />
+
+        <div className="mt-4">
+          <AiUsagePanel sessionId={sessionId} />
+        </div>
       </div>
 
       {/* Workspace Navigation */}
