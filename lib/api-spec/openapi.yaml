@@ -348,7 +348,87 @@ paths:
                 items:
                   $ref: "#/components/schemas/Variable"
 
+  /sessions/{id}/papers/upload-pdf:
+    post:
+      operationId: uploadSessionPaperPdf
+      tags: [papers]
+      summary: Upload a PDF and add it to the session as a paper. Extracts metadata via DOI lookup or AI fallback; full text is stored for downstream variable extraction.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: The PDF file (max ~25 MB; must be text-extractable, not a scan).
+      responses:
+        "201":
+          description: Paper added to the session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Paper"
+        "200":
+          description: Paper already in the session (idempotent on externalId / DOI). Returns the existing row, possibly with updated full text.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Paper"
+        "400":
+          description: No file, unreadable PDF, or scanned document with no extractable text
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Could not extract a usable title from the PDF
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: AI metadata extraction failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /sessions/{id}/image-blocklist:
+    get:
+      operationId: listImageBlocklist
+      tags: [models]
+      summary: List all blocked image source URLs for this session.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: All blocklist entries for this session, newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ImageBlocklistEntry"
     post:
       operationId: addImageBlocklistEntry
       tags: [models]
@@ -388,6 +468,122 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ImageBlocklistEntry"
+
+  /sessions/{id}/image-blocklist/{entryId}:
+    delete:
+      operationId: deleteImageBlocklistEntry
+      tags: [models]
+      summary: Remove a previously blocked image so it can appear in search results again.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: entryId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Removed
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok:
+                    type: boolean
+        "404":
+          description: Blocklist entry not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /sessions/{id}/variables/{variableId}:
+    patch:
+      operationId: updateSessionVariable
+      tags: [variables]
+      summary: Manually rename, retype, or rewrite the definition of a single variable. Other downstream views (graph, models, live model) read on demand and will reflect the change.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: variableId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                type:
+                  type: string
+                  enum: [independent, mediator, moderator, dependent]
+                definition:
+                  type: string
+      responses:
+        "200":
+          description: Updated variable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Variable"
+        "400":
+          description: No supported fields to update / invalid id
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Variable not found in this session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: deleteSessionVariable
+      tags: [variables]
+      summary: Delete a single variable from the session.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: variableId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok:
+                    type: boolean
+        "404":
+          description: Variable not found in this session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /sessions/{id}/variable-graph:
     get:
@@ -643,6 +839,9 @@ paths:
                         why:
                           type: string
                           description: Short AI-written reason (≤120 chars) explaining why this figure matches the user's session. Absent for fallbacks.
+                        verified:
+                          type: boolean
+                          description: True when the AI relevance gate explicitly approved this image. False for backfilled fallbacks shown to keep the grid full. Absent in raw mode.
         "503":
           description: Search provider unavailable or not configured
           content:

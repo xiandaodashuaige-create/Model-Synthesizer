@@ -42,6 +42,10 @@ pnpm --filter @workspace/db run push
 - **No duplicate live-model edges**: Enforces uniqueness for live model edges in the database and prevents silent duplication in the UI.
 - **Generation rescue mode**: When zero generated models pass strict validation, soft-fail models (layer-jumps, chain-too-long, count-out-of-range) are salvaged with a `[质量警告:...]` rationale prefix + `partialPassMeta.qualityWarnings`, instead of returning a blank-screen error.
 - **AI call abort timeouts**: `models/generate` aborts at 55s, `model-assistant` at 50s, both returning a 504 with a Chinese error before the Replit Autoscale 60s proxy timeout would otherwise kill the request as a generic 502. Reserved VM deployments have no such limit.
+- **Per-session scoping**: `generation_feedback` and `learning-stats` queries are scoped by `sessionId` to prevent cross-session leakage. `evidenceHypothesisId` is strong-bound to `paper_hypotheses` belonging to the cited `paperId`.
+- **Variable rename/delete**: PATCH/DELETE `/sessions/:id/variables/:variableId` allow per-paper extraction edits without re-running the whole paper. `canonicalize()` is Unicode-safe (preserves CJK).
+- **Image blocklist**: GET/POST/DELETE `/sessions/:id/image-blocklist` with URL normalization (lowercased host, stripped tracking params). Unverified backfill images get `verified: false` and a `未验证` UI badge.
+- **Manual edge evidence**: model-detail.tsx addEdge UI lets the user explicitly pick the evidence paper from any node's paper, instead of always defaulting to the source-side paper.
 
 ## Product
 - **Session Management**: Users can create sessions, defining a name and research topic.

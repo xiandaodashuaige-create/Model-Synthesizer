@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useChatModelAssistant, useSearchModelImages, useSearchModelPapers, useAddImageBlocklistEntry, useGetModelAssistantMessages, useClearModelAssistantMessages, getGetModelAssistantMessagesQueryKey } from "@workspace/api-client-react";
+import { useChatModelAssistant, useSearchModelImages, useSearchModelPapers, useAddImageBlocklistEntry, useListImageBlocklist, useDeleteImageBlocklistEntry, useGetModelAssistantMessages, useClearModelAssistantMessages, getGetModelAssistantMessagesQueryKey, getListImageBlocklistQueryKey } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { BookOpen, BookPlus, ChevronDown, ChevronUp, Download, ExternalLink, FileText, Heart, Image as ImageIcon, LayoutGrid, Loader2, MessageSquare, Paperclip, RefreshCw, RotateCcw, Search, Send, Sparkles, Trash2, X } from "lucide-react";
 import { useT } from "@/lib/i18n";
@@ -14,6 +14,11 @@ type ImageHit = {
   height?: number;
   category?: "conceptual_model" | "sem_path" | "framework";
   why?: string;
+  // Set by the AI relevance gate — true when GPT explicitly approved this
+  // image, false when it was a backfill we showed only because the AI was
+  // very strict and would have left the grid almost empty. The UI surfaces
+  // a small "未验证" badge so the user knows to inspect it more carefully.
+  verified?: boolean;
 };
 
 type PaperHit = {
@@ -90,7 +95,29 @@ export function ModelAssistantChat({
   const imageSearch = useSearchModelImages();
   const paperSearch = useSearchModelPapers();
   const addBlocklist = useAddImageBlocklistEntry();
+  const deleteBlocklist = useDeleteImageBlocklistEntry();
   const [blockedUrls, setBlockedUrls] = useState<Set<string>>(new Set());
+  const [blocklistOpen, setBlocklistOpen] = useState(false);
+  // Only fetch the persisted blocklist when the user opens the manage dialog —
+  // it's read-on-demand. Keeps the regular search flow lean.
+  const { data: blocklistEntries, refetch: refetchBlocklist } = useListImageBlocklist(sessionId, {
+    query: { enabled: !!sessionId && blocklistOpen, queryKey: getListImageBlocklistQueryKey(sessionId) },
+  });
+  const unblockEntry = (entryId: number, sourceUrl: string) => {
+    deleteBlocklist.mutate(
+      { id: sessionId, entryId },
+      {
+        onSuccess: () => {
+          setBlockedUrls((prev) => {
+            const next = new Set(prev);
+            next.delete(sourceUrl);
+            return next;
+          });
+          refetchBlocklist();
+        },
+      },
+    );
+  };
 
   const blockImage = (img: ImageHit) => {
     if (blockedUrls.has(img.sourceUrl)) return;
@@ -556,15 +583,26 @@ export function ModelAssistantChat({
                   ? (<><LayoutGrid className="w-3.5 h-3.5" /> {t("models.assistant.tab.all" as any)}</>)
                   : (<><ImageIcon className="w-3.5 h-3.5" /> {t("models.assistant.searchImages.title" as any)}</>)}
             </div>
-            <button
-              type="button"
-              onClick={() => { setImgPanelOpen(false); setImgResults(null); setImgError(null); setPaperResults(null); setPaperError(null); setSavedOpen(false); }}
-              data-testid="button-close-image-search"
-              className="text-sky-700 hover:text-sky-900"
-              title={t("models.assistant.searchImages.close" as any)}
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setBlocklistOpen(true)}
+                data-testid="button-open-blocklist"
+                className="text-[11px] text-sky-700 hover:text-sky-900 underline"
+                title="管理已屏蔽的图片"
+              >
+                屏蔽列表
+              </button>
+              <button
+                type="button"
+                onClick={() => { setImgPanelOpen(false); setImgResults(null); setImgError(null); setPaperResults(null); setPaperError(null); setSavedOpen(false); }}
+                data-testid="button-close-image-search"
+                className="text-sky-700 hover:text-sky-900"
+                title={t("models.assistant.searchImages.close" as any)}
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </div>
 
           {/* Saved collection drawer (collapsible) */}
@@ -870,6 +908,15 @@ export function ModelAssistantChat({
                             ✓ {t(`models.assistant.searchImages.category.${r.category}.label` as any)}
                           </div>
                         )}
+                        {r.verified === false && (
+                          <div
+                            data-testid={`badge-image-unverified-${i}`}
+                            title="未经 AI 相关性核验,仅作为补充候选展示"
+                            className="absolute bottom-9 left-1 inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-semibold bg-amber-500/95 text-white backdrop-blur"
+                          >
+                            ! 未验证
+                          </div>
+                        )}
                         <div className="p-1.5 flex flex-col gap-1 min-h-0">
                           <div className="text-[11px] leading-tight line-clamp-2 text-foreground" title={r.title}>{r.title}</div>
                           {r.why && (
@@ -1143,6 +1190,63 @@ export function ModelAssistantChat({
           </div>
         </div>
       </div>
+
+      {blocklistOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          data-testid="dialog-image-blocklist"
+          onClick={() => setBlocklistOpen(false)}
+        >
+          <div
+            className="bg-card border border-border rounded-lg shadow-xl w-full max-w-lg p-5 space-y-3"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-foreground">已屏蔽的图片来源</h3>
+              <button
+                type="button"
+                onClick={() => setBlocklistOpen(false)}
+                className="text-muted-foreground hover:text-foreground"
+                aria-label="关闭"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            {!blocklistEntries ? (
+              <div className="text-xs text-muted-foreground inline-flex items-center gap-2">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" /> 加载中…
+              </div>
+            ) : blocklistEntries.length === 0 ? (
+              <div className="text-xs text-muted-foreground">本会话还没有屏蔽过任何图片。</div>
+            ) : (
+              <ul className="max-h-80 overflow-y-auto divide-y divide-border border border-border rounded-md">
+                {blocklistEntries.map((b) => (
+                  <li key={b.id} className="flex items-start gap-2 p-2 text-xs">
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium text-foreground truncate" title={b.title || b.sourceUrl}>
+                        {b.title || b.sourceUrl}
+                      </div>
+                      <div className="text-[10px] text-muted-foreground truncate">{b.sourceDomain}</div>
+                    </div>
+                    <button
+                      type="button"
+                      data-testid={`button-unblock-${b.id}`}
+                      onClick={() => unblockEntry(b.id, b.sourceUrl)}
+                      disabled={deleteBlocklist.isPending}
+                      className="shrink-0 inline-flex items-center gap-1 rounded border border-input px-2 py-0.5 text-[11px] hover:bg-muted disabled:opacity-50"
+                    >
+                      解除屏蔽
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <p className="text-[10px] text-muted-foreground">
+              解除屏蔽后,该图片来源会重新出现在搜索结果中。
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

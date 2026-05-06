@@ -9,6 +9,7 @@ import {
   useGenerateModelLiteratureReview,
   useGetPaperModelFigures,
   useImportLiveModelFromModel,
+  useGetLiveModel,
   getGetModelQueryKey,
   getListSessionModelsQueryKey,
   getListSessionVariablesQueryKey,
@@ -23,6 +24,16 @@ import { Loader2, ArrowLeft, CheckCircle, BookOpen, Quote, Share2, Pencil, Save,
 import { ModelGraph, buildEdgeHTagMap, buildPaperTagMap } from "@/components/model-graph";
 import { EditableModelGraph } from "@/components/editable-model-graph";
 import { EvidenceMatchDialog } from "@/components/evidence-match-dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { useT } from "@/lib/i18n";
 
@@ -243,6 +254,15 @@ export default function SessionModelDetail({ params: routeParams }: { params?: {
   const { data: sessionVars } = useListSessionVariables(sessionId, {
     query: { enabled: !!sessionId, queryKey: getListSessionVariablesQueryKey(sessionId) },
   });
+  // Mirror the list page guard: count manual edges in the live model so the
+  // user is warned BEFORE they overwrite work they hand-curated. Without this
+  // confirm dialog, clicking "选用此模型" silently nukes everything they
+  // dragged in on the "我的研究模型" page.
+  const { data: liveModel } = useGetLiveModel(sessionId, {
+    query: { enabled: !!sessionId, queryKey: getGetLiveModelQueryKey(sessionId) },
+  });
+  const manualEdgeCount = (liveModel?.edges ?? []).filter((e) => e.userAdded).length;
+  const [pendingSelectOpen, setPendingSelectOpen] = useState(false);
 
   const [editing, setEditing] = useState(false);
   const [draftName, setDraftName] = useState("");
@@ -254,6 +274,10 @@ export default function SessionModelDetail({ params: routeParams }: { params?: {
   const [newEdgeTo, setNewEdgeTo] = useState<string>("");
   const [newEdgeRel, setNewEdgeRel] = useState<string>("positive");
   const [newEdgeEvidence, setNewEdgeEvidence] = useState("");
+  // Empty string ("auto") = "default to source-side paper", as before. Any
+  // numeric value = the paperId the user explicitly picked as the citation
+  // for this manual edge.
+  const [newEdgePaperId, setNewEdgePaperId] = useState<string>("");
   // Canvas drag-to-connect → opens a small modal to capture the required evidence quote.
   const [pendingCanvasEdge, setPendingCanvasEdge] = useState<{ from: number; to: number } | null>(null);
 
@@ -312,6 +336,15 @@ export default function SessionModelDetail({ params: routeParams }: { params?: {
 
   const handleSelect = () => {
     if (!model) return;
+    if (manualEdgeCount > 0) {
+      setPendingSelectOpen(true);
+      return;
+    }
+    doSelect();
+  };
+
+  const doSelect = () => {
+    if (!model) return;
     selectModel.mutate({ id: modelId }, {
       onSuccess: () => {
         queryClient.invalidateQueries({ queryKey: getGetModelQueryKey(modelId) });
@@ -367,20 +400,30 @@ export default function SessionModelDetail({ params: routeParams }: { params?: {
     const fromN = draftNodes.find((n) => n.variableId === from);
     const toN = draftNodes.find((n) => n.variableId === to);
     if (!fromN || !toN) return;
-    const evidenceFrom = fromN; // attribute evidence to the source-side paper
+    // Evidence paper resolution:
+    //   1. If the user explicitly picked one in the dropdown, use that.
+    //   2. Otherwise default to the source-side node's paper (legacy behavior).
+    // Looking the picked id up against draftNodes lets us reuse the paper
+    // metadata (authors / year / title) we already loaded — no extra fetch.
+    let evidence = fromN as NodeT;
+    if (newEdgePaperId) {
+      const pid = parseInt(newEdgePaperId, 10);
+      const picked = draftNodes.find((n) => n.paperId === pid);
+      if (picked) evidence = picked;
+    }
     setDraftEdges((cur) => [...cur, {
       fromVariableId: from,
       toVariableId: to,
       fromVariableName: fromN.variableName,
       toVariableName: toN.variableName,
       relationship: newEdgeRel,
-      evidencePaperId: evidenceFrom.paperId,
-      evidencePaperTitle: evidenceFrom.paperTitle,
-      evidencePaperAuthors: evidenceFrom.paperAuthors,
-      evidencePaperYear: evidenceFrom.paperYear,
+      evidencePaperId: evidence.paperId,
+      evidencePaperTitle: evidence.paperTitle,
+      evidencePaperAuthors: evidence.paperAuthors,
+      evidencePaperYear: evidence.paperYear,
       evidenceCitationText: newEdgeEvidence.trim(),
     }]);
-    setNewEdgeFrom(""); setNewEdgeTo(""); setNewEdgeRel("positive"); setNewEdgeEvidence("");
+    setNewEdgeFrom(""); setNewEdgeTo(""); setNewEdgeRel("positive"); setNewEdgeEvidence(""); setNewEdgePaperId("");
     setPendingCanvasEdge(null);
   };
 
@@ -875,6 +918,22 @@ export default function SessionModelDetail({ params: routeParams }: { params?: {
                   </div>
                 </div>
                 <div>
+                  <label className="text-[11px] font-medium text-muted-foreground block mb-1">证据来源论文</label>
+                  <select
+                    data-testid="select-new-edge-paper"
+                    value={newEdgePaperId}
+                    onChange={(e) => setNewEdgePaperId(e.target.value)}
+                    className="w-full text-xs rounded-md border border-input bg-background px-2 py-1.5"
+                  >
+                    <option value="">默认(来源变量所在论文)</option>
+                    {[...new Map(draftNodes.map((n) => [n.paperId, n])).values()].map((n) => (
+                      <option key={n.paperId} value={n.paperId}>
+                        {(n.paperAuthors?.[0] ?? "Unknown")}{n.paperYear ? ` (${n.paperYear})` : ""} — {n.paperTitle.slice(0, 80)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
                   <label className="text-[11px] font-medium text-muted-foreground block mb-1">{t("md.addEdge.evidence" as any)}</label>
                   <textarea
                     data-testid="textarea-new-edge-evidence"
@@ -1060,6 +1119,27 @@ export default function SessionModelDetail({ params: routeParams }: { params?: {
         sessionId={sessionId}
         modelId={modelId}
       />
+
+      <AlertDialog open={pendingSelectOpen} onOpenChange={setPendingSelectOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("models.confirm.overwriteTitle" as any, { n: manualEdgeCount })}</AlertDialogTitle>
+            <AlertDialogDescription>{t("models.confirm.overwriteBody" as any)}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common.cancel" as any)}</AlertDialogCancel>
+            <AlertDialogAction
+              data-testid="button-confirm-overwrite"
+              onClick={() => {
+                setPendingSelectOpen(false);
+                doSelect();
+              }}
+            >
+              {t("models.confirm.overwriteOk" as any)}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

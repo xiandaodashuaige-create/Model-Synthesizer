@@ -145,14 +145,22 @@ async function loadLibraryCandidates(sessionId: number): Promise<LibCandidate[]>
     .from(papersTable)
     .where(eq(papersTable.sessionId, sessionId))
     .limit(LIBRARY_CAP);
-  return rows.map((p) => ({
-    paperId: p.id,
-    title: p.title,
-    authors: (p.authors as string[]) ?? [],
-    year: p.year ?? null,
-    abstract: p.abstract ?? null,
-    url: p.url ?? null,
-  }));
+  return rows.map((p) => {
+    // Prefer the first ~2000 chars of fullText (PDF body) over the abstract:
+    // the abstract often omits the specific edge-level claims we want to cite.
+    // This keeps token cost bounded while letting the AI quote real method /
+    // results sentences when fullText is available.
+    const ft = (p.fullText ?? "").trim();
+    const evidenceText = ft.length > 0 ? ft.slice(0, 2000) : (p.abstract ?? null);
+    return {
+      paperId: p.id,
+      title: p.title,
+      authors: (p.authors as string[]) ?? [],
+      year: p.year ?? null,
+      abstract: evidenceText,
+      url: p.url ?? null,
+    };
+  });
 }
 
 // ---- AI prompts ----------------------------------------------------------

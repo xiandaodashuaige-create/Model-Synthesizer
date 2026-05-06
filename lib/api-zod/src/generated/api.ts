@@ -312,6 +312,57 @@ export const ListSessionVariablesResponse = zod.array(
 );
 
 /**
+ * @summary Upload a PDF and add it to the session as a paper. Extracts metadata via DOI lookup or AI fallback; full text is stored for downstream variable extraction.
+ */
+export const UploadSessionPaperPdfParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const UploadSessionPaperPdfBody = zod.object({
+  file: zod
+    .instanceof(File)
+    .describe(
+      "The PDF file (max ~25 MB; must be text-extractable, not a scan).",
+    ),
+});
+
+export const UploadSessionPaperPdfResponse = zod.object({
+  id: zod.number(),
+  sessionId: zod.number(),
+  externalId: zod.string(),
+  title: zod.string(),
+  abstract: zod.string().nullish(),
+  authors: zod.array(zod.string()),
+  year: zod.number().nullish(),
+  venue: zod.string().nullish(),
+  citationCount: zod.number().nullish(),
+  openAccessUrl: zod.string().nullish(),
+  url: zod.string(),
+  extracted: zod.boolean(),
+  createdAt: zod.string(),
+});
+
+/**
+ * @summary List all blocked image source URLs for this session.
+ */
+export const ListImageBlocklistParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const ListImageBlocklistResponseItem = zod.object({
+  id: zod.number(),
+  sessionId: zod.number(),
+  sourceUrl: zod.string(),
+  sourceDomain: zod.string(),
+  title: zod.string().nullish(),
+  reason: zod.string().nullish(),
+  createdAt: zod.string(),
+});
+export const ListImageBlocklistResponse = zod.array(
+  ListImageBlocklistResponseItem,
+);
+
+/**
  * @summary Block an image (by sourceUrl) from future searches in this session.
  */
 export const AddImageBlocklistEntryParams = zod.object({
@@ -333,6 +384,77 @@ export const AddImageBlocklistEntryResponse = zod.object({
   title: zod.string().nullish(),
   reason: zod.string().nullish(),
   createdAt: zod.string(),
+});
+
+/**
+ * @summary Remove a previously blocked image so it can appear in search results again.
+ */
+export const DeleteImageBlocklistEntryParams = zod.object({
+  id: zod.coerce.number(),
+  entryId: zod.coerce.number(),
+});
+
+export const DeleteImageBlocklistEntryResponse = zod.object({
+  ok: zod.boolean(),
+});
+
+/**
+ * @summary Manually rename, retype, or rewrite the definition of a single variable. Other downstream views (graph, models, live model) read on demand and will reflect the change.
+ */
+export const UpdateSessionVariableParams = zod.object({
+  id: zod.coerce.number(),
+  variableId: zod.coerce.number(),
+});
+
+export const UpdateSessionVariableBody = zod.object({
+  name: zod.string().optional(),
+  type: zod
+    .enum(["independent", "mediator", "moderator", "dependent"])
+    .optional(),
+  definition: zod.string().optional(),
+});
+
+export const UpdateSessionVariableResponse = zod.object({
+  id: zod.number(),
+  sessionId: zod.number(),
+  paperId: zod.number(),
+  paperTitle: zod.string(),
+  paperAuthors: zod.array(zod.string()),
+  paperYear: zod.number().nullish(),
+  name: zod.string(),
+  type: zod.enum(["independent", "mediator", "moderator", "dependent"]),
+  definition: zod.string(),
+  citationText: zod.string(),
+  canonicalConstructId: zod
+    .string()
+    .nullish()
+    .describe(
+      'Lower-case canonical construct id (e.g. \"trust\", \"purchase intention\"). Variables across papers that map to the same construct share this id.',
+    ),
+  constructLayer: zod
+    .union([
+      zod.literal("stimulus"),
+      zod.literal("cognitive"),
+      zod.literal("affective"),
+      zod.literal("intention"),
+      zod.literal("behavior"),
+      zod.literal(null),
+    ])
+    .nullish()
+    .describe("Standard psychology pipeline layer for the variable."),
+  createdAt: zod.string(),
+});
+
+/**
+ * @summary Delete a single variable from the session.
+ */
+export const DeleteSessionVariableParams = zod.object({
+  id: zod.coerce.number(),
+  variableId: zod.coerce.number(),
+});
+
+export const DeleteSessionVariableResponse = zod.object({
+  ok: zod.boolean(),
 });
 
 /**
@@ -534,6 +656,12 @@ export const SearchModelImagesResponse = zod.object({
         .optional()
         .describe(
           "Short AI-written reason (≤120 chars) explaining why this figure matches the user's session. Absent for fallbacks.",
+        ),
+      verified: zod
+        .boolean()
+        .optional()
+        .describe(
+          "True when the AI relevance gate explicitly approved this image. False for backfilled fallbacks shown to keep the grid full. Absent in raw mode.",
         ),
     }),
   ),

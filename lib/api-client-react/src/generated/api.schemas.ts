@@ -539,6 +539,11 @@ export type LookupPaper404 = {
   error: string;
 };
 
+export type UploadSessionPaperPdfBody = {
+  /** The PDF file (max ~25 MB; must be text-extractable, not a scan). */
+  file: Blob;
+};
+
 export type AddImageBlocklistEntryBody = {
   sourceUrl: string;
   sourceDomain: string;
@@ -546,6 +551,30 @@ export type AddImageBlocklistEntryBody = {
   title?: string | null;
   /** @nullable */
   reason?: string | null;
+};
+
+export type DeleteImageBlocklistEntry200 = {
+  ok: boolean;
+};
+
+export type UpdateSessionVariableBodyType =
+  (typeof UpdateSessionVariableBodyType)[keyof typeof UpdateSessionVariableBodyType];
+
+export const UpdateSessionVariableBodyType = {
+  independent: "independent",
+  mediator: "mediator",
+  moderator: "moderator",
+  dependent: "dependent",
+} as const;
+
+export type UpdateSessionVariableBody = {
+  name?: string;
+  type?: UpdateSessionVariableBodyType;
+  definition?: string;
+};
+
+export type DeleteSessionVariable200 = {
+  ok: boolean;
 };
 
 export type ChatModelAssistantBodyMessagesItemRole =
@@ -694,6 +723,8 @@ export type SearchModelImages200ResultsItem = {
   category?: SearchModelImages200ResultsItemCategory;
   /** Short AI-written reason (≤120 chars) explaining why this figure matches the user's session. Absent for fallbacks. */
   why?: string;
+  /** True when the AI relevance gate explicitly approved this image. False for backfilled fallbacks shown to keep the grid full. Absent in raw mode. */
+  verified?: boolean;
 };
 
 export type SearchModelImages200 = {

@@ -146,8 +146,8 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
             setLookupQuery("");
             return;
           }
+          // handleAdd already toasts on success/failure — don't double-toast here.
           handleAdd(paper);
-          toast({ title: t("papers.lookup.toast.added" as any), description: paper.title.slice(0, 80) });
           setLookupQuery("");
         },
         onError: (err: any) => {

@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { eq, and, desc } from "drizzle-orm";
-import { db, papersTable, variablesTable, researchModelsTable, imageBlocklistTable, modelAssistantMessagesTable } from "@workspace/db";
+import { db, papersTable, variablesTable, researchModelsTable, imageBlocklistTable, modelAssistantMessagesTable, sessionsTable } from "@workspace/db";
 import { asc } from "drizzle-orm";
 import { ChatModelAssistantParams, ChatModelAssistantBody } from "@workspace/api-zod";
 import { openai } from "@workspace/integrations-openai-ai-server";
@@ -518,12 +518,14 @@ Rules:
 // null on any DB issue so image search still works.
 async function loadSessionImageCtx(sessionId: number): Promise<SessionImageCtx | null> {
   try {
-    const [vars, papers] = await Promise.all([
+    const [sessionRow, vars, papers] = await Promise.all([
+      db.select({ topic: sessionsTable.topic }).from(sessionsTable).where(eq(sessionsTable.id, sessionId)).limit(1),
       db.select({ name: variablesTable.name }).from(variablesTable).where(eq(variablesTable.sessionId, sessionId)),
       db.select({ title: papersTable.title }).from(papersTable).where(eq(papersTable.sessionId, sessionId)),
     ]);
+    const topic = sessionRow[0]?.topic?.trim() || null;
     return {
-      topic: null, // sessionsTable.description could be plumbed here later
+      topic,
       variableNames: vars.map((v) => v.name).filter((n) => !!n),
       paperTitles: papers.map((p) => p.title).filter((t) => !!t),
     };
@@ -909,21 +911,25 @@ router.post("/sessions/:id/model-assistant/search-model-images", async (req, res
       );
       if (keep && keep.length > 0) {
         const keepMap = new Map(keep.map((k) => [k.i, { category: k.category, why: k.why }]));
+        // Tag every kept candidate with verified=true. Items the AI didn't
+        // approve get verified=false so the UI can render an unobtrusive
+        // "未验证" badge — the user instantly knows whether GPT actually
+        // looked at this image and decided it was on-topic, vs. it being a
+        // backfill we showed only because the grid would otherwise be empty.
         const approved = candidates
           .map((c, i) => {
             const hit = keepMap.get(i);
-            return hit ? { ...c, category: hit.category, why: hit.why } : { ...c, category: undefined, why: undefined };
+            return hit
+              ? { ...c, category: hit.category, why: hit.why, verified: true as boolean }
+              : { ...c, category: undefined as ImageCategory | undefined, why: undefined as string | undefined, verified: false as boolean };
           })
           .filter((c) => c.category !== undefined);
-        // Backfill: if the AI was very strict and approved fewer than `count`,
-        // top up from the highest-ranked unkept items (no category) so the
-        // grid isn't half-empty. The user sees clearly which are AI-approved
-        // (badge) vs. fallbacks (no badge).
         if (approved.length < count) {
           const need = count - approved.length;
           const fallbacks = candidates
             .filter((_, i) => !keepMap.has(i))
-            .slice(0, need);
+            .slice(0, need)
+            .map((c) => ({ ...c, category: undefined as ImageCategory | undefined, why: undefined as string | undefined, verified: false as boolean }));
           finalList = [...approved, ...fallbacks];
         } else {
           finalList = approved;
@@ -1262,13 +1268,88 @@ router.post("/sessions/:id/model-assistant/search-model-papers", async (req, res
 // the user can dismiss noisy hits and never see them again in this session.
 // =====================================================================
 
+// Normalize a URL for blocklist lookup so two cosmetically-different URLs
+// pointing at the SAME image are treated as one block. Without this the user
+// could see the same hit re-appear with a tracking parameter or a trailing
+// slash variant and have to dismiss it again.
+function normalizeBlocklistUrl(raw: string): string {
+  const s = (raw ?? "").trim();
+  if (!s) return s;
+  try {
+    const u = new URL(s);
+    u.hash = "";
+    // Drop common tracking / cache-buster params.
+    const dropPrefixes = ["utm_", "fbclid", "gclid", "mc_eid", "mc_cid", "_ga", "_hsenc", "_hsmi", "ref"];
+    const drop: string[] = [];
+    u.searchParams.forEach((_v, k) => {
+      const lk = k.toLowerCase();
+      if (dropPrefixes.some((p) => lk === p || lk.startsWith(p))) drop.push(k);
+    });
+    drop.forEach((k) => u.searchParams.delete(k));
+    // Sort remaining params for determinism.
+    const sorted = [...u.searchParams.entries()].sort(([a], [b]) => a.localeCompare(b));
+    const sp = new URLSearchParams();
+    for (const [k, v] of sorted) sp.append(k, v);
+    u.search = sp.toString();
+    // Trim a single trailing slash off the path so "/foo/" === "/foo".
+    if (u.pathname.length > 1 && u.pathname.endsWith("/")) u.pathname = u.pathname.slice(0, -1);
+    return u.toString();
+  } catch {
+    return s;
+  }
+}
+
+router.get("/sessions/:id/image-blocklist", async (req, res): Promise<void> => {
+  const params = ChatModelAssistantParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: "Invalid session id" });
+    return;
+  }
+  const rows = await db
+    .select()
+    .from(imageBlocklistTable)
+    .where(eq(imageBlocklistTable.sessionId, params.data.id))
+    .orderBy(desc(imageBlocklistTable.createdAt));
+  res.json(rows.map((r) => ({
+    id: r.id, sessionId: r.sessionId, sourceUrl: r.sourceUrl,
+    sourceDomain: r.sourceDomain, title: r.title, reason: r.reason,
+    createdAt: r.createdAt.toISOString(),
+  })));
+});
+
+router.delete("/sessions/:id/image-blocklist/:entryId", async (req, res): Promise<void> => {
+  const params = ChatModelAssistantParams.safeParse({ id: req.params.id });
+  if (!params.success) {
+    res.status(400).json({ error: "Invalid session id" });
+    return;
+  }
+  const entryId = parseInt(req.params.entryId, 10);
+  if (!Number.isFinite(entryId)) {
+    res.status(400).json({ error: "Invalid entryId" });
+    return;
+  }
+  const result = await db
+    .delete(imageBlocklistTable)
+    .where(and(
+      eq(imageBlocklistTable.sessionId, params.data.id),
+      eq(imageBlocklistTable.id, entryId),
+    ))
+    .returning({ id: imageBlocklistTable.id });
+  if (result.length === 0) {
+    res.status(404).json({ error: "Blocklist entry not found" });
+    return;
+  }
+  res.json({ ok: true });
+});
+
 router.post("/sessions/:id/image-blocklist", async (req, res) => {
   const params = ChatModelAssistantParams.safeParse(req.params);
   if (!params.success) {
     res.status(400).json({ error: "Invalid session id" });
     return;
   }
-  const sourceUrl = typeof req.body?.sourceUrl === "string" ? req.body.sourceUrl.trim() : "";
+  const rawUrl = typeof req.body?.sourceUrl === "string" ? req.body.sourceUrl.trim() : "";
+  const sourceUrl = normalizeBlocklistUrl(rawUrl);
   const sourceDomain = typeof req.body?.sourceDomain === "string" ? req.body.sourceDomain.trim() : "";
   if (!sourceUrl || !sourceDomain) {
     res.status(400).json({ error: "Missing sourceUrl or sourceDomain" });
@@ -1276,9 +1357,6 @@ router.post("/sessions/:id/image-blocklist", async (req, res) => {
   }
   const title = typeof req.body?.title === "string" ? req.body.title.slice(0, 500) : null;
   const reason = typeof req.body?.reason === "string" ? req.body.reason.slice(0, 200) : null;
-  // Idempotent insert — backed by the (session_id, source_url) unique index.
-  // Two concurrent POSTs cannot both insert; the loser's `returning()` will be
-  // empty, in which case we re-read the existing row.
   const insertResult = await db
     .insert(imageBlocklistTable)
     .values({ sessionId: params.data.id, sourceUrl, sourceDomain, title, reason })

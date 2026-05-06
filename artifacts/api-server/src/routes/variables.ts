@@ -33,11 +33,20 @@ function formatVariable(v: typeof variablesTable.$inferSelect, paper: typeof pap
 // Two variables across papers that normalize to the same string get the SAME canonical id.
 // (For now we use a string-equality scheme; embedding-based merging is a follow-up.)
 function canonicalize(name: string): string {
+  // Unicode-aware: keep letters/numbers from any script (incl. CJK) plus
+  // whitespace and hyphens. The previous `\w` was ASCII-only, so Chinese
+  // construct names like "感知信任" got stripped to empty — every Chinese
+  // variable then collapsed to the SAME canonical id and the variable graph
+  // showed false "shared variable" overlaps across papers.
+  // NFKC normalization first so visually-identical CJK characters with
+  // different code-point compositions (e.g. composed vs decomposed, fullwidth
+  // vs halfwidth latin) collapse to the same canonical form.
   return name
+    .normalize("NFKC")
     .toLowerCase()
     .replace(/\s+/g, " ")
     .replace(/^(perceived|the|a|an)\s+/g, "")
-    .replace(/[^\w\s-]/g, "")
+    .replace(/[^\p{L}\p{N}\s-]/gu, "")
     .trim();
 }
 
@@ -226,6 +235,70 @@ router.get("/sessions/:id/variables", async (req, res): Promise<void> => {
       return formatVariable(v, paper);
     })
   );
+});
+
+// Manual rename / retype / delete of a variable. The AI's first-pass extraction
+// is good but not perfect — researchers often want to:
+//   - rename a variable that the AI named awkwardly ("perceived enjoyment" → "enjoyment")
+//   - re-classify a borderline mediator/independent
+//   - delete an outright bad extraction (e.g. AI hallucinated a control variable)
+// without re-running extraction on the whole paper. These routes give them
+// that escape hatch. Everything else (variable-graph, models, live model)
+// reads variables on demand, so updates are picked up automatically.
+router.patch("/sessions/:id/variables/:variableId", async (req, res): Promise<void> => {
+  const sessionId = parseInt(req.params.id, 10);
+  const variableId = parseInt(req.params.variableId, 10);
+  if (!Number.isFinite(sessionId) || !Number.isFinite(variableId)) {
+    res.status(400).json({ error: "Invalid id" });
+    return;
+  }
+  const body = req.body ?? {};
+  const patch: { name?: string; type?: string; definition?: string } = {};
+  if (typeof body.name === "string" && body.name.trim().length > 0) patch.name = body.name.trim().slice(0, 200);
+  if (typeof body.type === "string" && ["independent", "mediator", "moderator", "dependent"].includes(body.type)) patch.type = body.type;
+  if (typeof body.definition === "string") patch.definition = body.definition.trim().slice(0, 2000);
+  if (Object.keys(patch).length === 0) {
+    res.status(400).json({ error: "No supported fields to update" });
+    return;
+  }
+  // Recompute canonical id when the name changes so downstream "shared variable"
+  // detection picks up the rename.
+  const updateValues: Record<string, unknown> = { ...patch };
+  if (patch.name) updateValues.canonicalConstructId = canonicalize(patch.name);
+  const result = await db
+    .update(variablesTable)
+    .set(updateValues)
+    .where(and(eq(variablesTable.sessionId, sessionId), eq(variablesTable.id, variableId)))
+    .returning();
+  if (result.length === 0) {
+    res.status(404).json({ error: "Variable not found" });
+    return;
+  }
+  const v = result[0];
+  const [paper] = await db.select().from(papersTable).where(eq(papersTable.id, v.paperId)).limit(1);
+  if (!paper) {
+    res.status(500).json({ error: "Variable's paper missing" });
+    return;
+  }
+  res.json(formatVariable(v, paper));
+});
+
+router.delete("/sessions/:id/variables/:variableId", async (req, res): Promise<void> => {
+  const sessionId = parseInt(req.params.id, 10);
+  const variableId = parseInt(req.params.variableId, 10);
+  if (!Number.isFinite(sessionId) || !Number.isFinite(variableId)) {
+    res.status(400).json({ error: "Invalid id" });
+    return;
+  }
+  const result = await db
+    .delete(variablesTable)
+    .where(and(eq(variablesTable.sessionId, sessionId), eq(variablesTable.id, variableId)))
+    .returning({ id: variablesTable.id });
+  if (result.length === 0) {
+    res.status(404).json({ error: "Variable not found" });
+    return;
+  }
+  res.json({ ok: true });
 });
 
 router.get("/sessions/:id/variable-graph", async (req, res): Promise<void> => {

@@ -5,14 +5,18 @@ import {
   useGetVariableGraph,
   useListSessionPapers,
   useExtractVariables,
+  useUpdateSessionVariable,
+  useDeleteSessionVariable,
   getListSessionVariablesQueryKey,
   getGetVariableGraphQueryKey,
   getListSessionPapersQueryKey,
   getGetSessionSummaryQueryKey,
   getGetSessionQueryKey,
+  getListSessionModelsQueryKey,
+  getGetLiveModelQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Loader2, Database, ArrowRight, Quote, BookOpen, ChevronDown, ChevronRight as ChevronRightIcon, Layers, RotateCcw } from "lucide-react";
+import { Loader2, Database, ArrowRight, Quote, BookOpen, ChevronDown, ChevronRight as ChevronRightIcon, Layers, RotateCcw, Pencil, Trash2, Check, X as XIcon } from "lucide-react";
 import { useT } from "@/lib/i18n";
 import { useToast } from "@/hooks/use-toast";
 import { NextStepHint, BigNextStep } from "@/components/onboarding-stepper";
@@ -656,23 +660,129 @@ function ClusterCard({
       {expanded && (
         <div className="mt-3 space-y-3">
           {cluster.sources.map((s) => (
-            <div key={s.id} className={`rounded-md border ${meta.border} ${meta.bg} p-3`}>
-              <div className="flex items-start gap-2 mb-2">
-                <Quote className={`w-3.5 h-3.5 mt-0.5 shrink-0 ${meta.color}`} />
-                <p className={`text-xs leading-relaxed ${meta.color} italic`}>{s.citationText}</p>
-              </div>
-              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                <BookOpen className="w-3.5 h-3.5 shrink-0" />
-                <span className="font-medium">{s.paperTitle}</span>
-                {s.paperAuthors?.length > 0 && (
-                  <span>· {s.paperAuthors.slice(0, 2).join(", ")}{s.paperAuthors.length > 2 ? " et al." : ""}</span>
-                )}
-                {s.paperYear && <span>· {s.paperYear}</span>}
-              </div>
-            </div>
+            <SourceRow key={s.id} source={s} meta={meta} />
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// Per-paper extraction row, with inline rename + delete. Lets the user fix
+// individual extractions without re-running the whole paper.
+function SourceRow({
+  source,
+  meta,
+}: {
+  source: any;
+  meta: { label: string; color: string; bg: string; border: string };
+}) {
+  const { t } = useT();
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const updateVar = useUpdateSessionVariable();
+  const deleteVar = useDeleteSessionVariable();
+  const [editing, setEditing] = useState(false);
+  const [draftName, setDraftName] = useState<string>(source.name);
+
+  const invalidate = () => {
+    // Variable name changes ripple into generated models and the live model
+    // — invalidate those query keys too so a rename doesn't leave stale names
+    // on already-rendered model cards.
+    queryClient.invalidateQueries({ queryKey: getListSessionVariablesQueryKey(source.sessionId) });
+    queryClient.invalidateQueries({ queryKey: getGetVariableGraphQueryKey(source.sessionId) });
+    queryClient.invalidateQueries({ queryKey: getListSessionModelsQueryKey(source.sessionId) });
+    queryClient.invalidateQueries({ queryKey: getGetLiveModelQueryKey(source.sessionId) });
+  };
+
+  const saveRename = () => {
+    const name = draftName.trim();
+    if (!name || name === source.name) { setEditing(false); return; }
+    updateVar.mutate(
+      { id: source.sessionId, variableId: source.id, data: { name } },
+      {
+        onSuccess: () => { setEditing(false); invalidate(); toast({ title: "已更新变量名称" }); },
+        onError: () => toast({ title: "更新失败", variant: "destructive" }),
+      },
+    );
+  };
+
+  const handleDelete = () => {
+    if (!window.confirm(`确定删除「${source.name}」?(仅删除该论文的这一条提取,不影响其他论文)`)) return;
+    deleteVar.mutate(
+      { id: source.sessionId, variableId: source.id },
+      {
+        onSuccess: () => { invalidate(); toast({ title: "已删除变量" }); },
+        onError: () => toast({ title: "删除失败", variant: "destructive" }),
+      },
+    );
+  };
+
+  return (
+    <div className={`rounded-md border ${meta.border} ${meta.bg} p-3`}>
+      <div className="flex items-start gap-2 mb-2">
+        <Quote className={`w-3.5 h-3.5 mt-0.5 shrink-0 ${meta.color}`} />
+        <p className={`text-xs leading-relaxed ${meta.color} italic flex-1`}>{source.citationText}</p>
+        {!editing ? (
+          <div className="shrink-0 flex items-center gap-1">
+            <button
+              type="button"
+              data-testid={`button-rename-variable-${source.id}`}
+              onClick={() => { setDraftName(source.name); setEditing(true); }}
+              title="重命名"
+              className="text-muted-foreground hover:text-foreground"
+            >
+              <Pencil className="w-3.5 h-3.5" />
+            </button>
+            <button
+              type="button"
+              data-testid={`button-delete-variable-${source.id}`}
+              onClick={handleDelete}
+              disabled={deleteVar.isPending}
+              title="删除"
+              className="text-muted-foreground hover:text-red-600 disabled:opacity-50"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        ) : (
+          <div className="shrink-0 flex items-center gap-1">
+            <input
+              type="text"
+              value={draftName}
+              onChange={(e) => setDraftName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") saveRename(); if (e.key === "Escape") setEditing(false); }}
+              data-testid={`input-rename-variable-${source.id}`}
+              autoFocus
+              className="text-xs rounded border border-input bg-background px-2 py-0.5 w-40"
+            />
+            <button
+              type="button"
+              data-testid={`button-confirm-rename-${source.id}`}
+              onClick={saveRename}
+              disabled={updateVar.isPending}
+              className="text-emerald-700 hover:text-emerald-900 disabled:opacity-50"
+            >
+              {updateVar.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+            </button>
+            <button
+              type="button"
+              onClick={() => setEditing(false)}
+              className="text-muted-foreground hover:text-foreground"
+            >
+              <XIcon className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+      </div>
+      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        <BookOpen className="w-3.5 h-3.5 shrink-0" />
+        <span className="font-medium">{source.paperTitle}</span>
+        {source.paperAuthors?.length > 0 && (
+          <span>· {source.paperAuthors.slice(0, 2).join(", ")}{source.paperAuthors.length > 2 ? " et al." : ""}</span>
+        )}
+        {source.paperYear && <span>· {source.paperYear}</span>}
+      </div>
     </div>
   );
 }

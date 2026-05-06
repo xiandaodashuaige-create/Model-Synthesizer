@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { eq, desc, isNotNull, sql } from "drizzle-orm";
+import { eq, and, desc, isNotNull, sql } from "drizzle-orm";
 import {
   db,
   researchModelsTable,
@@ -377,11 +377,17 @@ router.post("/sessions/:id/models/generate", async (req, res): Promise<void> => 
     ? `\n\nSHARED VARIABLES (good join points for EXTEND / SWAP_MEDIATOR / PARALLEL_MEDIATORS):\n${sharedVariables}`
     : "";
 
-  // Learning loop.
+  // Learning loop. SCOPED TO THIS SESSION — never bleed selection preferences
+  // across projects (different topics → different correct answers; pulling
+  // global feedback would push every new project toward whatever the most
+  // recent unrelated user happened to pick).
   const pastFeedback = await db
     .select()
     .from(generationFeedbackTable)
-    .where(isNotNull(generationFeedbackTable.selectedModelSnapshot))
+    .where(and(
+      eq(generationFeedbackTable.sessionId, sessionId),
+      isNotNull(generationFeedbackTable.selectedModelSnapshot),
+    ))
     .orderBy(desc(generationFeedbackTable.updatedAt))
     .limit(8);
 
@@ -457,7 +463,7 @@ OUTPUT FORMAT — return ONLY a JSON array, no markdown:
     "operator": "EXTEND|INSERT_MODERATOR|PARALLEL_MEDIATORS|SWAP_MEDIATOR|THEORY_GRAFT",
     "secondaryOperator": "EXTEND|INSERT_MODERATOR|PARALLEL_MEDIATORS|SWAP_MEDIATOR|THEORY_GRAFT (must differ from operator)",
     "basePaperTags": ["P1", "P2", "P3"],
-    "backbone": "SOR|TAM|UTAUT|ELM|TPB|TRUST_TRANSFER|PARASOCIAL|FLOW|NONE",
+    "backbone": "${[...THEORY_BACKBONES.map((b) => b.id), "NONE"].join("|")}",
     "name": "concise model name",
     "description": "1-2 sentences",
     "rationale": "[OPERATOR: ...] [BASE: ...] [BACKBONE: ...] then 3-5 sentences explaining HOW the operator was applied (which edge from which paper was extended/grafted/swapped/etc.) and why this is theoretically coherent",
@@ -572,6 +578,55 @@ OUTPUT FORMAT — return ONLY a JSON array, no markdown:
     const ALLOWED_BACKBONES = new Set([...THEORY_BACKBONES.map((b) => b.id), "NONE"]);
     const validVarIds = new Set(variables.map((v) => v.id));
     const validPaperIds = new Set(papers.map((p) => p.id));
+
+    // P0-5: build a fast lookup of formal hypotheses by (paperId, hypothesisId).
+    // The AI is instructed (rule 13) to set evidenceHypothesisId when an edge
+    // matches a row in the formal hypotheses pool — but it occasionally invents
+    // ids ("H7" when the paper only declares H1..H4) or attributes a real id to
+    // the WRONG paper. We can't hard-fail the model for that (the rest of the
+    // edge data is usable), but we MUST scrub the bogus id so downstream
+    // displays don't show a fake "[H7]" badge that links nowhere.
+    type HypRow = { paperId: number; hypothesisId: string; relationship: string };
+    const hypByKey = new Map<string, HypRow>();
+    for (const h of allHyps) {
+      hypByKey.set(`${h.paperId}|${h.hypothesisId}`, {
+        paperId: h.paperId,
+        hypothesisId: h.hypothesisId,
+        relationship: h.relationship,
+      });
+    }
+    // Scrub bogus evidenceHypothesisId on every generated edge BEFORE validation
+    // — keep it side-effecty (we mutate in place) so the rest of the pipeline,
+    // including the literature-review prompt builder, sees the cleaned values.
+    let scrubbedHypIds = 0;
+    for (const m of generated) {
+      if (!Array.isArray(m?.edges)) continue;
+      for (const e of m.edges) {
+        const id = (e as { evidenceHypothesisId?: string | null }).evidenceHypothesisId;
+        if (!id || !id.trim()) continue;
+        const key = `${e.evidencePaperId}|${id.trim()}`;
+        const row = hypByKey.get(key);
+        if (!row) {
+          // Either the id doesn't exist for that paper or the AI attached a
+          // real id from another paper. Null it out, keep evidenceCitationText.
+          (e as { evidenceHypothesisId?: string | null }).evidenceHypothesisId = null;
+          scrubbedHypIds++;
+          continue;
+        }
+        // Relationship sanity: positive/negative on the edge must agree with
+        // the hypothesis's own direction (moderates/mediates aren't directly
+        // comparable — leave those alone).
+        if ((e.relationship === "positive" || e.relationship === "negative") &&
+            (row.relationship === "positive" || row.relationship === "negative") &&
+            row.relationship !== e.relationship) {
+          (e as { evidenceHypothesisId?: string | null }).evidenceHypothesisId = null;
+          scrubbedHypIds++;
+        }
+      }
+    }
+    if (scrubbedHypIds > 0) {
+      req.log.warn({ scrubbedHypIds }, "scrubbed bogus evidenceHypothesisId values from generated models");
+    }
 
     // When the user provides a custom prompt, they may explicitly want a focused/narrow model
     // (e.g. a clean S-O-R chain on one IV). Forcing ≥3 source papers in that case rejects every
@@ -835,13 +890,16 @@ router.get("/sessions/:id/learning-stats", async (req, res): Promise<void> => {
     res.status(400).json({ error: params.error.message });
     return;
   }
+  // Stats are PER-SESSION — the "learning rounds" badge in the UI is meant to
+  // reflect how much this project has been refined, not a global counter.
   const [row] = await db
     .select({
       total: sql<number>`count(*)::int`,
       withSel: sql<number>`count(*) filter (where ${generationFeedbackTable.selectedModelSnapshot} is not null)::int`,
       withEdits: sql<number>`count(*) filter (where ${generationFeedbackTable.userEditedSnapshot} is not null)::int`,
     })
-    .from(generationFeedbackTable);
+    .from(generationFeedbackTable)
+    .where(eq(generationFeedbackTable.sessionId, params.data.id));
   res.json({
     totalFeedback: row?.total ?? 0,
     withSelections: row?.withSel ?? 0,

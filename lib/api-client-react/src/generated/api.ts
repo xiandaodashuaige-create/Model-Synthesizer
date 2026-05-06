@@ -26,6 +26,8 @@ import type {
   ChatModelAssistant200,
   ChatModelAssistantBody,
   CreateSessionBody,
+  DeleteImageBlocklistEntry200,
+  DeleteSessionVariable200,
   ErrorResponse,
   EvidenceApplyRequest,
   EvidenceSearchRequest,
@@ -58,6 +60,8 @@ import type {
   UpdateLiveModelNodePositionBody,
   UpdateModelBody,
   UpdateSessionBody,
+  UpdateSessionVariableBody,
+  UploadSessionPaperPdfBody,
   Variable,
   VariableGraph,
 } from "./api.schemas";
@@ -1347,6 +1351,183 @@ export function useListSessionVariables<
 }
 
 /**
+ * @summary Upload a PDF and add it to the session as a paper. Extracts metadata via DOI lookup or AI fallback; full text is stored for downstream variable extraction.
+ */
+export const getUploadSessionPaperPdfUrl = (id: number) => {
+  return `/api/sessions/${id}/papers/upload-pdf`;
+};
+
+export const uploadSessionPaperPdf = async (
+  id: number,
+  uploadSessionPaperPdfBody: UploadSessionPaperPdfBody,
+  options?: RequestInit,
+): Promise<Paper> => {
+  const formData = new FormData();
+  formData.append(`file`, uploadSessionPaperPdfBody.file);
+
+  return customFetch<Paper>(getUploadSessionPaperPdfUrl(id), {
+    ...options,
+    method: "POST",
+    body: formData,
+  });
+};
+
+export const getUploadSessionPaperPdfMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof uploadSessionPaperPdf>>,
+    TError,
+    { id: number; data: BodyType<UploadSessionPaperPdfBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof uploadSessionPaperPdf>>,
+  TError,
+  { id: number; data: BodyType<UploadSessionPaperPdfBody> },
+  TContext
+> => {
+  const mutationKey = ["uploadSessionPaperPdf"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof uploadSessionPaperPdf>>,
+    { id: number; data: BodyType<UploadSessionPaperPdfBody> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return uploadSessionPaperPdf(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UploadSessionPaperPdfMutationResult = NonNullable<
+  Awaited<ReturnType<typeof uploadSessionPaperPdf>>
+>;
+export type UploadSessionPaperPdfMutationBody =
+  BodyType<UploadSessionPaperPdfBody>;
+export type UploadSessionPaperPdfMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Upload a PDF and add it to the session as a paper. Extracts metadata via DOI lookup or AI fallback; full text is stored for downstream variable extraction.
+ */
+export const useUploadSessionPaperPdf = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof uploadSessionPaperPdf>>,
+    TError,
+    { id: number; data: BodyType<UploadSessionPaperPdfBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof uploadSessionPaperPdf>>,
+  TError,
+  { id: number; data: BodyType<UploadSessionPaperPdfBody> },
+  TContext
+> => {
+  return useMutation(getUploadSessionPaperPdfMutationOptions(options));
+};
+
+/**
+ * @summary List all blocked image source URLs for this session.
+ */
+export const getListImageBlocklistUrl = (id: number) => {
+  return `/api/sessions/${id}/image-blocklist`;
+};
+
+export const listImageBlocklist = async (
+  id: number,
+  options?: RequestInit,
+): Promise<ImageBlocklistEntry[]> => {
+  return customFetch<ImageBlocklistEntry[]>(getListImageBlocklistUrl(id), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListImageBlocklistQueryKey = (id: number) => {
+  return [`/api/sessions/${id}/image-blocklist`] as const;
+};
+
+export const getListImageBlocklistQueryOptions = <
+  TData = Awaited<ReturnType<typeof listImageBlocklist>>,
+  TError = ErrorType<unknown>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listImageBlocklist>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListImageBlocklistQueryKey(id);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listImageBlocklist>>
+  > = ({ signal }) => listImageBlocklist(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof listImageBlocklist>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListImageBlocklistQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listImageBlocklist>>
+>;
+export type ListImageBlocklistQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List all blocked image source URLs for this session.
+ */
+
+export function useListImageBlocklist<
+  TData = Awaited<ReturnType<typeof listImageBlocklist>>,
+  TError = ErrorType<unknown>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listImageBlocklist>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListImageBlocklistQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
  * @summary Block an image (by sourceUrl) from future searches in this session.
  */
 export const getAddImageBlocklistEntryUrl = (id: number) => {
@@ -1432,6 +1613,286 @@ export const useAddImageBlocklistEntry = <
   TContext
 > => {
   return useMutation(getAddImageBlocklistEntryMutationOptions(options));
+};
+
+/**
+ * @summary Remove a previously blocked image so it can appear in search results again.
+ */
+export const getDeleteImageBlocklistEntryUrl = (
+  id: number,
+  entryId: number,
+) => {
+  return `/api/sessions/${id}/image-blocklist/${entryId}`;
+};
+
+export const deleteImageBlocklistEntry = async (
+  id: number,
+  entryId: number,
+  options?: RequestInit,
+): Promise<DeleteImageBlocklistEntry200> => {
+  return customFetch<DeleteImageBlocklistEntry200>(
+    getDeleteImageBlocklistEntryUrl(id, entryId),
+    {
+      ...options,
+      method: "DELETE",
+    },
+  );
+};
+
+export const getDeleteImageBlocklistEntryMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteImageBlocklistEntry>>,
+    TError,
+    { id: number; entryId: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deleteImageBlocklistEntry>>,
+  TError,
+  { id: number; entryId: number },
+  TContext
+> => {
+  const mutationKey = ["deleteImageBlocklistEntry"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deleteImageBlocklistEntry>>,
+    { id: number; entryId: number }
+  > = (props) => {
+    const { id, entryId } = props ?? {};
+
+    return deleteImageBlocklistEntry(id, entryId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DeleteImageBlocklistEntryMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deleteImageBlocklistEntry>>
+>;
+
+export type DeleteImageBlocklistEntryMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Remove a previously blocked image so it can appear in search results again.
+ */
+export const useDeleteImageBlocklistEntry = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteImageBlocklistEntry>>,
+    TError,
+    { id: number; entryId: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof deleteImageBlocklistEntry>>,
+  TError,
+  { id: number; entryId: number },
+  TContext
+> => {
+  return useMutation(getDeleteImageBlocklistEntryMutationOptions(options));
+};
+
+/**
+ * @summary Manually rename, retype, or rewrite the definition of a single variable. Other downstream views (graph, models, live model) read on demand and will reflect the change.
+ */
+export const getUpdateSessionVariableUrl = (id: number, variableId: number) => {
+  return `/api/sessions/${id}/variables/${variableId}`;
+};
+
+export const updateSessionVariable = async (
+  id: number,
+  variableId: number,
+  updateSessionVariableBody: UpdateSessionVariableBody,
+  options?: RequestInit,
+): Promise<Variable> => {
+  return customFetch<Variable>(getUpdateSessionVariableUrl(id, variableId), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(updateSessionVariableBody),
+  });
+};
+
+export const getUpdateSessionVariableMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateSessionVariable>>,
+    TError,
+    {
+      id: number;
+      variableId: number;
+      data: BodyType<UpdateSessionVariableBody>;
+    },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateSessionVariable>>,
+  TError,
+  { id: number; variableId: number; data: BodyType<UpdateSessionVariableBody> },
+  TContext
+> => {
+  const mutationKey = ["updateSessionVariable"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateSessionVariable>>,
+    {
+      id: number;
+      variableId: number;
+      data: BodyType<UpdateSessionVariableBody>;
+    }
+  > = (props) => {
+    const { id, variableId, data } = props ?? {};
+
+    return updateSessionVariable(id, variableId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateSessionVariableMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateSessionVariable>>
+>;
+export type UpdateSessionVariableMutationBody =
+  BodyType<UpdateSessionVariableBody>;
+export type UpdateSessionVariableMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Manually rename, retype, or rewrite the definition of a single variable. Other downstream views (graph, models, live model) read on demand and will reflect the change.
+ */
+export const useUpdateSessionVariable = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateSessionVariable>>,
+    TError,
+    {
+      id: number;
+      variableId: number;
+      data: BodyType<UpdateSessionVariableBody>;
+    },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateSessionVariable>>,
+  TError,
+  { id: number; variableId: number; data: BodyType<UpdateSessionVariableBody> },
+  TContext
+> => {
+  return useMutation(getUpdateSessionVariableMutationOptions(options));
+};
+
+/**
+ * @summary Delete a single variable from the session.
+ */
+export const getDeleteSessionVariableUrl = (id: number, variableId: number) => {
+  return `/api/sessions/${id}/variables/${variableId}`;
+};
+
+export const deleteSessionVariable = async (
+  id: number,
+  variableId: number,
+  options?: RequestInit,
+): Promise<DeleteSessionVariable200> => {
+  return customFetch<DeleteSessionVariable200>(
+    getDeleteSessionVariableUrl(id, variableId),
+    {
+      ...options,
+      method: "DELETE",
+    },
+  );
+};
+
+export const getDeleteSessionVariableMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteSessionVariable>>,
+    TError,
+    { id: number; variableId: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deleteSessionVariable>>,
+  TError,
+  { id: number; variableId: number },
+  TContext
+> => {
+  const mutationKey = ["deleteSessionVariable"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deleteSessionVariable>>,
+    { id: number; variableId: number }
+  > = (props) => {
+    const { id, variableId } = props ?? {};
+
+    return deleteSessionVariable(id, variableId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DeleteSessionVariableMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deleteSessionVariable>>
+>;
+
+export type DeleteSessionVariableMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Delete a single variable from the session.
+ */
+export const useDeleteSessionVariable = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteSessionVariable>>,
+    TError,
+    { id: number; variableId: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof deleteSessionVariable>>,
+  TError,
+  { id: number; variableId: number },
+  TContext
+> => {
+  return useMutation(getDeleteSessionVariableMutationOptions(options));
 };
 
 /**
