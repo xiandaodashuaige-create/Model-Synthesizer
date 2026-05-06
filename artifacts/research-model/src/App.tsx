@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { Switch, Route, Router as WouterRouter } from "wouter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -44,6 +45,18 @@ function Router() {
 function LoginGate() {
   const { t } = useT();
   const { isLoading, isAuthenticated, login } = useAuth();
+  // Listen for global 401 events dispatched by the api-client when any request
+  // comes back Unauthorized. Without this, an expired OIDC session silently
+  // breaks every card on the page (model generation, AI usage, etc.) with no
+  // way for the user to recover except a manual page reload.
+  const [sessionExpired, setSessionExpired] = useState(false);
+  useEffect(() => {
+    function onUnauthorized() {
+      setSessionExpired(true);
+    }
+    window.addEventListener("api:unauthorized", onUnauthorized);
+    return () => window.removeEventListener("api:unauthorized", onUnauthorized);
+  }, []);
   if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background text-muted-foreground">
@@ -60,7 +73,38 @@ function LoginGate() {
       </div>
     );
   }
-  return <Router />;
+  return (
+    <>
+      <Router />
+      {sessionExpired && (
+        <div
+          className="fixed inset-0 z-[1000] bg-black/40 backdrop-blur-sm flex items-center justify-center px-4"
+          data-testid="overlay-session-expired"
+        >
+          <div className="bg-background border border-border rounded-lg shadow-xl max-w-md w-full p-6 space-y-4">
+            <h2 className="font-serif font-bold text-xl text-foreground">
+              {t("auth.expired.title" as any)}
+            </h2>
+            <p className="text-sm text-muted-foreground">
+              {t("auth.expired.body" as any)}
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="outline"
+                onClick={() => setSessionExpired(false)}
+                data-testid="button-dismiss-session-expired"
+              >
+                {t("auth.expired.dismiss" as any)}
+              </Button>
+              <Button onClick={login} data-testid="button-relogin">
+                {t("auth.expired.relogin" as any)}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
 }
 
 function App() {

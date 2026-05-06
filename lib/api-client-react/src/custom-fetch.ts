@@ -363,9 +363,31 @@ export async function customFetch<T = unknown>(
   const response = await fetch(input, { ...init, method, headers });
 
   if (!response.ok) {
+    // Global 401 hook: when the server says "Unauthorized" (typically because
+    // the OIDC access token expired and the silent refresh-token grant
+    // failed), dispatch a single browser-level event so the host app can
+    // show a "please log in again" overlay instead of letting every card on
+    // the page render its own silent "失败" state. Throttled so a burst of
+    // queued queries doesn't fire dozens of events.
+    if (response.status === 401) {
+      notifyUnauthorized(requestInfo);
+    }
     const errorData = await parseErrorBody(response, method);
     throw new ApiError(response, errorData, requestInfo);
   }
 
   return (await parseSuccessBody(response, responseType, requestInfo)) as T;
+}
+
+let _lastUnauthorizedAt = 0;
+function notifyUnauthorized(requestInfo: { method: string; url: string }): void {
+  if (typeof window === "undefined" || typeof CustomEvent === "undefined") return;
+  const now = Date.now();
+  if (now - _lastUnauthorizedAt < 3000) return;
+  _lastUnauthorizedAt = now;
+  try {
+    window.dispatchEvent(new CustomEvent("api:unauthorized", { detail: requestInfo }));
+  } catch {
+    // ignore — older browsers without CustomEvent constructor
+  }
 }
