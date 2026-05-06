@@ -1,0 +1,185 @@
+一、图片搜索与模型图发现功能的强化建议
+当前问题诊断
+从 model-assistant.ts 来看，你的图片搜索流程是：用户中文主题 → AI扩展为3-5个英文查询词 → SerpApi/Brave搜索图片 → Hard Negative过滤 → 学术域名加分 → AI相关性分类（40张候选）。这个链条的主要弱点在于搜索源太依赖通用搜索引擎的学术图片索引，而学术概念模型图在Google Images的覆盖本身就很稀疏。
+具体优化建议
+1.1 建立"论文内图提取"作为图片搜索的主数据源
+现状：你只搜互联网上的图片，没有利用用户已添加到项目中的论文本身。
+建议：
+当用户上传PDF或添加OpenAlex论文后，从PDF中提取图片（pdf.js 或 pdf2image 可以渲染PDF页面为图片，然后用图像分类模型或GPT-4V筛选出包含"框图+箭头"的页面）。
+对OpenAlex有PDF链接的论文，下载PDF后自动提取图表页。
+这样图片库的来源就从"互联网上零散的学术图"变成了"用户研究主题相关论文中的原生模型图"，相关性会大幅提升。
+1.2 搜索词扩展策略优化
+现状：AI扩展查询词时只是简单翻译，然后统一拼接 conceptual model figure。
+建议：
+构建一个按学科细化的搜索词模板库。例如：
+营销/消费者行为："structural model" OR "conceptual framework" OR "hypothesized model" OR "path diagram"
+心理学/组织行为："mediation model" OR "moderation model" OR "theoretical model"
+信息系统："research model" OR "TAM extension" OR "UTAUT model"
+扩展查询词时，结合用户已提取的变量名（如perceived trust、purchase intention）和变量类型（如mediator、moderator）来构造更精准的查询，而不是只用主题词。
+示例："AI streamer" "perceived trust" "purchase intention" conceptual model 会比单纯的 "AI streamer" conceptual model figure 精准得多。
+1.3 多源图片聚合，不只是Google/Brave
+建议：
+Semantic Scholar API：可以搜到论文的figures（部分开放）。
+PubMed Central (PMC)：对医学/健康相关研究，PMC的图是公开可索引的。
+OpenAlex + Unpaywall PDF抓取：对返回的论文批量抓取PDF首页和图表页，提取其中的图。
+Google Scholar图片：虽然没官方API，但可以通过特定搜索参数强化学术图发现。
+1.4 筛选逻辑从"标题分类"升级到"内容感知"
+现状：你的AI筛选只基于图片的title和sourceDomain，没有看图片内容本身。
+建议：
+对抓取到的候选图片，用GPT-4V/多模态模型进行内容识别，判断它是否真的是"变量-路径图"（boxes-and-arrows），而不是只看标题。
+增加用户反馈闭环：用户可以对搜索结果点"相关/不相关"，记录到数据库中，后续用于训练/调整你的AI筛选prompt。
+增加按模型结构筛选：允许用户指定"我只看包含中介变量的模型图"或"只看有调节变量的"，搜索时结合变量类型过滤。
+二、模型组合逻辑的优化建议（核心痛点）
+当前问题诊断
+从 models.ts 来看，你的模型生成完全依赖GPT-5.4的"创意"，虽然有STRUCTURAL_OPERATORS和THEORY_BACKBONES约束，但本质上还是AI自由组合。问题体现在：
+理论骨架库太小且偏门：只有8个骨架（TAM/UTAUT/SOR/ELM/TPB/TRUST_TRANSFER/PARASOCIAL/FLOW），全是技术接受/消费者行为/直播领域，对大多数社科研究方向（如组织行为、战略管理、教育心理、健康传播）覆盖不足。
+变量关系缺乏历史验证数据库：系统不知道"变量A→变量B"这个关系在文献中是否被实证支持过，也不知道什么中间变量 commonly mediates 这个关系。
+组合逻辑过于依赖AI的"理解"：AI有时会把不相关的变量硬凑在一起，因为prompt里的约束是"软约束"（用文字描述规则），不是数据层面的硬约束。
+具体优化建议
+2.1 大幅扩展并重构"理论骨架库"
+现状：theoryTemplates.ts里8个骨架，shape用字符串描述，AI靠理解这些字符串来组合。
+建议：
+将骨架库扩展到至少30-50个常见理论，覆盖主流社科领域：
+组织行为：Job Demands-Resources (JD-R), Conservation of Resources, Social Exchange Theory, Leader-Member Exchange
+心理学：Self-Determination Theory, Social Cognitive Theory, Attachment Theory
+营销/传播：Brand Equity, Customer Engagement, Uses and Gratifications, Technology-Organization-Environment (TOE)
+战略管理：Resource-Based View, Dynamic Capabilities, Institutional Theory
+教育学：Community of Inquiry, TPACK, Cognitive Load Theory
+每个骨架不要只存"shape字符串"，而是存结构化的模板：
+TypeScript
+复制
+interface BackboneTemplate {
+  id: string;
+  name: string;
+  slots: {
+    independent: { min: number; max: number; canonicalExamples: string[] };
+    mediator?: { min: number; max: number; position: "serial" | "parallel" };
+    moderator?: { min: number; max: number; moderates: "main-effect" | "mediation-path" | "both" };
+    dependent: { min: number; max: number; canonicalExamples: string[] };
+  };
+  canonicalPaths: Array<{ from: string; to: string; via?: string; evidence: string }>;
+}
+这样组合模型时，AI是"填空"而不是"自由创作"，结构天然符合经典论文范式。
+2.2 建立"跨论文变量关系图谱"（核心增强）
+现状：variables.ts里的variable-graph只是简单把同一篇论文的IV连到DV/Mediator，没有跨论文的知识。
+建议：
+构建一个全局关系知识库（可以放在数据库里，也可以定期从Semantic Scholar/OpenAlex批量构建）：
+记录"变量X → 变量Y"这个关系在哪些论文中被验证过
+记录"变量X → 变量M → 变量Y"常见的中介链条（如perceived usefulness → attitude → behavioral intention）
+记录"变量W moderates X→Y"的常见调节变量
+实现方式：在变量提取阶段，不只提取变量，还要让AI提取论文中的假设结构（H1: X→Y, H2: X→M→Y, H3: W moderates H1），并存储为hypotheses表。
+生成新模型时，系统先查这个知识库，只推荐有文献支持的变量组合，而不是让AI随便连。
+2.3 增加"学科领域-变量组合"的推荐引擎
+建议：
+维护一个按研究领域分类的常见变量组合库：
+如"直播电商"领域常见：主播特征 → 准社会互动 → 购买意愿，心流体验作为中介，感知信任作为中介
+如"远程办公"领域常见：工作自主性 → 心理安全感 → 工作绩效，领导支持作为调节
+当用户选择了研究方向/主题后，系统优先推荐这些该领域高频率出现的变量组合，并标注"该组合在已有文献中出现X次"。
+这可以让新生成的模型从"AI乱想"变成"基于领域惯例的推荐"。
+2.4 强化操作符的数据级约束
+现状：EXTEND要求共享变量，INSERT_MODERATOR要求有moderator，但这些约束在prompt里是文字描述，AI经常执行不到位。
+建议：
+把操作符的执行逻辑部分程序化，不要全靠AI：
+EXTEND：系统层面先找出哪些论文有共享变量（你已经做了sharedVariables），然后强制要求AI选择这些共享变量作为连接点。
+INSERT_MODERATOR：系统先筛选出哪些论文有moderator类型变量，哪些论文有IV→DV关系，然后只给AI提供"可插入"的候选对。
+PARALLEL_MEDIATORS：系统检查是否存在两个不同的mediator都能连接同一个IV-DV对，且各自有文献支持。
+具体做法：在调用AI生成模型前，先执行算法筛选出合法的变量组合候选池，然后让AI在这个池子里选择，而不是让AI从所有变量里自由发挥。
+2.5 增加"模型结构预检"机制
+建议：
+生成模型后，增加一层结构合理性检查（不只是你现在做的字段校验）：
+检查模型是否符合某个经典理论骨架的结构（如TAM必须有2个IV→1个Mediator→1个DV）
+检查中介链条的长度是否合理（社科论文一般1-2层中介，3层以上很罕见）
+检查调节变量的位置是否合理（不能调节一个本身不存在的主效应）
+如果不符合，自动标记"结构偏离常见范式，请谨慎参考"。
+三、新模型参考依据的展示与溯源强化
+当前问题诊断
+从 models.ts 看，每个edge有：
+TypeScript
+复制
+interface ModelEdge {
+  fromVariableId, toVariableId, relationship,
+  evidencePaperId, evidencePaperTitle, evidencePaperAuthors,
+  evidencePaperYear, evidenceCitationText
+}
+问题：
+evidenceCitationText只是变量提取时的"citation sentence"，不一定是这个变量关系（A→B）本身的假设描述。
+没有记录假设编号（如H1a, H2），没有记录效应值（β=0.34, p<0.001）。
+前端展示时只是简单列出这些字段，没有形成直观的"引用证据面板"。
+具体优化建议
+3.1 变量提取阶段增加"假设级提取"
+现状：variables.ts的prompt只要求提取变量，不要求提取假设结构。
+建议：
+修改变量提取prompt，要求AI同时提取论文的假设结构：
+JSON
+复制
+{
+  "hypotheses": [
+    {
+      "id": "H1",
+      "from": "Perceived Usefulness",
+      "to": "Behavioral Intention",
+      "relationship": "positive",
+      "evidence": "We hypothesize that perceived usefulness positively affects behavioral intention (H1).",
+      "effectSize": "β = 0.45, p < 0.001"  // 如果有
+    }
+  ]
+}
+存储到新的hypotheses表中，这样变量关系就有精确的论文出处了。
+3.2 模型Edge的溯源信息增强
+现状：evidenceCitationText是模糊的一段文字。
+建议：
+Edge的数据结构增加以下字段：
+TypeScript
+复制
+interface ModelEdge {
+  // ...现有字段...
+  evidenceHypothesisId?: string;      // "H2a"
+  evidenceOriginalText: string;       // 论文中的原句
+  evidenceLocation?: { page?: number; section?: string }; // 在PDF中的位置
+  evidenceEffectSize?: string;        // "β=0.34, p<0.01"
+  evidenceRelationshipType: "direct" | "mediated" | "moderated" | "from_theory";
+  sourceModelSnapshot?: {            // 原论文模型中这个关系的截图/描述
+    originalFrom: string;
+    originalTo: string;
+    originalSign: string;
+  };
+}
+3.3 前端展示层增加"证据卡片"和"溯源视图"
+建议：
+在模型图上点击任意一条箭头（edge），弹出证据卡片：
+显示：这条关系来自哪篇论文（作者，年份，标题）
+显示：论文中的原话（高亮显示）
+显示：如果是基于某个操作符（如EXTEND）生成的，说明"这条边来自P1的H1，通过EXTEND操作与P2的M相连"
+显示：如果是AI"推断"的关系（没有直接文献支持），用橙色警告标签标明"此关系为系统推断，请补充文献验证"
+增加模型溯源总览面板：
+列出模型中每一条边的"证据等级"：
+绿色：直接来自某篇论文的假设，有原文支持
+蓝色：来自操作符组合（如EXTEND），有推导逻辑
+橙色：AI推断，缺乏直接文献支持
+3.4 生成prompt中强化"逐边引用"约束
+现状：models.ts的prompt只笼统要求evidenceCitationText是verbatim sentence。
+建议：
+修改生成prompt，要求AI对每一条边都明确标注：
+plain
+复制
+对于edge "A -> B":
+- 直接来源论文：P1 (Author, Year)
+- 来源假设：H1
+- 原句引用："We hypothesize that A positively affects B (H1)."
+- 操作符应用：这条边通过EXTEND操作符从P1获取，并与P2的C相连
+这样生成的模型天然带有完整的溯源信息，而不是事后"补"上去的。
+3.5 增加"参考文献自动生成"
+建议：
+系统根据模型中使用到的所有论文，自动生成一个APA格式的参考文献列表。
+这个列表可以直接复制到用户的论文里，作为"本章模型构建的文献基础"。
+同时生成文献来源统计："本模型基于8篇核心文献构建，其中直接引用假设关系12条，推断关系3条"。
+四、其他辅助性优化建议
+论文搜索增强：
+papers.ts目前只搜OpenAlex，建议增加Semantic Scholar作为并行源（对CS/AI领域覆盖更好），PubMed（医学），ERIC（教育）。
+搜索时增加"必含变量名"过滤：用户可以选择"只搜包含变量X的论文"，这样找到的论文与后续模型组合更相关。
+变量去重与对齐：
+不同论文可能用不同名称指同一个变量（如perceived usefulness和perceived utility）。建议增加变量对齐（Entity Resolution）功能，用AI判断两个变量名是否是同一概念，合并后统一引用。
+模型版本管理：
+当前每次生成会删除旧模型（db.delete(researchModelsTable).where(eq(...sessionId))）。建议保留历史版本，让用户可以对比不同版本的模型演变。
+用户自定义操作符：
+允许用户保存自己常用的操作符组合（如"我的领域常用链式中介"），形成个人/团队的模板库。
