@@ -20,6 +20,58 @@ import { useToast } from "@/hooks/use-toast";
 import { useT } from "@/lib/i18n";
 import { EditableModelGraph, type CanvasNode, type CanvasEdge, type VariablePoolEntry } from "@/components/editable-model-graph";
 import { EvidenceMatchDialog } from "@/components/evidence-match-dialog";
+import dagre from "@dagrejs/dagre";
+
+// Compute the effective on-canvas (x,y) for each live-model node so we can
+// number hypotheses (H1, H2…) in the same left-to-right reading order the
+// user actually sees. We mirror EditableModelGraph's autoLayout: prefer the
+// persisted positionX/Y; otherwise fall back to a dagre LR layout.
+function computeNodePositions(
+  nodes: Array<{ id: number; variableType: string; positionX: number | null; positionY: number | null }>,
+  edges: Array<{ fromVariableId: number; toVariableId: number }>,
+  variableIdToNodeId: Map<number, number>,
+): Map<number, { x: number; y: number }> {
+  const out = new Map<number, { x: number; y: number }>();
+  if (nodes.length === 0) return out;
+  const NODE_W = 180;
+  const NODE_H = 60;
+  const hasAnyPersisted = nodes.some((n) => typeof n.positionX === "number" && typeof n.positionY === "number");
+  if (hasAnyPersisted) {
+    // Use persisted positions where present; for the rest place them in a
+    // grid below the bounding box (same fallback as EditableModelGraph).
+    const pinned = nodes.filter((n) => typeof n.positionX === "number" && typeof n.positionY === "number");
+    const maxY = pinned.reduce((m, n) => Math.max(m, (n.positionY as number) + NODE_H), 0);
+    const minX = pinned.reduce((m, n) => Math.min(m, n.positionX as number), Infinity);
+    const baseX = Number.isFinite(minX) ? minX : 24;
+    let i = 0;
+    for (const n of nodes) {
+      if (typeof n.positionX === "number" && typeof n.positionY === "number") {
+        out.set(n.id, { x: n.positionX, y: n.positionY });
+      } else {
+        out.set(n.id, { x: baseX + (i % 4) * (NODE_W + 24), y: maxY + 40 + Math.floor(i / 4) * (NODE_H + 24) });
+        i++;
+      }
+    }
+    return out;
+  }
+  const typeRank: Record<string, number> = { independent: 0, mediator: 1, moderator: 2, dependent: 3 };
+  const g = new dagre.graphlib.Graph();
+  g.setGraph({ rankdir: "LR", nodesep: 36, ranksep: 110, marginx: 24, marginy: 24, ranker: "network-simplex" });
+  g.setDefaultEdgeLabel(() => ({}));
+  for (const n of nodes) g.setNode(String(n.id), { width: NODE_W, height: NODE_H, rank: typeRank[n.variableType] ?? 0 });
+  for (const e of edges) {
+    const from = variableIdToNodeId.get(e.fromVariableId);
+    const to = variableIdToNodeId.get(e.toVariableId);
+    if (from != null && to != null) g.setEdge(String(from), String(to));
+  }
+  dagre.layout(g);
+  for (const n of nodes) {
+    const dn = g.node(String(n.id)) as { x: number; y: number } | undefined;
+    if (dn) out.set(n.id, { x: dn.x - NODE_W / 2, y: dn.y - NODE_H / 2 });
+    else out.set(n.id, { x: 0, y: 0 });
+  }
+  return out;
+}
 
 const TYPE_COLORS: Record<string, string> = {
   independent: "#2563eb",
@@ -303,11 +355,38 @@ export default function LiveModelPage({ params }: { params?: { id: string } }) {
     positionX: n.positionX ?? null,
     positionY: n.positionY ?? null,
   }));
-  // Assign sequential H1, H2, … tags by edge order, mirroring the candidate
-  // model's `buildEdgeHTagMap`. Used in both the canvas badge and the
-  // relations list so the user can cross-reference the graph and the list.
+  // Sort edges by visual reading order (left-to-right, top-to-bottom) using
+  // each edge's source-node position, then target-node position. After the
+  // user re-edits the model, this re-numbers H1, H2, … so the labels on the
+  // graph and the rows in the "参考依据" list match the canvas the user sees.
+  const variableIdToNodeId = new Map<number, number>();
+  for (const n of nodes) variableIdToNodeId.set(n.variableId, n.id);
+  const positionByNodeId = computeNodePositions(
+    nodes.map((n) => ({ id: n.id, variableType: n.variableType, positionX: n.positionX ?? null, positionY: n.positionY ?? null })),
+    edges,
+    variableIdToNodeId,
+  );
+  const posOf = (variableId: number) => {
+    const nid = variableIdToNodeId.get(variableId);
+    if (nid == null) return { x: Number.POSITIVE_INFINITY, y: 0 };
+    return positionByNodeId.get(nid) ?? { x: Number.POSITIVE_INFINITY, y: 0 };
+  };
+  const sortedEdges = [...edges].sort((a, b) => {
+    const af = posOf(a.fromVariableId);
+    const bf = posOf(b.fromVariableId);
+    if (af.x !== bf.x) return af.x - bf.x;          // leftmost source first
+    if (af.y !== bf.y) return af.y - bf.y;          // then top source first
+    const at = posOf(a.toVariableId);
+    const bt = posOf(b.toVariableId);
+    if (at.x !== bt.x) return at.x - bt.x;          // then leftmost target
+    if (at.y !== bt.y) return at.y - bt.y;          // then top target
+    return a.id - b.id;                              // stable tiebreak
+  });
+  // Assign sequential H1, H2, … tags in the sorted reading order. Used in
+  // both the canvas badge and the relations list below so the user can
+  // cross-reference the graph and the list.
   const hTagByEdgeId = new Map<number, string>();
-  edges.forEach((e, i) => hTagByEdgeId.set(e.id, `H${i + 1}`));
+  sortedEdges.forEach((e, i) => hTagByEdgeId.set(e.id, `H${i + 1}`));
   const canvasEdges: CanvasEdge[] = edges.map((e) => ({
     id: String(e.id),
     fromVariableId: e.fromVariableId,
@@ -538,7 +617,7 @@ export default function LiveModelPage({ params }: { params?: { id: string } }) {
                 <div className="p-6 text-center text-sm text-muted-foreground">{t("live.edges.empty" as any)}</div>
               ) : (
                 <ul className="divide-y divide-border">
-                  {edges.map((e) => (
+                  {sortedEdges.map((e) => (
                     <li key={e.id} data-testid={`edge-row-${e.id}`} className="flex items-start gap-3 px-4 py-3 group">
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 text-sm">
