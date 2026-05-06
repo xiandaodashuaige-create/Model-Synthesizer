@@ -22,6 +22,17 @@ function LangSwitch() {
       </button>
       <button
         type="button"
+        onClick={() => setLang("zh-TW")}
+        data-testid="lang-zh-tw"
+        className={cn(
+          "px-2.5 py-1 rounded transition-colors",
+          lang === "zh-TW" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground",
+        )}
+      >
+        {t("nav.lang.zhTW" as any)}
+      </button>
+      <button
+        type="button"
         onClick={() => setLang("en")}
         data-testid="lang-en"
         className={cn(

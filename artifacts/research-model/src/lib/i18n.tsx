@@ -1,6 +1,10 @@
 import { createContext, useContext } from "react";
 
-export type Lang = "zh" | "en";
+// "zh-TW" = Traditional Chinese (Taiwan/HK readers). It does NOT have its own
+// dictionary entries; instead, the language provider runs the simplified-zh
+// strings through OpenCC's s2twp converter at lookup time. This keeps the
+// translation surface to maintain at one (zh + en) without a third copy.
+export type Lang = "zh" | "zh-TW" | "en";
 
 export const STORAGE_KEY = "rmb.lang";
 
@@ -530,7 +534,8 @@ const dict = {
     "brand.tagline": "From literature to a novel model, end-to-end with AI",
 
     "nav.sessions": "Sessions",
-    "nav.lang.zh": "中文",
+    "nav.lang.zh": "简体",
+    "nav.lang.zhTW": "繁體",
     "nav.lang.en": "English",
 
     "common.back": "Back",
