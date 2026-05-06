@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useChatModelAssistant, useSearchModelImages, useSearchModelPapers, useAddImageBlocklistEntry } from "@workspace/api-client-react";
-import { BookOpen, BookPlus, ChevronDown, ChevronUp, Download, ExternalLink, FileText, Heart, Image as ImageIcon, LayoutGrid, Loader2, MessageSquare, Paperclip, RefreshCw, Search, Send, Sparkles, Trash2, X } from "lucide-react";
+import { BookOpen, BookPlus, ChevronDown, ChevronUp, Download, ExternalLink, FileText, Heart, Image as ImageIcon, LayoutGrid, Loader2, MessageSquare, Paperclip, RefreshCw, RotateCcw, Search, Send, Sparkles, Trash2, X } from "lucide-react";
 import { useT } from "@/lib/i18n";
 
 type ImageHit = {
@@ -101,6 +101,11 @@ export function ModelAssistantChat({
   const [paperExpandedQueries, setPaperExpandedQueries] = useState<string[]>([]);
   const [paperPage, setPaperPage] = useState(1);
   const [paperHasMore, setPaperHasMore] = useState(false);
+  // Retry context — captures the last attempted query/page/raw for each lane
+  // so the user can hit "重试" without re-typing.
+  type RetryCtx = { query: string; page: number; raw: boolean; mode: SearchMode };
+  const [paperLastAttempt, setPaperLastAttempt] = useState<RetryCtx | null>(null);
+  const [imgLastAttempt, setImgLastAttempt] = useState<RetryCtx | null>(null);
 
   // Saved collection (per session, persisted in localStorage)
   const [saved, setSaved] = useState<SavedItem[]>([]);
@@ -201,6 +206,7 @@ export function ModelAssistantChat({
     setImgExpandedQueries([]);
     setImgProvider(null);
     const useRaw = opts?.raw ?? imgRawMode;
+    setImgLastAttempt({ query: trimmed, page, raw: useRaw, mode: opts?.mode ?? "images" });
     const reqId = ++imgReqRef.current;
     imageSearch.mutate(
       { id: sessionId, data: { query: trimmed, count: 12, raw: useRaw, page } },
@@ -234,6 +240,7 @@ export function ModelAssistantChat({
     setPaperError(null);
     setPaperExpandedQueries([]);
     const useRaw = opts?.raw ?? imgRawMode;
+    setPaperLastAttempt({ query: trimmed, page, raw: useRaw, mode: opts?.mode ?? "papers" });
     const reqId = ++paperReqRef.current;
     paperSearch.mutate(
       { id: sessionId, data: { query: trimmed, count: 10, raw: useRaw, page } },
@@ -748,7 +755,20 @@ export function ModelAssistantChat({
                   <Loader2 className="w-3.5 h-3.5 animate-spin" /> {t("models.assistant.searchImages.loading" as any)}
                 </div>
               )}
-              {imgError && <div className="text-xs text-red-700 bg-white rounded p-2 border border-red-200">{imgError}</div>}
+              {imgError && (
+                <div className="text-xs text-red-700 bg-white rounded p-2 border border-red-200 flex items-center justify-between gap-2">
+                  <span>{imgError}</span>
+                  {imgLastAttempt && !imageSearch.isPending && (
+                    <button
+                      type="button"
+                      onClick={() => runImageSearch(imgLastAttempt.query, { page: imgLastAttempt.page, raw: imgLastAttempt.raw, mode: imgLastAttempt.mode })}
+                      className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded border border-red-300 text-red-700 hover:bg-red-50 font-medium"
+                    >
+                      <RotateCcw className="w-3 h-3" /> {t("models.assistant.searchImages.retry" as any)}
+                    </button>
+                  )}
+                </div>
+              )}
               {imgResults && imgResults.length === 0 && !imageSearch.isPending && (
                 <div className="text-xs text-sky-800">{t("models.assistant.searchImages.empty" as any)}</div>
               )}
@@ -866,7 +886,20 @@ export function ModelAssistantChat({
                   <Loader2 className="w-3.5 h-3.5 animate-spin" /> {t("models.assistant.searchPapers.loading" as any)}
                 </div>
               )}
-              {paperError && <div className="text-xs text-red-700 bg-white rounded p-2 border border-red-200">{paperError}</div>}
+              {paperError && (
+                <div className="text-xs text-red-700 bg-white rounded p-2 border border-red-200 flex items-center justify-between gap-2">
+                  <span>{paperError}</span>
+                  {paperLastAttempt && !paperSearch.isPending && (
+                    <button
+                      type="button"
+                      onClick={() => runPaperSearch(paperLastAttempt.query, { page: paperLastAttempt.page, raw: paperLastAttempt.raw, mode: paperLastAttempt.mode })}
+                      className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded border border-red-300 text-red-700 hover:bg-red-50 font-medium"
+                    >
+                      <RotateCcw className="w-3 h-3" /> {t("models.assistant.searchPapers.retry" as any)}
+                    </button>
+                  )}
+                </div>
+              )}
               {paperResults && paperResults.length === 0 && !paperSearch.isPending && (
                 <div className="text-xs text-sky-800">{t("models.assistant.searchPapers.empty" as any)}</div>
               )}
