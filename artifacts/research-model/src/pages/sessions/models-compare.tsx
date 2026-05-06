@@ -3,6 +3,8 @@ import { Link, useParams, useSearch } from "wouter";
 import {
   useGetModel,
   getGetModelQueryKey,
+  useListSessionModels,
+  getListSessionModelsQueryKey,
 } from "@workspace/api-client-react";
 import { Loader2, ArrowLeft, AlertTriangle } from "lucide-react";
 import { useT } from "@/lib/i18n";
@@ -119,8 +121,21 @@ export default function ModelsComparePage({ params }: { params?: { id: string } 
   const aId = parseInt(sp.get("a") ?? "0", 10);
   const bId = parseInt(sp.get("b") ?? "0", 10);
 
-  const aQ = useGetModel(aId, { query: { enabled: aId > 0, queryKey: getGetModelQueryKey(aId) } });
-  const bQ = useGetModel(bId, { query: { enabled: bId > 0, queryKey: getGetModelQueryKey(bId) } });
+  // Validate that both ids belong to this session before fetching the model
+  // detail — otherwise a tampered URL like ?a=999 (a model from a different
+  // session, or a deleted one) would render with confusing data. The list
+  // endpoint is already prefetched by the /models page, so this is cheap.
+  const sessionModelsQ = useListSessionModels(sessionId, {
+    query: { enabled: !!sessionId, queryKey: getListSessionModelsQueryKey(sessionId) },
+  });
+  const sessionModelIds = useMemo(
+    () => new Set((sessionModelsQ.data ?? []).map((m) => m.id)),
+    [sessionModelsQ.data],
+  );
+  const aValid = aId > 0 && (sessionModelsQ.isLoading || sessionModelIds.has(aId));
+  const bValid = bId > 0 && (sessionModelsQ.isLoading || sessionModelIds.has(bId));
+  const aQ = useGetModel(aId, { query: { enabled: aValid, queryKey: getGetModelQueryKey(aId) } });
+  const bQ = useGetModel(bId, { query: { enabled: bValid, queryKey: getGetModelQueryKey(bId) } });
 
   const diff = useMemo(() => {
     const a = aQ.data;
@@ -168,10 +183,16 @@ export default function ModelsComparePage({ params }: { params?: { id: string } 
         </Link>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <ModelPanel modelId={aId} label={t("compare.legendA" as any)} />
-        <ModelPanel modelId={bId} label={t("compare.legendB" as any)} />
-      </div>
+      {!sessionModelsQ.isLoading && (!aValid || !bValid) ? (
+        <div className="bg-destructive/10 text-destructive rounded-xl border border-destructive/20 p-6 text-sm">
+          {t("compare.notFound" as any)}
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <ModelPanel modelId={aId} label={t("compare.legendA" as any)} />
+          <ModelPanel modelId={bId} label={t("compare.legendB" as any)} />
+        </div>
+      )}
 
       {diff && (
         <div className="space-y-3">
