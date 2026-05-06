@@ -292,6 +292,7 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
     if (pending.length === 0) return;
     const runId = beginExtraction(sessionId, pending.length);
     let ok = 0, fail = 0, done = 0;
+    const failedTitles: string[] = [];
     // Concurrency 4 — matches the backend per-variable extraction limit and
     // is a safe ceiling for the OpenAI proxy + Postgres connection pool. With
     // 19 papers this drops wall-clock from ~9 min (serial) to ~2.5 min.
@@ -305,8 +306,18 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
         try {
           await extractVariables.mutateAsync({ id: sessionId, paperId: p.id });
           ok++;
-        } catch {
+        } catch (err) {
           fail++;
+          failedTitles.push(p.title);
+          // Surface a per-paper toast immediately — without this the user
+          // only sees the aggregate "成功 X 失败 Y" at the end and can't
+          // tell which paper to retry. Body shows the server's actual error.
+          const e = err as { data?: { error?: string }; message?: string };
+          toast({
+            title: t("papers.toast.extractOneFailed" as any, { title: p.title.slice(0, 60) }),
+            description: e?.data?.error ?? e?.message ?? "",
+            variant: "destructive",
+          });
         }
         done++;
         updateExtraction(sessionId, runId, done, pending.length);
@@ -317,12 +328,22 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
     } finally {
       endExtraction(sessionId, runId);
     }
-    queryClient.invalidateQueries({ queryKey: getListSessionPapersQueryKey(sessionId) });
-    queryClient.invalidateQueries({ queryKey: getListSessionVariablesQueryKey(sessionId) });
-    queryClient.invalidateQueries({ queryKey: getGetSessionSummaryQueryKey(sessionId) });
-    queryClient.invalidateQueries({ queryKey: getGetSessionQueryKey(sessionId) });
+    // Await invalidations BEFORE the summary toast so the "1 篇未提取" warning
+    // banner refreshes in lockstep with the toast — pre-fix the toast could
+    // claim "成功 1 失败 0" while the stale banner still said "1 篇未提取",
+    // looking like a contradiction to the user.
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: getListSessionPapersQueryKey(sessionId) }),
+      queryClient.invalidateQueries({ queryKey: getListSessionVariablesQueryKey(sessionId) }),
+      queryClient.invalidateQueries({ queryKey: getGetSessionSummaryQueryKey(sessionId) }),
+      queryClient.invalidateQueries({ queryKey: getGetSessionQueryKey(sessionId) }),
+    ]);
     toast({
       title: t("papers.toast.extractAllDone" as any, { ok, fail }),
+      description: failedTitles.length > 0
+        ? failedTitles.slice(0, 3).map((title) => `• ${title.slice(0, 60)}`).join("\n") + (failedTitles.length > 3 ? `\n…（其余 ${failedTitles.length - 3} 篇）` : "")
+        : undefined,
+      variant: failedTitles.length > 0 ? "destructive" : undefined,
     });
   };
 

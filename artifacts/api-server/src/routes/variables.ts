@@ -210,15 +210,24 @@ Mini-example of the correct shape for a typical chatbot paper:
 NOTICE: the chatbot characteristics are kept as separate IV rows even though the paper "is really about" trust and intention. That is the correct behavior.`;
 
   try {
-    const completion = await openai.chat.completions.create({
-      model: "gpt-5.4",
-      // 8000 → 10000. The expanded "system-characteristic IV" prompt encourages
-      // 4-12 variables (vs prior 3-8) and up to 20 hypotheses with verbatim
-      // statements; raising the ceiling avoids mid-JSON truncation on
-      // construct-rich chatbot/HCI papers.
-      max_completion_tokens: 10000,
-      messages: [{ role: "user", content: prompt }],
-    });
+    // 90s per-paper abort. Without this, a single hung OpenAI call would
+    // permanently occupy one of the frontend's 4 concurrency slots; with 4
+    // hung papers the entire "一键提取全部" batch deadlocks and the user can
+    // never proceed to model generation. 90s is well above the typical
+    // 15-25s extraction time but still under the platform's 120s socket
+    // timeout, so a stuck call surfaces as a clean 504 instead of hanging.
+    const completion = await openai.chat.completions.create(
+      {
+        model: "gpt-5.4",
+        // 8000 → 10000. The expanded "system-characteristic IV" prompt encourages
+        // 4-12 variables (vs prior 3-8) and up to 20 hypotheses with verbatim
+        // statements; raising the ceiling avoids mid-JSON truncation on
+        // construct-rich chatbot/HCI papers.
+        max_completion_tokens: 10000,
+        messages: [{ role: "user", content: prompt }],
+      },
+      { signal: AbortSignal.timeout(90_000) },
+    );
     logAiUsageFromOpenAI(completion, { route: "variables/extract", sessionId: paper.sessionId });
 
     const content = completion.choices[0]?.message?.content ?? "{}";
@@ -341,8 +350,14 @@ NOTICE: the chatbot characteristics are kept as separate IV rows even though the
 
     res.json(inserted.flat().map((v) => formatVariable(v, paper)));
   } catch (err) {
-    req.log.error({ err }, "Error extracting variables");
-    res.status(500).json({ error: "Failed to extract variables" });
+    const e = err as { name?: string; message?: string };
+    const isTimeout = e?.name === "AbortError" || e?.name === "TimeoutError" || /aborted|timeout/i.test(e?.message ?? "");
+    req.log.error({ err, paperId: paper.id, paperTitle: paper.title, isTimeout }, "Error extracting variables");
+    if (isTimeout) {
+      res.status(504).json({ error: `提取超时（90 秒）：「${paper.title.slice(0, 60)}」。该论文可能过长或 AI 暂时拥塞，可稍后单独重试。` });
+      return;
+    }
+    res.status(500).json({ error: `提取失败：「${paper.title.slice(0, 60)}」（${e?.message ?? "unknown error"}）` });
   }
 });
 
