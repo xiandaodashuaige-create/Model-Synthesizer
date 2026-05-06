@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import { useParams, Link } from "wouter";
 import {
   useGetModel,
@@ -73,10 +73,29 @@ function useTypeMeta() {
 const REL_OPTIONS = ["positive", "negative", "moderates", "mediates"] as const;
 
 // Lazy per-paper model figure thumbnails. Only fetches when expanded.
-// Compact: max 3 thumbnails, ~96px tall, click to open source page in a new tab.
+// Compact: max 3 thumbnails, ~96px tall. Clicking a thumbnail opens an
+// in-app lightbox showing the full-size image (no navigation away from the
+// page); the lightbox itself offers a separate "open source page" link.
+type PaperFigure = { title: string; thumbnailUrl: string; imageUrl?: string; sourceUrl: string; sourceDomain: string };
+
 function PaperFigures({ sessionId, paperId, edgeIndex }: { sessionId: number; paperId: number; edgeIndex: number }) {
   const { t } = useT();
   const [open, setOpen] = useState(false);
+  const [lightbox, setLightbox] = useState<PaperFigure | null>(null);
+
+  // Lock background scroll + ESC-to-close while the lightbox is open.
+  useEffect(() => {
+    if (!lightbox) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setLightbox(null); };
+    window.addEventListener("keydown", onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [lightbox]);
+
   const { data, isFetching, error } = useGetPaperModelFigures(
     sessionId,
     paperId,
@@ -90,7 +109,7 @@ function PaperFigures({ sessionId, paperId, edgeIndex }: { sessionId: number; pa
     },
   );
 
-  const results = (data?.results ?? []) as Array<{ title: string; thumbnailUrl: string; sourceUrl: string; sourceDomain: string }>;
+  const results = (data?.results ?? []) as PaperFigure[];
 
   return (
     <div className="mt-3 border-t border-border pt-3">
@@ -118,14 +137,13 @@ function PaperFigures({ sessionId, paperId, edgeIndex }: { sessionId: number; pa
           {!isFetching && results.length > 0 && (
             <div className="flex flex-wrap gap-2">
               {results.map((fig, idx) => (
-                <a
+                <button
                   key={idx}
-                  href={fig.sourceUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  data-testid={`link-paper-figure-${edgeIndex}-${idx}`}
-                  title={`${fig.title || fig.sourceDomain} — ${fig.sourceDomain}`}
-                  className="group relative block border border-border rounded-md overflow-hidden bg-background hover:border-primary/60 transition-colors"
+                  type="button"
+                  onClick={() => setLightbox(fig)}
+                  data-testid={`button-paper-figure-${edgeIndex}-${idx}`}
+                  title={t("md.figures.zoomHint" as any) as string}
+                  className="group relative block border border-border rounded-md overflow-hidden bg-background hover:border-primary/60 transition-colors cursor-zoom-in"
                   style={{ width: 132, height: 96 }}
                 >
                   <img
@@ -137,13 +155,67 @@ function PaperFigures({ sessionId, paperId, edgeIndex }: { sessionId: number; pa
                     onError={(e) => { (e.currentTarget.parentElement as HTMLElement).style.display = "none"; }}
                   />
                   <span className="absolute bottom-0 inset-x-0 bg-black/55 text-white text-[10px] px-1.5 py-0.5 truncate opacity-0 group-hover:opacity-100 transition-opacity inline-flex items-center gap-1">
-                    <ExternalLink className="w-2.5 h-2.5 shrink-0" />
-                    <span className="truncate">{fig.sourceDomain}</span>
+                    <ImageIcon className="w-2.5 h-2.5 shrink-0" />
+                    <span className="truncate">{t("md.figures.zoomHint" as any)}</span>
                   </span>
-                </a>
+                </button>
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {/* In-app lightbox: full-size image, ESC / overlay / × to close. */}
+      {lightbox && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4"
+          onClick={() => setLightbox(null)}
+          data-testid={`dialog-figure-lightbox-${edgeIndex}`}
+          role="dialog"
+          aria-modal="true"
+        >
+          <div
+            className="relative flex flex-col max-w-[95vw] max-h-[95vh]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <img
+              src={lightbox.imageUrl || lightbox.thumbnailUrl}
+              alt={lightbox.title || "model figure"}
+              referrerPolicy="no-referrer"
+              className="max-w-[95vw] max-h-[85vh] object-contain rounded-md bg-white shadow-2xl"
+              data-testid={`img-figure-lightbox-${edgeIndex}`}
+              onError={(e) => {
+                // Fall back to the thumbnail if the full-size image fails to load.
+                const img = e.currentTarget;
+                if (lightbox.imageUrl && img.src !== lightbox.thumbnailUrl) img.src = lightbox.thumbnailUrl;
+              }}
+            />
+            <div className="mt-2 flex items-center justify-between gap-3 text-xs text-white/90">
+              <div className="min-w-0 flex-1">
+                <div className="truncate font-medium" title={lightbox.title}>{lightbox.title || "—"}</div>
+                <div className="text-white/60">{lightbox.sourceDomain}</div>
+              </div>
+              <a
+                href={lightbox.sourceUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="inline-flex items-center gap-1 rounded-md bg-white/10 hover:bg-white/20 px-2 py-1 transition-colors"
+                data-testid={`link-figure-source-${edgeIndex}`}
+              >
+                <ExternalLink className="w-3 h-3" /> {t("md.figures.openSource" as any)}
+              </a>
+            </div>
+            <button
+              type="button"
+              onClick={() => setLightbox(null)}
+              aria-label={t("md.figures.close" as any) as string}
+              data-testid={`button-close-figure-lightbox-${edgeIndex}`}
+              className="absolute -top-3 -right-3 rounded-full bg-white text-foreground shadow-lg p-1.5 hover:bg-accent transition-colors"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </div>
       )}
     </div>
