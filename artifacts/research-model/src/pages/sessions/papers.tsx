@@ -734,22 +734,32 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
         )}
       </div>
 
-      {/* Prominent bottom CTA — appears once at least one paper is extracted */}
-      {someExtracted && (
-        <BigNextStep
-          eyebrow={t("nextstep.eyebrow" as any)}
-          title={t("nextstep.papers.title" as any)}
-          body={t("nextstep.papers.body" as any)}
-          href={`/sessions/${sessionId}/variables`}
-          cta={t("nextstep.papers.cta" as any)}
-          disabled={!!extractAllProgress}
-          disabledReason={
-            extractAllProgress
-              ? t("nextstep.disabled.extracting" as any, { done: extractAllProgress.done, total: extractAllProgress.total })
-              : undefined
-          }
-        />
-      )}
+      {/* Prominent bottom CTA — appears once at least one paper is extracted.
+          Disabled while bulk extraction is running OR while any paper is still
+          unextracted, so users don't accidentally generate models on a partial
+          variable set and silently miss evidence from the remaining papers. */}
+      {someExtracted && (() => {
+        const pendingCount = (sessionPapers ?? []).filter((p) => !p.extracted).length;
+        const isExtracting = !!extractAllProgress;
+        const hasPending = pendingCount > 0;
+        const disabled = isExtracting || hasPending;
+        const disabledReason = isExtracting
+          ? t("nextstep.disabled.extracting" as any, { done: extractAllProgress!.done, total: extractAllProgress!.total })
+          : hasPending
+            ? t("nextstep.disabled.pending" as any, { count: pendingCount })
+            : undefined;
+        return (
+          <BigNextStep
+            eyebrow={t("nextstep.eyebrow" as any)}
+            title={t("nextstep.papers.title" as any)}
+            body={t("nextstep.papers.body" as any)}
+            href={`/sessions/${sessionId}/variables`}
+            cta={t("nextstep.papers.cta" as any)}
+            disabled={disabled}
+            disabledReason={disabledReason}
+          />
+        );
+      })()}
     </div>
   );
 }

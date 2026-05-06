@@ -487,6 +487,16 @@ export default function SessionVariables({ params: routeParams }: { params?: { i
   const { data: variables, isLoading } = useListSessionVariables(sessionId, {
     query: { enabled: !!sessionId, queryKey: getListSessionVariablesQueryKey(sessionId) },
   });
+  // Pull papers list to detect papers whose variables haven't been extracted
+  // yet — generating models on a partial variable set silently drops the
+  // remaining papers' evidence, which is the bug users reported. Treat the
+  // loading state as "pending" too, so there is no transient window where
+  // the CTA is enabled before guard data arrives.
+  const { data: papersForGuard, isLoading: papersForGuardLoading } = useListSessionPapers(sessionId, {
+    query: { enabled: !!sessionId, queryKey: getListSessionPapersQueryKey(sessionId) },
+  });
+  const pendingPapersCount = (papersForGuard ?? []).filter((p) => !p.extracted).length;
+  const papersGuardBusy = papersForGuardLoading || papersForGuard === undefined;
 
   if (isLoading) return <div className="flex justify-center py-16"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
 
@@ -534,11 +544,13 @@ export default function SessionVariables({ params: routeParams }: { params?: { i
         body={t("nextstep.vars.body" as any)}
         href={`/sessions/${sessionId}/models`}
         cta={t("nextstep.vars.cta" as any)}
-        disabled={!!extractionProgress}
+        disabled={!!extractionProgress || pendingPapersCount > 0 || papersGuardBusy}
         disabledReason={
           extractionProgress
             ? t("nextstep.disabled.extracting" as any, { done: extractionProgress.done, total: extractionProgress.total })
-            : undefined
+            : pendingPapersCount > 0
+              ? t("nextstep.disabled.pending" as any, { count: pendingPapersCount })
+              : undefined
         }
       />
 

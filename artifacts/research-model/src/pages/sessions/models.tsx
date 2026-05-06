@@ -7,6 +7,7 @@ import {
   useSelectModel,
   useGetSessionLearningStats,
   useListSessionVariables,
+  useListSessionPapers,
   useImportLiveModelFromModel,
   useGetLiveModel,
   getListSessionModelsQueryKey,
@@ -14,8 +15,10 @@ import {
   getGetSessionQueryKey,
   getGetSessionLearningStatsQueryKey,
   getListSessionVariablesQueryKey,
+  getListSessionPapersQueryKey,
   getGetLiveModelQueryKey,
 } from "@workspace/api-client-react";
+import { useExtractionProgress } from "@/lib/extraction-progress";
 import { ModelAssistantChat } from "@/components/model-assistant-chat";
 import { NextStepHint } from "@/components/onboarding-stepper";
 import {
@@ -94,6 +97,20 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
   const { data: variables } = useListSessionVariables(sessionId, {
     query: { enabled: !!sessionId, queryKey: getListSessionVariablesQueryKey(sessionId) },
   });
+  // Canonical pending-papers guard: if any paper hasn't had variables
+  // extracted yet, generating models would silently drop their evidence.
+  // We block generation here (the only generation entry point) so users
+  // who navigate directly to /models or use AI assistant suggestions can't
+  // bypass the BigNextStep CTA gating on the previous pages.
+  const { data: papersForGuard, isLoading: papersLoading } = useListSessionPapers(sessionId, {
+    query: { enabled: !!sessionId, queryKey: getListSessionPapersQueryKey(sessionId) },
+  });
+  const extractionProgress = useExtractionProgress(sessionId);
+  const pendingPapersCount = (papersForGuard ?? []).filter((p) => !p.extracted).length;
+  const guardLoading = papersLoading || papersForGuard === undefined;
+  const hasPendingPapers = !guardLoading && pendingPapersCount > 0;
+  const isExtracting = !!extractionProgress;
+  const generationBlocked = guardLoading || hasPendingPapers || isExtracting;
   const { data: liveModel } = useGetLiveModel(sessionId, {
     query: { enabled: !!sessionId, queryKey: getGetLiveModelQueryKey(sessionId) },
   });
@@ -114,6 +131,20 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
   const handleApplySuggestion = (s: { userPrompt: string; focusVariableIds: number[] }) => {
     setUserPrompt(s.userPrompt);
     setFocusVariableIds(s.focusVariableIds);
+    // Block AI-assistant-triggered generation through the same guard so
+    // pending extractions can't be bypassed via the chat suggestion flow.
+    if (generationBlocked) {
+      toast({
+        title: isExtracting
+          ? t("models.guard.extracting.title" as any, { done: extractionProgress!.done, total: extractionProgress!.total })
+          : t("models.guard.pending.title" as any, { count: pendingPapersCount }),
+        description: isExtracting
+          ? t("models.guard.extracting.body" as any)
+          : t("models.guard.pending.body" as any),
+        variant: "destructive",
+      });
+      return;
+    }
     // Trigger generation immediately with the suggested params.
     generateModels.mutate({
       id: sessionId,
@@ -144,6 +175,9 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
   };
 
   const handleGenerate = () => {
+    // Defense-in-depth: the button is also disabled, but guard the action
+    // itself in case of programmatic invocation or stale state.
+    if (generationBlocked) return;
     generateModels.mutate({
       id: sessionId,
       data: {
@@ -268,6 +302,26 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
         />
       )}
 
+      {/* Block generation when extraction is in flight or some papers
+          remain unextracted — this is the canonical guard, since users can
+          reach /models via tabs, the onboarding stepper, or a direct URL. */}
+      {!hasNoVariables && isExtracting && (
+        <NextStepHint
+          title={t("models.guard.extracting.title" as any, { done: extractionProgress!.done, total: extractionProgress!.total })}
+          body={t("models.guard.extracting.body" as any)}
+          href={`/sessions/${sessionId}/papers`}
+          cta={t("models.guard.pending.cta" as any)}
+        />
+      )}
+      {!hasNoVariables && !isExtracting && hasPendingPapers && (
+        <NextStepHint
+          title={t("models.guard.pending.title" as any, { count: pendingPapersCount })}
+          body={t("models.guard.pending.body" as any)}
+          href={`/sessions/${sessionId}/papers`}
+          cta={t("models.guard.pending.cta" as any)}
+        />
+      )}
+
       <ModelAssistantChat
         sessionId={sessionId}
         variableNameById={variableNameById}
@@ -315,8 +369,16 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
           <button
             data-testid="button-generate-models"
             onClick={handleGenerate}
-            disabled={generateModels.isPending || hasNoVariables}
-            title={hasNoVariables ? t("models.guard.noVars.body" as any) : undefined}
+            disabled={generateModels.isPending || hasNoVariables || generationBlocked}
+            title={
+              hasNoVariables
+                ? t("models.guard.noVars.body" as any)
+                : isExtracting
+                  ? t("models.guard.extracting.body" as any)
+                  : hasPendingPapers
+                    ? t("models.guard.pending.body" as any)
+                    : undefined
+            }
             className="inline-flex items-center gap-2 rounded-md text-sm font-semibold bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-5 disabled:opacity-50 disabled:pointer-events-none transition-colors"
           >
             {generateModels.isPending ? (
