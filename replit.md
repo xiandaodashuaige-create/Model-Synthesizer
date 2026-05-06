@@ -40,6 +40,8 @@ pnpm --filter @workspace/db run push
 - **Generation Guardrails**: Implements multiple layers of checks and UI blocking to prevent model generation on incomplete variable sets, ensuring data integrity.
 - **Partial-pass model generation**: Allows model generation even if some papers are un-extracted, recording metadata about skipped papers and providing user warnings.
 - **No duplicate live-model edges**: Enforces uniqueness for live model edges in the database and prevents silent duplication in the UI.
+- **Generation rescue mode**: When zero generated models pass strict validation, soft-fail models (layer-jumps, chain-too-long, count-out-of-range) are salvaged with a `[质量警告:...]` rationale prefix + `partialPassMeta.qualityWarnings`, instead of returning a blank-screen error.
+- **AI call abort timeouts**: `models/generate` aborts at 55s, `model-assistant` at 50s, both returning a 504 with a Chinese error before the Replit Autoscale 60s proxy timeout would otherwise kill the request as a generic 502. Reserved VM deployments have no such limit.
 
 ## Product
 - **Session Management**: Users can create sessions, defining a name and research topic.
