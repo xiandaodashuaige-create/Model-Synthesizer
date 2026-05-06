@@ -14,8 +14,13 @@ const dict = {
     "brand.tagline": "从文献到原创模型，AI 帮你一站式完成",
 
     "nav.sessions": "我的项目",
-    "nav.lang.zh": "中文",
+    "nav.lang.zh": "简体",
+    "nav.lang.zhTW": "繁體",
     "nav.lang.en": "English",
+    "auth.signIn": "登录",
+    "auth.signOut": "退出",
+    "auth.loading": "正在加载…",
+    "auth.signInPrompt": "请登录后开始使用学术模型构建器。",
 
     "common.back": "返回",
     "common.loading": "加载中…",
@@ -537,6 +542,10 @@ const dict = {
     "nav.lang.zh": "简体",
     "nav.lang.zhTW": "繁體",
     "nav.lang.en": "English",
+    "auth.signIn": "Sign in",
+    "auth.signOut": "Sign out",
+    "auth.loading": "Loading…",
+    "auth.signInPrompt": "Please sign in to start using Research Model Builder.",
 
     "common.back": "Back",
     "common.loading": "Loading…",

@@ -4,6 +4,7 @@ import { db, papersTable, variablesTable, researchModelsTable, imageBlocklistTab
 import { asc } from "drizzle-orm";
 import { ChatModelAssistantParams, ChatModelAssistantBody } from "@workspace/api-zod";
 import { openai } from "@workspace/integrations-openai-ai-server";
+import { logAiUsageFromOpenAI } from "../lib/ai-usage";
 import { backbonesAsPromptBlock, operatorsAsPromptBlock } from "../lib/theoryTemplates.js";
 
 const router: IRouter = Router();
@@ -150,6 +151,7 @@ Be specific. Reference variables and papers BY NAME. Never invent variables that
       },
       { signal: AbortSignal.timeout(50_000) },
     );
+    logAiUsageFromOpenAI(completion, { route: "model-assistant/chat", sessionId: Number(req.params["id"]) || null, userId: req.user?.id ?? null });
 
     const raw = completion.choices[0]?.message?.content ?? "";
 
@@ -388,6 +390,7 @@ async function aiRelevanceFilter(
   expandedQueries: string[],
   candidates: Array<{ title: string; sourceDomain: string }>,
   sessionCtx: SessionImageCtx | null,
+  usageMeta: { sessionId: number | null; userId: string | null } = { sessionId: null, userId: null },
 ): Promise<Array<{ i: number; category: ImageCategory; why?: string }> | null> {
   if (candidates.length === 0) return [];
   try {
@@ -400,7 +403,7 @@ async function aiRelevanceFilter(
 - Key variables: ${sessionCtx.variableNames.slice(0, 12).join(", ") || "(none)"}
 - Sample paper titles: ${sessionCtx.paperTitles.slice(0, 5).join(" | ") || "(none)"}\n`
       : "";
-    const completion = await openai.chat.completions.create({
+    const completion: any = await openai.chat.completions.create({
       model: "gpt-5.4",
       max_completion_tokens: 1000,
       messages: [
@@ -450,6 +453,7 @@ ${list}`,
     }
     // Defend against the AI returning an empty list when it shouldn't — if it
     // dropped EVERYTHING, fall back rather than show nothing.
+    logAiUsageFromOpenAI(completion, { route: "model-assistant/image-relevance", sessionId: usageMeta.sessionId, userId: usageMeta.userId });
     if (out.length === 0 && candidates.length >= 4) return null;
     return out;
   } catch {
@@ -466,6 +470,7 @@ type SessionImageCtx = {
 async function expandQueriesWithAI(
   rawQuery: string,
   sessionCtx: SessionImageCtx | null,
+  usageMeta: { sessionId: number | null; userId: string | null } = { sessionId: null, userId: null },
 ): Promise<string[]> {
   // Ask GPT to translate the user's rough/Chinese phrasing into 3-5 precise
   // English academic queries — GROUNDED in the session's actual variables and
@@ -477,7 +482,7 @@ async function expandQueriesWithAI(
 - Variables already extracted: ${sessionCtx.variableNames.slice(0, 16).join(", ") || "(none)"}
 - Sample paper titles in this project: ${sessionCtx.paperTitles.slice(0, 6).join(" | ") || "(none)"}`
       : "";
-    const completion = await openai.chat.completions.create({
+    const completion: any = await openai.chat.completions.create({
       model: "gpt-5.4",
       max_completion_tokens: 500,
       messages: [
@@ -497,6 +502,7 @@ Rules:
         { role: "user", content: `User's input: ${rawQuery}${ctxBlock}` },
       ],
     });
+    logAiUsageFromOpenAI(completion, { route: "model-assistant/expand-image-queries", sessionId: usageMeta.sessionId, userId: usageMeta.userId });
     const txt = completion.choices[0]?.message?.content ?? "";
     // Extract first JSON object
     const match = txt.match(/\{[\s\S]*\}/);
@@ -688,7 +694,7 @@ router.post("/sessions/:id/model-assistant/search-model-images", async (req, res
     if (rawMode) {
       expandedQueries = [rawQuery];
     } else {
-      const aiQueries = await expandQueriesWithAI(rawQuery, sessionCtx);
+      const aiQueries = await expandQueriesWithAI(rawQuery, sessionCtx, { sessionId: params.data.id, userId: req.user?.id ?? null });
       // Always include the user's literal phrase too, in case the AI dropped a
       // critical token. Quote multi-word user input.
       const quoted = /\s/.test(rawQuery) && !/^".*"$/.test(rawQuery) ? `"${rawQuery}"` : rawQuery;
@@ -908,6 +914,7 @@ router.post("/sessions/:id/model-assistant/search-model-images", async (req, res
         expandedQueries,
         candidates.map((c) => ({ title: c.title, sourceDomain: c.sourceDomain })),
         sessionCtx,
+        { sessionId: params.data.id, userId: req.user?.id ?? null },
       );
       if (keep && keep.length > 0) {
         const keepMap = new Map(keep.map((k) => [k.i, { category: k.category, why: k.why }]));
@@ -1044,6 +1051,7 @@ type ModelFigureRating = { likelihood: "high" | "medium" | "low"; reason: string
 async function aiRateModelFigureLikelihood(
   rawQuery: string,
   papers: Array<{ title: string; abstract: string | null }>,
+  usageMeta: { sessionId: number | null; userId: string | null } = { sessionId: null, userId: null },
 ): Promise<Array<ModelFigureRating | null>> {
   if (papers.length === 0) return [];
   try {
@@ -1053,7 +1061,7 @@ async function aiRateModelFigureLikelihood(
         return `${i}. TITLE: ${p.title.slice(0, 200)}\n   ABSTRACT: ${abs || "(no abstract)"}`;
       })
       .join("\n\n");
-    const completion = await openai.chat.completions.create({
+    const completion: any = await openai.chat.completions.create({
       model: "gpt-5.4",
       max_completion_tokens: 1200,
       messages: [
@@ -1099,6 +1107,7 @@ Return ONLY JSON: {"ratings":[{"i":0,"likelihood":"high|medium|low","reason":"�
       if (lk !== "high" && lk !== "medium" && lk !== "low") continue;
       out[r.i] = { likelihood: lk, reason: typeof r.reason === "string" ? r.reason.slice(0, 200) : "" };
     }
+    logAiUsageFromOpenAI(completion, { route: "model-assistant/screen-papers", sessionId: usageMeta.sessionId, userId: usageMeta.userId });
     return out;
   } catch {
     return papers.map(() => null);
@@ -1126,7 +1135,7 @@ router.post("/sessions/:id/model-assistant/search-model-papers", async (req, res
     if (rawMode) {
       expandedQueries = [rawQuery];
     } else {
-      const aiQueries = await expandQueriesWithAI(rawQuery, await loadSessionImageCtx(params.data.id));
+      const aiQueries = await expandQueriesWithAI(rawQuery, await loadSessionImageCtx(params.data.id), { sessionId: params.data.id, userId: req.user?.id ?? null });
       expandedQueries = [...aiQueries, rawQuery];
       const seen = new Set<string>();
       expandedQueries = expandedQueries.filter((q) => {
@@ -1203,7 +1212,7 @@ router.post("/sessions/:id/model-assistant/search-model-papers", async (req, res
       title: w.title ?? "",
       abstract: reconstructAbstractLite(w.abstract_inverted_index),
     }));
-    const ratings = await aiRateModelFigureLikelihood(rawQuery, ratingInput);
+    const ratings = await aiRateModelFigureLikelihood(rawQuery, ratingInput, { sessionId: params.data.id, userId: req.user?.id ?? null });
 
     // Build response. Sort by likelihood (high → medium → low → unrated),
     // breaking ties by citation count.

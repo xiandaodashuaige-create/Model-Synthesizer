@@ -17,7 +17,68 @@ tags:
     description: Variable extraction
   - name: models
     description: Research model generation
+  - name: Auth
+    description: Browser authentication
+  - name: usage
+    description: AI usage and cost tracking
 paths:
+  /auth/user:
+    get:
+      tags: [Auth]
+      operationId: getCurrentAuthUser
+      summary: Get the currently authenticated user
+      responses:
+        "200":
+          description: Auth status resolved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthUserEnvelope"
+  /sessions/{id}/ai-usage:
+    get:
+      tags: [usage]
+      operationId: getSessionAiUsage
+      summary: Aggregate AI usage and cost for this session
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Usage summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiUsageSummary"
+  /sessions/{id}/papers/full-text-search:
+    get:
+      tags: [papers]
+      operationId: searchSessionPapersFullText
+      summary: Postgres full-text search across this session's papers (title + abstract + fullText)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "200":
+          description: Matching papers with rank-ordered snippets
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PaperFullTextHit"
+
   /healthz:
     get:
       operationId: healthCheck
@@ -1696,6 +1757,56 @@ paths:
 
 components:
   schemas:
+    AuthUser:
+      type: object
+      required: [id, email, firstName, lastName, profileImageUrl]
+      properties:
+        id: { type: string }
+        email: { type: [string, "null"] }
+        firstName: { type: [string, "null"] }
+        lastName: { type: [string, "null"] }
+        profileImageUrl: { type: [string, "null"] }
+    AuthUserEnvelope:
+      type: object
+      required: [user]
+      properties:
+        user:
+          oneOf:
+            - $ref: "#/components/schemas/AuthUser"
+            - type: "null"
+    AiUsageSummary:
+      type: object
+      required: [totalCalls, totalPromptTokens, totalCompletionTokens, totalTokens, totalCostUsd, byRoute]
+      properties:
+        totalCalls: { type: integer }
+        totalPromptTokens: { type: integer }
+        totalCompletionTokens: { type: integer }
+        totalTokens: { type: integer }
+        totalCostUsd: { type: number }
+        byRoute:
+          type: array
+          items:
+            type: object
+            required: [route, calls, promptTokens, completionTokens, totalTokens, costUsd]
+            properties:
+              route: { type: string }
+              calls: { type: integer }
+              promptTokens: { type: integer }
+              completionTokens: { type: integer }
+              totalTokens: { type: integer }
+              costUsd: { type: number }
+    PaperFullTextHit:
+      type: object
+      required: [id, title, snippet, rank]
+      properties:
+        id: { type: integer }
+        title: { type: string }
+        authors:
+          type: array
+          items: { type: string }
+        year: { type: [integer, "null"] }
+        snippet: { type: string }
+        rank: { type: number }
     HealthStatus:
       type: object
       properties:

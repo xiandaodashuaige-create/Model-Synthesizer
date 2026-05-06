@@ -18,6 +18,7 @@
     "drizzle-orm": "catalog:",
     "express": "^5",
     "multer": "^2.1.1",
+    "openid-client": "^6.8.4",
     "pdf-parse": "^2.4.5",
     "pino": "^9",
     "pino-http": "^10"

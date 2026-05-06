@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { eq, sql } from "drizzle-orm";
+import { eq, sql, or, isNull, and } from "drizzle-orm";
 import { db, sessionsTable, papersTable, variablesTable, researchModelsTable } from "@workspace/db";
 import {
   CreateSessionBody,
@@ -9,6 +9,7 @@ import {
   DeleteSessionParams,
   GetSessionSummaryParams,
 } from "@workspace/api-zod";
+import { requireAuth } from "../middlewares/authMiddleware";
 
 const router: IRouter = Router();
 
@@ -23,8 +24,17 @@ function buildSessionWithCounts(session: typeof sessionsTable.$inferSelect, pape
   };
 }
 
+// Visibility rule: a logged-in user sees their own sessions plus any
+// "legacy" rows whose userId is NULL (unclaimed pre-auth data). Mutation is
+// only allowed when the row is owned by the user OR is unclaimed (in which
+// case the mutation also stamps it with the user's id).
+function visibilityFilter(userId: string) {
+  return or(eq(sessionsTable.userId, userId), isNull(sessionsTable.userId));
+}
+
 router.get("/sessions", async (req, res): Promise<void> => {
-  const sessions = await db.select().from(sessionsTable).orderBy(sessionsTable.createdAt);
+  if (!requireAuth(req, res)) return;
+  const sessions = await db.select().from(sessionsTable).where(visibilityFilter(req.user!.id)).orderBy(sessionsTable.createdAt);
 
   const result = await Promise.all(
     sessions.map(async (session) => {
@@ -48,24 +58,26 @@ router.get("/sessions", async (req, res): Promise<void> => {
 });
 
 router.post("/sessions", async (req, res): Promise<void> => {
+  if (!requireAuth(req, res)) return;
   const parsed = CreateSessionBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.message });
     return;
   }
 
-  const [session] = await db.insert(sessionsTable).values(parsed.data).returning();
+  const [session] = await db.insert(sessionsTable).values({ ...parsed.data, userId: req.user!.id }).returning();
   res.status(201).json(buildSessionWithCounts(session, 0, 0, 0));
 });
 
 router.get("/sessions/:id", async (req, res): Promise<void> => {
+  if (!requireAuth(req, res)) return;
   const params = GetSessionParams.safeParse(req.params);
   if (!params.success) {
     res.status(400).json({ error: params.error.message });
     return;
   }
 
-  const [session] = await db.select().from(sessionsTable).where(eq(sessionsTable.id, params.data.id));
+  const [session] = await db.select().from(sessionsTable).where(and(eq(sessionsTable.id, params.data.id), visibilityFilter(req.user!.id)));
   if (!session) {
     res.status(404).json({ error: "Session not found" });
     return;
@@ -79,6 +91,7 @@ router.get("/sessions/:id", async (req, res): Promise<void> => {
 });
 
 router.patch("/sessions/:id", async (req, res): Promise<void> => {
+  if (!requireAuth(req, res)) return;
   const params = UpdateSessionParams.safeParse(req.params);
   if (!params.success) {
     res.status(400).json({ error: params.error.message });
@@ -93,8 +106,8 @@ router.patch("/sessions/:id", async (req, res): Promise<void> => {
 
   const [session] = await db
     .update(sessionsTable)
-    .set(parsed.data)
-    .where(eq(sessionsTable.id, params.data.id))
+    .set({ ...parsed.data, userId: req.user!.id })
+    .where(and(eq(sessionsTable.id, params.data.id), visibilityFilter(req.user!.id)))
     .returning();
 
   if (!session) {
@@ -110,13 +123,14 @@ router.patch("/sessions/:id", async (req, res): Promise<void> => {
 });
 
 router.delete("/sessions/:id", async (req, res): Promise<void> => {
+  if (!requireAuth(req, res)) return;
   const params = DeleteSessionParams.safeParse(req.params);
   if (!params.success) {
     res.status(400).json({ error: params.error.message });
     return;
   }
 
-  const [session] = await db.delete(sessionsTable).where(eq(sessionsTable.id, params.data.id)).returning();
+  const [session] = await db.delete(sessionsTable).where(and(eq(sessionsTable.id, params.data.id), visibilityFilter(req.user!.id))).returning();
   if (!session) {
     res.status(404).json({ error: "Session not found" });
     return;
@@ -126,6 +140,7 @@ router.delete("/sessions/:id", async (req, res): Promise<void> => {
 });
 
 router.get("/sessions/:id/summary", async (req, res): Promise<void> => {
+  if (!requireAuth(req, res)) return;
   const params = GetSessionSummaryParams.safeParse(req.params);
   if (!params.success) {
     res.status(400).json({ error: params.error.message });
@@ -133,6 +148,12 @@ router.get("/sessions/:id/summary", async (req, res): Promise<void> => {
   }
 
   const sessionId = params.data.id;
+
+  const [session] = await db.select().from(sessionsTable).where(and(eq(sessionsTable.id, sessionId), visibilityFilter(req.user!.id)));
+  if (!session) {
+    res.status(404).json({ error: "Session not found" });
+    return;
+  }
 
   const [paperCount] = await db.select({ count: sql<number>`count(*)::int` }).from(papersTable).where(eq(papersTable.sessionId, sessionId));
   const [variableCount] = await db.select({ count: sql<number>`count(*)::int` }).from(variablesTable).where(eq(variablesTable.sessionId, sessionId));

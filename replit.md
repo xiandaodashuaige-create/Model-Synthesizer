@@ -15,6 +15,7 @@ pnpm --filter @workspace/db run push
 - `AI_INTEGRATIONS_OPENAI_BASE_URL`: OpenAI proxy base URL
 - `AI_INTEGRATIONS_OPENAI_API_KEY`: OpenAI proxy key
 - `SERPAPI_API_KEY`: Required for fetching paper model figures
+- `REPL_ID`, `ISSUER_URL` (default `https://replit.com/oidc`): Auth via OIDC
 
 ## Stack
 - **Frontend**: React + Vite (TypeScript), TailwindCSS v4, Wouter, TanStack Query
@@ -46,6 +47,9 @@ pnpm --filter @workspace/db run push
 - **Variable rename/delete**: PATCH/DELETE `/sessions/:id/variables/:variableId` allow per-paper extraction edits without re-running the whole paper. `canonicalize()` is Unicode-safe (preserves CJK).
 - **Image blocklist**: GET/POST/DELETE `/sessions/:id/image-blocklist` with URL normalization (lowercased host, stripped tracking params). Unverified backfill images get `verified: false` and a `未验证` UI badge.
 - **Manual edge evidence**: model-detail.tsx addEdge UI lets the user explicitly pick the evidence paper from any node's paper, instead of always defaulting to the source-side paper.
+- **Auth (OIDC)**: Replit-hosted OpenID Connect via `openid-client`. `auth_sessions` table stores OIDC session state (renamed from template `sessions` to avoid collision with research `sessions`). `sessionsTable.userId` is nullable; legacy NULL-owner rows are visible to any logged-in user, and the first user to sign in claims them via `upsertUser` backfill. All session routes use `requireAuth` + `visibilityFilter(userId)`. Frontend `App.tsx` mounts a `LoginGate` that calls `/api/login` / `/api/logout`.
+- **AI usage logging**: `ai_usage_log` (cost in micro-USD integer, `gpt-5.4` priced at $2.5/$10 per 1M tokens). `logAiUsageFromOpenAI()` is fire-and-forget; instrumented at all 11 OpenAI call sites across models/papers/variables/model-assistant. `GET /sessions/:id/ai-usage` returns per-route + total summary, gated by ownership.
+- **Full-text paper search**: `POST /sessions/:id/papers/full-text-search` does ILIKE-based AND across title/abstract/fullText with snippet+rank — bridges the gap until proper `tsvector` is added.
 
 ## Product
 - **Session Management**: Users can create sessions, defining a name and research topic.

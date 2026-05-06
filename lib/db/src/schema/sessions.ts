@@ -1,9 +1,15 @@
-import { pgTable, text, serial, timestamp, integer, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, timestamp, integer, jsonb, varchar } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
+import { usersTable } from "./auth";
 
 export const sessionsTable = pgTable("sessions", {
   id: serial("id").primaryKey(),
+  // Owning user. NULLable so existing rows (created before auth was added)
+  // remain readable. New sessions always set this to the creating user.
+  // Routes treat NULL-owner rows as "legacy / shared" — visible to any
+  // authenticated user but not editable cross-user.
+  userId: varchar("user_id").references(() => usersTable.id, { onDelete: "set null" }),
   name: text("name").notNull(),
   topic: text("topic").notNull(),
   status: text("status").notNull().default("searching"),

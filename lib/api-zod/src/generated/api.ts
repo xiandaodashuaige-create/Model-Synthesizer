@@ -8,6 +8,70 @@
 import * as zod from "zod";
 
 /**
+ * @summary Get the currently authenticated user
+ */
+export const GetCurrentAuthUserResponse = zod.object({
+  user: zod.union([
+    zod.object({
+      id: zod.string(),
+      email: zod.string().nullable(),
+      firstName: zod.string().nullable(),
+      lastName: zod.string().nullable(),
+      profileImageUrl: zod.string().nullable(),
+    }),
+    zod.null(),
+  ]),
+});
+
+/**
+ * @summary Aggregate AI usage and cost for this session
+ */
+export const GetSessionAiUsageParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const GetSessionAiUsageResponse = zod.object({
+  totalCalls: zod.number(),
+  totalPromptTokens: zod.number(),
+  totalCompletionTokens: zod.number(),
+  totalTokens: zod.number(),
+  totalCostUsd: zod.number(),
+  byRoute: zod.array(
+    zod.object({
+      route: zod.string(),
+      calls: zod.number(),
+      promptTokens: zod.number(),
+      completionTokens: zod.number(),
+      totalTokens: zod.number(),
+      costUsd: zod.number(),
+    }),
+  ),
+});
+
+/**
+ * @summary Postgres full-text search across this session's papers (title + abstract + fullText)
+ */
+export const SearchSessionPapersFullTextParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const SearchSessionPapersFullTextQueryParams = zod.object({
+  q: zod.coerce.string().min(1),
+});
+
+export const SearchSessionPapersFullTextResponseItem = zod.object({
+  id: zod.number(),
+  title: zod.string(),
+  authors: zod.array(zod.string()).optional(),
+  year: zod.number().nullish(),
+  snippet: zod.string(),
+  rank: zod.number(),
+});
+export const SearchSessionPapersFullTextResponse = zod.array(
+  SearchSessionPapersFullTextResponseItem,
+);
+
+/**
  * @summary Health check
  */
 export const HealthCheckResponse = zod.object({

@@ -21,6 +21,8 @@ import type {
   AddLiveModelEdgeBody,
   AddLiveModelNodeBody,
   AddPaperBody,
+  AiUsageSummary,
+  AuthUserEnvelope,
   BulkImportPapersBody,
   BulkImportPapersResponse,
   ChatModelAssistant200,
@@ -48,6 +50,7 @@ import type {
   LookupPaperBody,
   ModelVersionSummary,
   Paper,
+  PaperFullTextHit,
   PaperSearchResult,
   ResearchModel,
   SearchModelImages200,
@@ -55,6 +58,7 @@ import type {
   SearchModelPapers200,
   SearchModelPapersBody,
   SearchPapersBody,
+  SearchSessionPapersFullTextParams,
   Session,
   SessionSummary,
   UpdateLiveModelNodePositionBody,
@@ -74,6 +78,289 @@ type AwaitedInput<T> = PromiseLike<T> | T;
 type Awaited<O> = O extends AwaitedInput<infer T> ? T : never;
 
 type SecondParameter<T extends (...args: never) => unknown> = Parameters<T>[1];
+
+/**
+ * @summary Get the currently authenticated user
+ */
+export const getGetCurrentAuthUserUrl = () => {
+  return `/api/auth/user`;
+};
+
+export const getCurrentAuthUser = async (
+  options?: RequestInit,
+): Promise<AuthUserEnvelope> => {
+  return customFetch<AuthUserEnvelope>(getGetCurrentAuthUserUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetCurrentAuthUserQueryKey = () => {
+  return [`/api/auth/user`] as const;
+};
+
+export const getGetCurrentAuthUserQueryOptions = <
+  TData = Awaited<ReturnType<typeof getCurrentAuthUser>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getCurrentAuthUser>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetCurrentAuthUserQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getCurrentAuthUser>>
+  > = ({ signal }) => getCurrentAuthUser({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getCurrentAuthUser>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetCurrentAuthUserQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getCurrentAuthUser>>
+>;
+export type GetCurrentAuthUserQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get the currently authenticated user
+ */
+
+export function useGetCurrentAuthUser<
+  TData = Awaited<ReturnType<typeof getCurrentAuthUser>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getCurrentAuthUser>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetCurrentAuthUserQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Aggregate AI usage and cost for this session
+ */
+export const getGetSessionAiUsageUrl = (id: number) => {
+  return `/api/sessions/${id}/ai-usage`;
+};
+
+export const getSessionAiUsage = async (
+  id: number,
+  options?: RequestInit,
+): Promise<AiUsageSummary> => {
+  return customFetch<AiUsageSummary>(getGetSessionAiUsageUrl(id), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetSessionAiUsageQueryKey = (id: number) => {
+  return [`/api/sessions/${id}/ai-usage`] as const;
+};
+
+export const getGetSessionAiUsageQueryOptions = <
+  TData = Awaited<ReturnType<typeof getSessionAiUsage>>,
+  TError = ErrorType<unknown>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSessionAiUsage>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetSessionAiUsageQueryKey(id);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getSessionAiUsage>>
+  > = ({ signal }) => getSessionAiUsage(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getSessionAiUsage>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetSessionAiUsageQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getSessionAiUsage>>
+>;
+export type GetSessionAiUsageQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Aggregate AI usage and cost for this session
+ */
+
+export function useGetSessionAiUsage<
+  TData = Awaited<ReturnType<typeof getSessionAiUsage>>,
+  TError = ErrorType<unknown>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSessionAiUsage>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetSessionAiUsageQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Postgres full-text search across this session's papers (title + abstract + fullText)
+ */
+export const getSearchSessionPapersFullTextUrl = (
+  id: number,
+  params: SearchSessionPapersFullTextParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/sessions/${id}/papers/full-text-search?${stringifiedParams}`
+    : `/api/sessions/${id}/papers/full-text-search`;
+};
+
+export const searchSessionPapersFullText = async (
+  id: number,
+  params: SearchSessionPapersFullTextParams,
+  options?: RequestInit,
+): Promise<PaperFullTextHit[]> => {
+  return customFetch<PaperFullTextHit[]>(
+    getSearchSessionPapersFullTextUrl(id, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getSearchSessionPapersFullTextQueryKey = (
+  id: number,
+  params?: SearchSessionPapersFullTextParams,
+) => {
+  return [
+    `/api/sessions/${id}/papers/full-text-search`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getSearchSessionPapersFullTextQueryOptions = <
+  TData = Awaited<ReturnType<typeof searchSessionPapersFullText>>,
+  TError = ErrorType<unknown>,
+>(
+  id: number,
+  params: SearchSessionPapersFullTextParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof searchSessionPapersFullText>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ??
+    getSearchSessionPapersFullTextQueryKey(id, params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof searchSessionPapersFullText>>
+  > = ({ signal }) =>
+    searchSessionPapersFullText(id, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof searchSessionPapersFullText>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type SearchSessionPapersFullTextQueryResult = NonNullable<
+  Awaited<ReturnType<typeof searchSessionPapersFullText>>
+>;
+export type SearchSessionPapersFullTextQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Postgres full-text search across this session's papers (title + abstract + fullText)
+ */
+
+export function useSearchSessionPapersFullText<
+  TData = Awaited<ReturnType<typeof searchSessionPapersFullText>>,
+  TError = ErrorType<unknown>,
+>(
+  id: number,
+  params: SearchSessionPapersFullTextParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof searchSessionPapersFullText>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getSearchSessionPapersFullTextQueryOptions(
+    id,
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
 
 /**
  * @summary Health check

@@ -1,8 +1,9 @@
 import React from "react";
 import { Link } from "wouter";
-import { Activity, LayoutDashboard, Languages } from "lucide-react";
+import { Activity, LayoutDashboard, Languages, LogOut } from "lucide-react";
 import { useT } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@workspace/replit-auth-web";
 
 function LangSwitch() {
   const { lang, setLang, t } = useT();
@@ -46,6 +47,27 @@ function LangSwitch() {
   );
 }
 
+function UserMenu() {
+  const { t } = useT();
+  const { user, logout } = useAuth();
+  if (!user) return null;
+  const label = user.firstName || user.email || user.id;
+  return (
+    <div className="flex items-center gap-2 text-xs">
+      <span className="text-muted-foreground hidden sm:inline" data-testid="auth-user-label">{label}</span>
+      <button
+        type="button"
+        onClick={logout}
+        data-testid="logout-button"
+        className="inline-flex items-center gap-1 px-2 py-1 rounded border border-border hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
+      >
+        <LogOut className="w-3 h-3" />
+        {t("auth.signOut" as any)}
+      </button>
+    </div>
+  );
+}
+
 export function Layout({ children }: { children: React.ReactNode }) {
   const { t } = useT();
   return (
@@ -63,6 +85,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
             {t("nav.sessions" as any)}
           </Link>
           <LangSwitch />
+          <UserMenu />
         </nav>
       </header>
       <main className="flex-1 max-w-7xl w-full mx-auto p-6 md:p-8">{children}</main>

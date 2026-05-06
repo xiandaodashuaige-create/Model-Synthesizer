@@ -5,6 +5,50 @@
  * Research Model Builder API
  * OpenAPI spec version: 0.1.0
  */
+export interface AuthUser {
+  id: string;
+  /** @nullable */
+  email: string | null;
+  /** @nullable */
+  firstName: string | null;
+  /** @nullable */
+  lastName: string | null;
+  /** @nullable */
+  profileImageUrl: string | null;
+}
+
+export interface AuthUserEnvelope {
+  user: AuthUser | null;
+}
+
+export type AiUsageSummaryByRouteItem = {
+  route: string;
+  calls: number;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  costUsd: number;
+};
+
+export interface AiUsageSummary {
+  totalCalls: number;
+  totalPromptTokens: number;
+  totalCompletionTokens: number;
+  totalTokens: number;
+  totalCostUsd: number;
+  byRoute: AiUsageSummaryByRouteItem[];
+}
+
+export interface PaperFullTextHit {
+  id: number;
+  title: string;
+  authors?: string[];
+  /** @nullable */
+  year?: number | null;
+  snippet: string;
+  rank: number;
+}
+
 export interface HealthStatus {
   status: string;
 }
@@ -534,6 +578,13 @@ export interface ModelVersionSummary {
   edgeCount: number;
   createdAt: string;
 }
+
+export type SearchSessionPapersFullTextParams = {
+  /**
+   * @minLength 1
+   */
+  q: string;
+};
 
 export type LookupPaper404 = {
   error: string;

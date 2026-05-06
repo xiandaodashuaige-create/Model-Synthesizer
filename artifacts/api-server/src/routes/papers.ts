@@ -1,9 +1,10 @@
 import { Router, type IRouter } from "express";
 import { createRequire } from "node:module";
 import multer from "multer";
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { db, papersTable, sessionsTable } from "@workspace/db";
 import { openai } from "@workspace/integrations-openai-ai-server";
+import { logAiUsageFromOpenAI } from "../lib/ai-usage";
 
 // pdf-parse v2 ships an ESM-native class API (`PDFParse`); load lazily via
 // createRequire so it is only initialised on first upload, not at boot time.
@@ -668,6 +669,7 @@ ${head}`;
           max_completion_tokens: 800,
           messages: [{ role: "user", content: aiPrompt }],
         });
+        logAiUsageFromOpenAI(completion, { route: "papers/upload-pdf-metadata", sessionId: Number(req.params["id"]) || null, userId: req.user?.id ?? null });
         const content = completion.choices[0]?.message?.content ?? "{}";
         const cleaned = content.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
         const aiMeta = JSON.parse(cleaned) as {
@@ -742,6 +744,82 @@ ${head}`;
     }
   },
 );
+
+router.get("/sessions/:id/papers/full-text-search", async (req, res): Promise<void> => {
+  const sessionId = Number(req.params["id"]);
+  if (!Number.isFinite(sessionId) || sessionId <= 0) {
+    res.status(400).json({ error: "Invalid session id" });
+    return;
+  }
+  const q = (typeof req.query["q"] === "string" ? req.query["q"] : "").trim();
+  if (!q) {
+    res.status(400).json({ error: "Missing query parameter q" });
+    return;
+  }
+
+  // Split the query on whitespace; require ALL tokens to appear (AND semantics)
+  // across (title || abstract || full_text). ILIKE is used for Unicode-friendly
+  // matching (Postgres tsvector does not stem CJK text). Cap at 50 hits.
+  const tokens = q.split(/\s+/).filter((t) => t.length > 0).slice(0, 8);
+  if (tokens.length === 0) {
+    res.json([]);
+    return;
+  }
+
+  const conds = tokens.map((tok) => {
+    const like = `%${tok.replace(/%/g, "\\%").replace(/_/g, "\\_")}%`;
+    return sql`(${papersTable.title} ILIKE ${like} OR coalesce(${papersTable.abstract},'') ILIKE ${like} OR coalesce(${papersTable.fullText},'') ILIKE ${like})`;
+  });
+  const combined = conds.reduce((acc, c) => sql`${acc} AND ${c}`);
+  const rows = await db
+    .select({
+      id: papersTable.id,
+      title: papersTable.title,
+      authors: papersTable.authors,
+      year: papersTable.year,
+      abstract: papersTable.abstract,
+      fullText: papersTable.fullText,
+    })
+    .from(papersTable)
+    .where(sql`${papersTable.sessionId} = ${sessionId} AND ${combined}`)
+    .limit(50);
+
+  // Build a snippet around the first matching token in title/abstract/fullText.
+  const lowerTokens = tokens.map((t) => t.toLowerCase());
+  function snippetOf(text: string): string {
+    const lower = text.toLowerCase();
+    let pos = -1;
+    let matched = "";
+    for (const tok of lowerTokens) {
+      const i = lower.indexOf(tok);
+      if (i >= 0 && (pos < 0 || i < pos)) { pos = i; matched = tok; }
+    }
+    if (pos < 0) return text.slice(0, 200);
+    const start = Math.max(0, pos - 80);
+    const end = Math.min(text.length, pos + matched.length + 120);
+    return (start > 0 ? "…" : "") + text.slice(start, end) + (end < text.length ? "…" : "");
+  }
+
+  const hits = rows.map((r) => {
+    const haystack = `${r.title}\n${r.abstract ?? ""}\n${(r.fullText ?? "").slice(0, 4000)}`;
+    const lowerHay = haystack.toLowerCase();
+    let rank = 0;
+    for (const tok of lowerTokens) {
+      let idx = 0;
+      while ((idx = lowerHay.indexOf(tok, idx)) !== -1) { rank++; idx += tok.length; }
+    }
+    return {
+      id: r.id,
+      title: r.title,
+      authors: r.authors ?? [],
+      year: r.year ?? null,
+      snippet: snippetOf((r.abstract && r.abstract.length > 50) ? r.abstract : (r.fullText ?? r.title)),
+      rank,
+    };
+  }).sort((a, b) => b.rank - a.rank);
+
+  res.json(hits);
+});
 
 router.delete("/sessions/:sessionId/papers/:paperId", async (req, res): Promise<void> => {
   const params = RemovePaperFromSessionParams.safeParse(req.params);

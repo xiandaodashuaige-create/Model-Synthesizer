@@ -7,6 +7,7 @@ import {
   GetVariableGraphParams,
 } from "@workspace/api-zod";
 import { openai } from "@workspace/integrations-openai-ai-server";
+import { logAiUsageFromOpenAI } from "../lib/ai-usage";
 import { CONSTRUCT_LAYERS } from "../lib/theoryTemplates.js";
 
 const router: IRouter = Router();
@@ -126,6 +127,7 @@ Strict rules:
       max_completion_tokens: 3500,
       messages: [{ role: "user", content: prompt }],
     });
+    logAiUsageFromOpenAI(completion, { route: "variables/extract", sessionId: paper.sessionId });
 
     const content = completion.choices[0]?.message?.content ?? "{}";
     let parsed: {

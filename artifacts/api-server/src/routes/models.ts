@@ -22,6 +22,7 @@ import {
   GenerateModelLiteratureReviewBody,
 } from "@workspace/api-zod";
 import { openai } from "@workspace/integrations-openai-ai-server";
+import { logAiUsageFromOpenAI } from "../lib/ai-usage";
 import {
   THEORY_BACKBONES,
   backbonesAsPromptBlock,
@@ -173,6 +174,7 @@ Strict rules:
       max_completion_tokens: 3000,
       messages: [{ role: "user", content: prompt }],
     });
+    logAiUsageFromOpenAI(completion, { route: "models/extract-paper-research-model", sessionId: paper.sessionId });
     const content = completion.choices[0]?.message?.content ?? "{}";
     const cleaned = content.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
     const parsed = JSON.parse(cleaned) as PaperResearchModel;
@@ -493,6 +495,7 @@ OUTPUT FORMAT — return ONLY a JSON array, no markdown:
       },
       { signal: AbortSignal.timeout(55_000) },
     );
+    logAiUsageFromOpenAI(completion, { route: "models/generate", sessionId, userId: req.user?.id ?? null });
   } catch (err: unknown) {
     const e = err as { name?: string; message?: string };
     const aborted = e?.name === "AbortError" || e?.name === "TimeoutError" || /aborted|timeout/i.test(e?.message ?? "");
@@ -1191,6 +1194,7 @@ ${edgeLines}`;
         { role: "user", content: userPrompt },
       ],
     });
+    logAiUsageFromOpenAI(completion, { route: "models/literature-review", sessionId: Number(req.params["id"]) || null, userId: req.user?.id ?? null });
     const markdown = (completion.choices[0]?.message?.content ?? "").trim();
     if (!markdown) {
       res.status(503).json({ error: "AI returned empty response" });
