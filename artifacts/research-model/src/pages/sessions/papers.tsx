@@ -640,14 +640,12 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
           disabled={extractAllProgress !== null || extractingPaperId !== null}
         />
       )}
-      {someExtracted && !allExtracted && (
-        <NextStepHint
-          title={t("papers.tip.next.title" as any)}
-          body={t("papers.tip.next.body" as any)}
-          href={`/sessions/${sessionId}/variables`}
-          cta={t("vars.goModels" as any)}
-        />
-      )}
+      {/* When some-but-not-all are extracted we deliberately do NOT show a
+          "go to models" / "go to variables" hint here — it would invite the
+          user to skip ahead while extraction is incomplete and the
+          generation-time guardrail would just block them with a confusing
+          error. The /variables and /models pages already show the right
+          forward CTA (with proper disabled state + reason). */}
       {allExtracted && (sessionPapers?.length ?? 0) > 0 && (
         <NextStepHint
           title={t("vars.tip.next.title" as any)}
