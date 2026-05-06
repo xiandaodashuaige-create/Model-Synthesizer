@@ -135,7 +135,10 @@ async function extractPaperResearchModel(
   const text = paper.fullText && paper.fullText.length > 200 ? paper.fullText : paper.abstract;
   if (!text || text.length < 80) return null;
 
-  const truncated = text.slice(0, 9000).replace(/\s+/g, " ");
+  // 9000 → 5000 chars. The research model lives in abstract/intro/methods —
+  // 5000 chars covers all three for a typical paper. Cutting ~4k input tokens
+  // off a call we run N times in parallel meaningfully shortens stage 1.
+  const truncated = text.slice(0, 5000).replace(/\s+/g, " ");
   const backboneNames = THEORY_BACKBONES.map((b) => b.id).join(", ");
 
   const prompt = `You are a research-methods analyst. Read this academic paper and extract its OWN research model AS A TYPED CAUSAL GRAPH in strict JSON.
@@ -170,16 +173,47 @@ Strict rules:
 - Direction matters: "from" is the cause/antecedent, "to" is the consequence.
 - For moderator edges: "from" is the moderator variable, "to" is the variable being moderated; sign = "moderates".
 - "evidence" MUST be a verbatim sentence copied from the paper text. If no such sentence exists, omit that edge.
+- "evidence" MUST be ≤ 160 characters (one short sentence, trim or pick the shortest qualifying sentence) — downstream rendering truncates beyond 160 anyway, and a tight cap keeps the JSON well within the response budget.
+- "summary" MUST be ≤ 280 characters total.
 - If the paper has no clearly stated research model, return summary="No explicit research model.", backboneGuess="", and empty arrays.
 - Do not invent variables.`;
 
   try {
-    const completion = await openai.chat.completions.create({
-      model: "gpt-5.4",
-      max_completion_tokens: 3000,
-      messages: [{ role: "user", content: prompt }],
-    });
+    // 25s per-paper abort. Without this, ANY single hung paper-graph call
+    // (stage 1) holds the entire /models/generate request hostage until the
+    // Replit Autoscale 60s wall kills it with a 502 — even though the
+    // function is designed to gracefully return null for missing graphs.
+    // 25s is well above the typical 4-10s extraction; if it slips past, we
+    // skip that paper's typed graph (callers already handle null) instead of
+    // sinking the whole generation. 3000 → 1500 token output: this graph has
+    // ≤14 nodes + ≤16 edges, fits comfortably in 1500 tokens, and a smaller
+    // budget shaves several seconds per call.
+    const completion = await openai.chat.completions.create(
+      {
+        model: "gpt-5.4",
+        // 2000 token output budget. Worst-case payload is summary (≤280 chars)
+        // + up to 14 nodes + up to 16 edges with verbatim evidence (capped at
+        // 160 chars per edge in the prompt above) + small hypothesis list.
+        // That's ~ (16 × 280) + (14 × 80) + 600 ≈ 6.2 KB ≈ ~1.6k tokens, so
+        // 2000 leaves a safety margin while still being well below the
+        // original 3000 (and dramatically below what would risk overflow).
+        max_completion_tokens: 2000,
+        messages: [{ role: "user", content: prompt }],
+      },
+      { signal: AbortSignal.timeout(25_000) },
+    );
     logAiUsageFromOpenAI(completion, { route: "models/extract-paper-research-model", sessionId: paper.sessionId });
+    // Catch the silent-truncation case explicitly. Unlike the variables
+    // extract route, this function has no JSON-repair fallback — a "length"
+    // finish makes JSON.parse below throw and the whole paper drops out of
+    // stage 1. We log it so we can spot prompt-budget regressions instead of
+    // silently degrading synthesis quality.
+    if (completion.choices[0]?.finish_reason === "length") {
+      reqLog.warn(
+        { paperId: paper.id, paperTitle: paper.title },
+        "Per-paper research-model extract hit max_completion_tokens — output likely truncated, paper graph may be lost",
+      );
+    }
     const content = completion.choices[0]?.message?.content ?? "{}";
     const cleaned = content.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
     const parsed = JSON.parse(cleaned) as PaperResearchModel;
@@ -191,13 +225,23 @@ Strict rules:
     parsed.graph.edges = parsed.graph.edges.slice(0, 16);
     parsed.coreVariables = Array.isArray(parsed.coreVariables) ? parsed.coreVariables.slice(0, 12) : parsed.graph.nodes.map((n) => n.name);
     parsed.hypotheses = Array.isArray(parsed.hypotheses) ? parsed.hypotheses.slice(0, 10) : [];
-    await db
+    // Fire-and-forget the cache write. Awaiting it here serialized N papers
+    // through Postgres on the critical path of /models/generate (each
+    // ~30-150ms × N = up to ~2s of pure DB wait). The cache only matters
+    // for FUTURE generations; the current request already has `parsed` in
+    // memory and doesn't need the row updated to proceed.
+    void db
       .update(papersTable)
       .set({ researchModel: parsed })
-      .where(eq(papersTable.id, paper.id));
+      .where(eq(papersTable.id, paper.id))
+      .catch((err) => reqLog.warn({ err, paperId: paper.id }, "Failed to persist per-paper research model cache (non-fatal)"));
     return parsed;
   } catch (err) {
-    reqLog.warn({ err, paperId: paper.id }, "Failed to extract per-paper research model");
+    const e = err as { name?: string; message?: string };
+    const isTimeout = e?.name === "AbortError" || e?.name === "TimeoutError" || /aborted|timeout/i.test(e?.message ?? "");
+    reqLog.warn({ err, paperId: paper.id, isTimeout }, isTimeout
+      ? "Per-paper research-model extract timed out (25s) — skipping this paper's typed graph"
+      : "Failed to extract per-paper research model");
     return null;
   }
 }
