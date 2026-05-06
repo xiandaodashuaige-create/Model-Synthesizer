@@ -8,6 +8,7 @@ import {
   generationFeedbackTable,
   paperHypothesesTable,
   modelVersionsTable,
+  sessionsTable,
 } from "@workspace/db";
 import { findEvidenceForModel, importWebPaper, makeEdgeKey, type EdgeInput } from "../lib/evidence-matching.js";
 import {
@@ -239,17 +240,25 @@ router.post("/sessions/:id/models/generate", async (req, res): Promise<void> => 
 
   const sessionId = params.data.id;
 
-  const variables = await db
-    .select()
-    .from(variablesTable)
-    .where(eq(variablesTable.sessionId, sessionId));
+  // Load session metadata + content in parallel. The session row carries
+  // `topic` (the user's stated research direction from session creation) —
+  // injected into the prompt below so the AI doesn't generate models that
+  // ignore what the user actually wants to research. Pre-fix this was
+  // serialized, paying ~3× DB round-trip latency on every generation.
+  const [sessionRows, variables, papers] = await Promise.all([
+    db.select({ topic: sessionsTable.topic, name: sessionsTable.name })
+      .from(sessionsTable).where(eq(sessionsTable.id, sessionId)).limit(1),
+    db.select().from(variablesTable).where(eq(variablesTable.sessionId, sessionId)),
+    db.select().from(papersTable).where(eq(papersTable.sessionId, sessionId)),
+  ]);
+  const sessionTopic = (sessionRows[0]?.topic ?? "").trim();
+  const sessionName = (sessionRows[0]?.name ?? "").trim();
 
   if (variables.length < 2) {
     res.status(400).json({ error: "Need at least 2 extracted variables to generate models. Please extract variables from papers first." });
     return;
   }
 
-  const papers = await db.select().from(papersTable).where(eq(papersTable.sessionId, sessionId));
   const paperMap = new Map(papers.map((p) => [p.id, p]));
   const papersWithVars = papers.filter((p) => variables.some((v) => v.paperId === p.id));
 
@@ -281,11 +290,30 @@ router.post("/sessions/:id/models/generate", async (req, res): Promise<void> => 
     papersWithVars.map(async (p) => ({ paper: p, model: await extractPaperResearchModel(p, req.log) })),
   );
 
-  // Build paper tags for grounding.
+  // Build paper tags for grounding. We include a truncated abstract so the
+  // AI can judge topical fit between papers (and between papers and the
+  // user's stated topic) — previously only the title was visible, which
+  // forced the AI to combine papers blindly even when one was clearly
+  // off-topic for the user's research direction.
+  //
+  // Token-budget guard: with 40 papers × 480 chars we'd add ~6k tokens of
+  // abstract alone, on top of the variable list / hypothesis pool / paper
+  // graphs / backbone catalog. Scale the per-paper cap down so that the
+  // total abstract budget stays around ~6 KB (~1.5k tokens) regardless of
+  // paper count. Small sessions still get the full 480 chars.
+  const perPaperAbstractCap = papersWithVars.length <= 12
+    ? 480
+    : Math.max(160, Math.floor(6000 / papersWithVars.length));
   const paperRefs = papersWithVars.map((p, idx) => {
     const tag = `P${idx + 1}`;
     const author = (p.authors ?? [])[0] ?? "Unknown";
-    return { id: p.id, tag, short: `${tag} = ${author}${p.year ? ` (${p.year})` : ""} — ${p.title}` };
+    const absSnippet = (p.abstract ?? "").trim().replace(/\s+/g, " ").slice(0, perPaperAbstractCap);
+    const absLine = absSnippet ? `\n     Abstract: ${absSnippet}${(p.abstract ?? "").length > perPaperAbstractCap ? "…" : ""}` : "";
+    return {
+      id: p.id,
+      tag,
+      short: `${tag} = ${author}${p.year ? ` (${p.year})` : ""} — ${p.title}${absLine}`,
+    };
   });
   const paperTagById = new Map(paperRefs.map((r) => [r.id, r.tag]));
 
@@ -410,6 +438,13 @@ router.post("/sessions/:id/models/generate", async (req, res): Promise<void> => 
   const userBlock = userPrompt
     ? `\n\nUSER REQUIREMENTS (must be followed strictly — these override default behavior):\n"""\n${userPrompt}\n"""`
     : "";
+  // Top-of-prompt research-direction block. This is the user's stated topic
+  // from session creation — it is the primary alignment signal for the AI.
+  // If the topic is empty (legacy sessions) we omit the block; the existing
+  // variable/paper material then carries the burden as before.
+  const topicBlock = sessionTopic
+    ? `\n\n================================================================\nRESEARCH TOPIC / USER'S STATED DIRECTION (TOP PRIORITY — every model MUST advance this exact topic; do not drift toward whatever variables happen to be most numerous):\nProject: "${sessionName || "(unnamed)"}"\nTopic: """\n${sessionTopic}\n"""\nIf some of the source papers below are tangential to this topic, prefer combinations that stay closer to the topic; only pull in tangential papers when they supply a missing mediator/moderator/boundary-condition that materially advances the topic.`
+    : "";
   const userPersonalizationBlock = await buildUserPersonalizationContext(req.user?.id);
   const focusBlock = focusVariableIds.length > 0
     ? `\n\nUSER-PRIORITY variable IDs: ${focusVariableIds.join(", ")}. At least ${Math.ceil(numModels / 2)} of the ${numModels} models MUST include these.`
@@ -418,10 +453,10 @@ router.post("/sessions/:id/models/generate", async (req, res): Promise<void> => 
   // Synthesis prompt: explicit STRUCTURAL OPERATORS + theory backbones.
   const prompt = `You are a senior researcher in academic methodology and structural equation modeling.
 
-Your task: produce ${numModels} *novel* and theoretically coherent research model proposals by RECOMBINING the source papers' own research models below using EXPLICIT STRUCTURAL OPERATORS. Each output model MUST be the result of applying TWO chained operators (a primary then a different secondary) to AT LEAST ${userPrompt ? "TWO" : "THREE"} of the original models.
+Your task: produce ${numModels} *novel* and theoretically coherent research model proposals by RECOMBINING the source papers' own research models below using EXPLICIT STRUCTURAL OPERATORS. Each output model MUST be the result of applying TWO chained operators (a primary then a different secondary) to AT LEAST ${userPrompt ? "TWO" : "THREE"} of the original models.${topicBlock}
 
 ================================================================
-PAPER REFERENCES (use exact tags when citing):
+PAPER REFERENCES (use exact tags when citing — abstracts included so you can judge topical fit):
 ${paperRefs.map((r) => r.short).join("\n")}
 
 ================================================================
@@ -463,6 +498,7 @@ HARD RULES (violations = invalid output):
 11. **One role per canonical construct**: a single canonicalConstruct may NOT appear with two different roles in the same model (e.g. you cannot use "trust" as both a mediator AND a moderator in the same model). This prevents nonsensical self-moderation.
 12. **Moderator justification (REQUIRED when relationship = "moderates")**: every moderator edge MUST include a non-empty \`moderatorJustification\` field (≥ 1 sentence) explaining (a) WHY this variable can theoretically condition the moderated path (e.g. it's a contextual factor, individual difference, or boundary condition) and (b) WHICH paper grounds this moderating role. Without justification, the moderator edge is rejected.
 13. **Hypothesis-grounded evidence (preferred)**: when an edge corresponds to a row in the FORMAL HYPOTHESES POOL above, set \`evidenceHypothesisId\` to that row's id (e.g. "H2a"), copy \`statement\` verbatim into \`evidenceCitationText\`, copy \`effectSize\` and \`pageOrSection\` if available. Edges grounded in formal hypotheses are stronger than those grounded only in narrative citations.
+14. **Topic alignment (CRITICAL when a RESEARCH TOPIC block is present above)**: every generated model MUST visibly advance the user's stated research topic. The model's \`description\` MUST start with one sentence in the user's language that names the topic and explains how this model addresses it (e.g. "针对你提出的『AI 主播对冲动消费的影响』方向，本模型……"). The \`rationale\` MUST also reference the topic explicitly. Models that recombine variables in interesting structural ways but drift away from the stated topic (e.g. ignoring the user's industry/context, or producing a model whose dependent variable is unrelated to the topic) are LOW quality and will be rejected. If the topic is so narrow that only 2 papers are clearly relevant, override Hard Rule #4's "≥3 papers" requirement and prefer a topically-tight 2-paper combination over a topically-loose 3-paper one — call this out in the rationale.
 
 OUTPUT FORMAT — return ONLY a JSON array, no markdown:
 [

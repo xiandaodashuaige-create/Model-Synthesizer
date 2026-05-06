@@ -30,12 +30,19 @@ router.post("/sessions/:id/model-assistant", async (req, res) => {
   const sessionId = params.data.id;
   const messages = body.data.messages as ChatMsg[];
 
-  // Build session context: papers, variables, existing models.
-  const [papers, variables, models] = await Promise.all([
+  // Build session context: papers, variables, existing models, and the
+  // user's stated research topic from session creation. The topic block is
+  // the single most important alignment signal for the assistant — without
+  // it the chat would suggest variable combinations that ignore what the
+  // user actually wants to study.
+  const [papers, variables, models, sessionRows] = await Promise.all([
     db.select().from(papersTable).where(eq(papersTable.sessionId, sessionId)),
     db.select().from(variablesTable).where(eq(variablesTable.sessionId, sessionId)),
     db.select().from(researchModelsTable).where(eq(researchModelsTable.sessionId, sessionId)),
+    db.select({ topic: sessionsTable.topic, name: sessionsTable.name }).from(sessionsTable).where(eq(sessionsTable.id, sessionId)).limit(1),
   ]);
+  const sessionTopic = (sessionRows[0]?.topic ?? "").trim();
+  const sessionName = (sessionRows[0]?.name ?? "").trim();
 
   if (variables.length === 0) {
     res.json({
@@ -44,10 +51,21 @@ router.post("/sessions/:id/model-assistant", async (req, res) => {
     return;
   }
 
+  // Same token-budget guard as models/generate: cap total abstract bytes so
+  // a 40-paper session doesn't blow up the chat context. Small sessions
+  // still get the full 360 chars per paper.
+  const chatAbstractCap = papers.length <= 12
+    ? 360
+    : Math.max(140, Math.floor(4500 / papers.length));
   const paperLines = papers.map((p, i) => {
     const tag = `P${i + 1}`;
     const authors = (p.authors ?? []).slice(0, 2).join(", ");
-    return `  - id=${p.id} ${tag}: ${p.title} (${authors}${p.year ? `, ${p.year}` : ""})`;
+    // Include a truncated abstract so the assistant can judge each paper's
+    // topical fit to the user's stated research direction, instead of
+    // treating every paper as equally relevant just because it's been added.
+    const absSnippet = (p.abstract ?? "").trim().replace(/\s+/g, " ").slice(0, chatAbstractCap);
+    const absLine = absSnippet ? `\n      Abstract: ${absSnippet}${(p.abstract ?? "").length > chatAbstractCap ? "…" : ""}` : "";
+    return `  - id=${p.id} ${tag}: ${p.title} (${authors}${p.year ? `, ${p.year}` : ""})${absLine}`;
   }).join("\n");
 
   const varLines = variables.map((v) => {
@@ -91,7 +109,14 @@ The suggestion will pre-fill the generation form and select variables — keep u
 You may emit BOTH a suggestion block AND a needs_more_papers block in the same reply if you can give a partial model now but recommend strengthening it with more literature. If materials are clearly sufficient, OMIT the needs_more_papers block entirely.
 
 ================ SESSION CONTEXT ================
-PAPERS (${papers.length}):
+${sessionTopic ? `RESEARCH TOPIC / USER'S STATED DIRECTION (TOP PRIORITY — every suggestion must advance this exact topic):
+Project: "${sessionName || "(unnamed)"}"
+Topic: """
+${sessionTopic}
+"""
+When suggesting model combinations, prefer papers and variables that directly serve this topic. If a paper in the pool below is tangential, say so plainly instead of treating it as a peer — and if the user's request would drift away from the stated topic, ask one short clarifying question before suggesting.
+
+` : ""}PAPERS (${papers.length}):
 ${paperLines || "  (none)"}
 
 VARIABLES (${variables.length}):
