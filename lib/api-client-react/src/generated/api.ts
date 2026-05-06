@@ -27,7 +27,10 @@ import type {
   ChatModelAssistantBody,
   CreateSessionBody,
   ErrorResponse,
+  GenerateModelLiteratureReview200,
+  GenerateModelLiteratureReviewBody,
   GenerateModelsBody,
+  GetModelQualityReport200,
   GetSessionLearningStats200,
   HealthStatus,
   ImageBlocklistEntry,
@@ -2472,6 +2475,189 @@ export function useGetModel<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * @summary Compute a structural / evidence / layer / role-duplication / moderator-justified quality report for a model. Pure compute — no AI call.
+ */
+export const getGetModelQualityReportUrl = (id: number) => {
+  return `/api/models/${id}/quality-report`;
+};
+
+export const getModelQualityReport = async (
+  id: number,
+  options?: RequestInit,
+): Promise<GetModelQualityReport200> => {
+  return customFetch<GetModelQualityReport200>(
+    getGetModelQualityReportUrl(id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetModelQualityReportQueryKey = (id: number) => {
+  return [`/api/models/${id}/quality-report`] as const;
+};
+
+export const getGetModelQualityReportQueryOptions = <
+  TData = Awaited<ReturnType<typeof getModelQualityReport>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getModelQualityReport>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetModelQualityReportQueryKey(id);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getModelQualityReport>>
+  > = ({ signal }) => getModelQualityReport(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getModelQualityReport>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetModelQualityReportQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getModelQualityReport>>
+>;
+export type GetModelQualityReportQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Compute a structural / evidence / layer / role-duplication / moderator-justified quality report for a model. Pure compute — no AI call.
+ */
+
+export function useGetModelQualityReport<
+  TData = Awaited<ReturnType<typeof getModelQualityReport>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getModelQualityReport>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetModelQualityReportQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary AI-generate a publication-ready literature review paragraph (with APA-7 in-text citations) summarizing the model and its evidence.
+ */
+export const getGenerateModelLiteratureReviewUrl = (id: number) => {
+  return `/api/models/${id}/literature-review`;
+};
+
+export const generateModelLiteratureReview = async (
+  id: number,
+  generateModelLiteratureReviewBody?: GenerateModelLiteratureReviewBody,
+  options?: RequestInit,
+): Promise<GenerateModelLiteratureReview200> => {
+  return customFetch<GenerateModelLiteratureReview200>(
+    getGenerateModelLiteratureReviewUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(generateModelLiteratureReviewBody),
+    },
+  );
+};
+
+export const getGenerateModelLiteratureReviewMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof generateModelLiteratureReview>>,
+    TError,
+    { id: number; data: BodyType<GenerateModelLiteratureReviewBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof generateModelLiteratureReview>>,
+  TError,
+  { id: number; data: BodyType<GenerateModelLiteratureReviewBody> },
+  TContext
+> => {
+  const mutationKey = ["generateModelLiteratureReview"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof generateModelLiteratureReview>>,
+    { id: number; data: BodyType<GenerateModelLiteratureReviewBody> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return generateModelLiteratureReview(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type GenerateModelLiteratureReviewMutationResult = NonNullable<
+  Awaited<ReturnType<typeof generateModelLiteratureReview>>
+>;
+export type GenerateModelLiteratureReviewMutationBody =
+  BodyType<GenerateModelLiteratureReviewBody>;
+export type GenerateModelLiteratureReviewMutationError =
+  ErrorType<ErrorResponse>;
+
+/**
+ * @summary AI-generate a publication-ready literature review paragraph (with APA-7 in-text citations) summarizing the model and its evidence.
+ */
+export const useGenerateModelLiteratureReview = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof generateModelLiteratureReview>>,
+    TError,
+    { id: number; data: BodyType<GenerateModelLiteratureReviewBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof generateModelLiteratureReview>>,
+  TError,
+  { id: number; data: BodyType<GenerateModelLiteratureReviewBody> },
+  TContext
+> => {
+  return useMutation(getGenerateModelLiteratureReviewMutationOptions(options));
+};
 
 /**
  * @summary Mark a model as selected by the user

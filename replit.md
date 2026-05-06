@@ -132,6 +132,16 @@ Per-session user-curated research model with provenance-tracked edges. Independe
 
 **i18n** (`artifacts/research-model/src/lib/i18n.tsx`): added `md.modJust`, `md.export.{apa,apaTip,done,doneDesc}`, `models.assistant.searchImages.{block,blockTip}` for both zh + en.
 
+## P3 Trust+Quality Push (May 2026, round 3)
+
+Three surgical wins focused on transparency & writing-output:
+
+1. **Image filter "why" reason** (`model-assistant.ts:aiRelevanceFilter`) — gate now returns `{i,category,why?}` per kept image; OpenAPI exposes `why` on `imageResults[]`; frontend `model-assistant-chat.tsx` renders an emerald italic caption under each result. Trimmed to ≤120 chars server-side.
+2. **Model quality self-check** (`GET /models/:id/quality-report`) — pure compute, no AI cost. Returns `{structuralScore (0-100, best-fit across 17 backbones), evidenceScore, layerCompliance, duplicateRoleCheck, moderatorJustified, weakEdges[{from,to,reason}], totals}`. Frontend `model-detail.tsx` renders a 5-cell badge bar above the rationale block + a weak-edge list with i18n reason codes (`no_evidence`/`layer_jump`/`duplicate_role`/`missing_moderator_justification`).
+3. **Literature review paragraph** (`POST /models/:id/literature-review`) — AI assembles a publication-ready paragraph (zh or en, `lang` param) with APA-7 in-text citations from model nodes+edges+evidence. Frontend has emerald "生成文献综述段落" button next to APA export → modal with read-only textarea + Copy + Regenerate.
+
+**Codegen note**: orval's auto-generated `lib/api-zod/src/index.ts` keeps re-adding `export * from "./generated/api.schemas"` (which doesn't exist for zod's split mode). Codegen script (`lib/api-spec/package.json`) now overwrites that index.ts back to a single-line export after orval, before typecheck.
+
 ## Image Search Pipeline (`POST /sessions/:id/model-assistant/search-model-images`)
 
 Multi-stage pipeline in `artifacts/api-server/src/routes/model-assistant.ts` that finds research-model figures from published papers. Designed for three goals: wide database, queries close to user need, pre-cleaned results.

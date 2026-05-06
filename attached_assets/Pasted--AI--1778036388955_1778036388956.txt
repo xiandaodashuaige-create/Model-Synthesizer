@@ -1,0 +1,214 @@
+一、图片搜索：从"屏蔽坏结果"升级为"主动发现好结果"
+当前状态的体验缺口
+你现在做的是事后过滤（搜出来再屏蔽坏的），但用户真正的痛点是搜不到对的。当用户搜"AI主播 信任 购买意愿"的概念模型图时，通用图片搜索引擎的索引里根本就没几张相关的学术图。黑名单只解决"结果里有垃圾"，不解决"结果太 sparse"。
+深度优化建议
+1.1 新增"从用户已添加论文中提取图表"功能（体验飞跃）
+这是最直接解决"搜不到"的手段。用户项目里已有的论文，本身就是最相关的图库。
+具体实现路径：
+在论文添加流程中（OpenAlex导入或PDF上传后），增加一个异步图表提取任务：
+对OpenAlex论文：如果 primary_location.pdf_url 存在，下载PDF后用 pdf2pic/pdfjs 将每页渲染为图片
+对用户上传的PDF：直接处理已有文件
+用GPT-4V或轻量级图像分类模型（如ResNet+自定义分类头）筛选出"包含方框和箭头的页面"
+将提取到的图表页保存到 paper_figures 表：
+TypeScript
+复制
+paper_figures: {
+  id, paperId, pageNumber, imageUrl, 
+  figureType: "conceptual_model"|"sem_path"|"framework"|"methodology"|"other",
+  extractedAt, aiConfidence
+}
+图片搜索UI新增一个数据源切换器：
+"从我的论文中提取"（默认）→ 只搜索用户项目内论文的图表
+"从学术网络搜索" → 现有SerpApi/Brave逻辑
+这样用户的搜索体验从"大海捞针"变成"从我已经验证过的论文里找图"
+1.2 增加"图-论文"关联的Hover预览（体验细节）
+当用户看到一张搜索结果的缩略图时，现在的体验是：点进去看原网页。更好的体验：
+Hover卡片：鼠标悬停在图片上时，显示：
+这张图片来自哪篇论文（作者，年份，标题）
+该论文的引用次数
+该论文中被提取的关键变量列表
+"查看论文模型" 快速跳转按钮
+点击图片后的侧边栏：不是直接跳外链，而是在右侧滑出面板：
+大图预览
+论文基本信息 + OpenAlex链接
+该论文提取出的变量列表（如果有）
+"将这张图的变量加入我的项目" 按钮（一键导入）
+1.3 图片搜索结果增加"为什么推荐"的解释（建立信任）
+当前AI筛选只返回一个 category badge（如"✓ SEM路径图"），用户不知道为什么这张图和他的研究相关。
+建议在每张图片卡片底部增加一小行解释文字（由AI生成，限制30字）：
+"来自2023年关于AI主播信任的论文，包含心流体验→购买意愿的中介路径"
+实现方式：在 aiRelevanceFilter 函数中，让AI不只返回 keep: [{i, category}]，还返回一句话理由：
+JSON
+复制
+{"keep":[{"i":0,"category":"conceptual_model","why":"与您项目中的'perceived trust'和'purchase intention'变量直接匹配"}]}
+1.4 增加图片的"学术质量评分"排序维度
+当前的排序只基于 _score（关键词匹配+学术域名加分）。建议增加一个综合质量分：
+TypeScript
+复制
+interface ImageQualityScore {
+  citationScore: number;      // 来源论文的被引次数（从OpenAlex获取）
+  recencyScore: number;       // 发表年份越近越高分（5年内满分）
+  figureClarityScore: number; // 图片分辨率/尺寸
+  relevanceScore: number;     // 现有_score
+  userFeedbackScore: number;  // 用户历史点击率（从feedback表统计）
+}
+这样用户看到的排序不只是"关键词匹配度高"，而是"这张图来自一篇高被引的近期论文，且图片清晰"。
+二、模型组合：从"AI自由创作+后验规则过滤"升级为"数据驱动推荐+结构化填空"
+当前状态的体验缺口
+你现在的方式是：把所有变量和理论骨架扔给AI → AI自由组合 → 后验验证器过滤不符合规则的。这个流程的问题是：
+AI经常会生成被验证器拒绝的模型（你代码里就有 rejected 数组专门收集这些）
+用户看到的生成过程是黑盒的——不知道AI为什么这么连
+没有利用"变量关系的历史数据库"——如果100篇论文都验证过 A→B，那这个边应该是"强推荐"，而不是让AI每次重新判断
+深度优化建议
+2.1 构建"跨论文变量关系图谱"（核心数据基础设施）
+这是从"AI乱连"到"数据驱动推荐"的关键转变。在现有 paperHypothesesTable 的基础上，构建一个聚合视图：
+新增 construct_relationships 物化视图/表：
+sql
+复制
+-- 聚合所有论文中提取的假设，形成全局变量关系知识库
+CREATE TABLE construct_relationships AS
+SELECT 
+  canonicalFrom,           -- 标准化后的源变量名
+  canonicalTo,             -- 标准化后的目标变量名
+  relationshipType,        -- positive|negative|moderates|mediates
+  supportingPapers,        -- 支持这条关系的论文ID数组
+  supportingHypotheses,    -- 对应的假设ID数组
+  totalOccurrences,        -- 出现次数
+  avgEffectSize,           -- 平均效应量（如果有）
+  primaryDomains,          -- 主要出现在哪些研究领域
+  earliestYear,            -- 最早验证年份
+  latestYear               -- 最新验证年份
+FROM paper_hypotheses
+GROUP BY canonicalFrom, canonicalTo, relationshipType;
+前端体验：
+在变量图谱页面，边的粗细/颜色由 totalOccurrences 决定：
+粗边 = 多篇论文验证过（强证据）
+细边 = 只有1篇论文（弱证据）
+红色边 = moderator关系
+蓝色边 = mediator关系
+Hover边时显示："这条关系在N篇论文中被验证，最新来自Author(Year)"
+2.2 模型生成改为"推荐候选 + AI填空"模式
+现有流程：AI从零创作整个模型 → 验证器过滤
+优化流程：
+系统层先计算出"合法的候选边集"（算法驱动，确定性强）：
+从 construct_relationships 中筛选出：两端变量都在当前session的变量池中的边
+应用 layerIndex 过滤：只允许从低层指向高层的边
+应用 sharedVariables 过滤：标记可作为EXTEND连接点的共享变量
+应用操作符约束：为每个操作符生成一组"合法变量组合"
+输出：候选边列表（每条边标注：支持论文数、效应量、是否来自formal hypothesis）
+将候选边集注入AI prompt，让AI在这个"已经合法的菜单"里选择和组合：
+plain
+复制
+CANDIDATE EDGE POOL (system-validated, you MUST pick from this list):
+- A→B [supported by 3 papers: P1(H1), P3(H2), P5(H4)] [layer: cognitive→affective]
+- B→C [supported by 2 papers: P2(H1a), P4(H3)] [layer: affective→intention]
+- M moderates A→B [supported by 1 paper: P6(H5)] [justification provided]
+AI的任务从"创作"变成"组合设计"，大幅降低被拒绝率
+前端体验：
+生成模型前，用户可以先看到"可用的关系池"——一张大网，蓝线是多篇论文支持的强关系，灰线是弱关系
+用户可以点击"希望包含这条关系"来引导AI生成
+2.3 增加"操作符预览"功能（让生成过程透明）
+现在的操作符（EXTEND/INSERT_MODERATOR等）对用户来说是个黑盒概念。建议：
+在生成页面，每个操作符做成一个可展开的卡片：
+显示操作符的定义 + 一个mini示例图（用简单的SVG动画展示"这个操作符做什么"）
+显示在当前项目中，这个操作符可以应用到哪些变量组合上
+示例："EXTEND: 检测到P1的perceived usefulness→attitude可以和P3的attitude→behavioral intention连接（共享变量：attitude）"
+用户勾选"使用EXTEND"后，系统高亮显示图中哪些边会被EXTEND影响
+2.4 增加"模型合理性检查面板"（生成后）
+模型生成后，不只是显示模型图，还要显示一个质量评分面板：
+TypeScript
+复制
+interface ModelQualityReport {
+  structuralScore: number;      // 结构是否符合经典骨架（0-100）
+  evidenceScore: number;        // 有多少条边有论文支持（0-100）
+  noveltyScore: number;         // 跨论文组合的新颖程度（0-100）
+  layerCompliance: boolean;     // 是否遵守construct layer顺序
+  duplicateRoleCheck: boolean;  // 是否有变量同时做med+mod
+  moderatorJustified: boolean;  // 所有调节变量都有解释
+  weakEdges: Array<{            // 需要用户注意的边
+    edge: {from, to},
+    warning: "这条关系仅来自1篇论文，建议补充文献"
+  }>;
+}
+前端展示：用雷达图展示三个分数，用✓/✗清单展示检查项，用黄色高亮显示weakEdges。
+三、参考依据展示：从"有字段"升级为"可读性强的证据面板"
+当前状态的体验缺口
+你已经在数据结构层面加了 evidenceHypothesisId / effectSize / evidenceLocation 等字段，但前端如何展示这些字段决定了用户是否能"一眼看懂这条边的证据强度"。
+深度优化建议
+3.1 Edge点击后弹出"证据详情面板"
+当前点击模型图的边后，可能只显示简单的文本。建议改为滑动面板/弹窗，分层展示：
+plain
+复制
+┌─────────────────────────────────────┐
+│  🔗 Perceived Trust → Purchase Intention │
+│                                     │
+│  【证据等级】🟢 强（3篇论文支持）      │
+│                                     │
+│  ┌─ 直接来源论文 ─────────────────┐ │
+│  │ P3: Wang & Liu (2023)         │ │
+│  │    假设H2a: "Perceived trust   │ │
+│  │    positively affects purchase │ │
+│  │    intention (β=.42, p<.001)"  │ │
+│  │    📄 p.215, Section 4.2      │ │
+│  │    [查看原文PDF]               │ │
+│  └────────────────────────────────┘ │
+│                                     │
+│  ┌─ 操作符应用记录 ───────────────┐ │
+│  │ 通过EXTEND操作符，将P3的H2a   │ │
+│  │ 与P5的mediator chain连接       │ │
+│  │ [展开推导过程]                 │ │
+│  └────────────────────────────────┘ │
+│                                     │
+│  【可信度警告】⚠️ 这条边的调节变量    │
+│  (perceived risk) 仅来自1篇论文，   │
+│  建议在论文中补充更多文献支持        │
+└─────────────────────────────────────┘
+3.2 模型图本身增加"证据可视化编码"
+不用等用户点击，图上的边本身就编码证据强度：
+边的粗细：支持论文越多 → 边越粗
+边的颜色：
+深绿色 = 有formal hypothesis + effect size
+浅绿色 = 有论文引用但无formal hypothesis
+橙色 = AI推断/仅有1篇弱支持
+红色虚线 = 缺少文献支持（需要用户补充）
+边的标签：hover时显示 "H2a (β=.42)" 或 "3 papers"
+3.3 自动生成"模型文献综述段落"
+对生成的新模型，AI自动生成一段可以直接放进论文的文献综述文字：
+"本研究模型整合了三个理论视角。首先，基于SOR理论（Mehrabian & Russell, 1974），我们将直播环境特征视为刺激变量。其次，参照Wang & Liu (2023) 的发现，感知信任对购买意愿的正向影响（β=.42, p<.001）被引入为主效应。最后，通过JD-R模型的资源路径（Bakker & Demerouti, 2007），我们将主播互动性作为工作资源纳入模型..."
+这段文字自动：
+引用所有涉及的骨架理论（带原始作者和年份）
+对每条边标注来源论文和假设编号
+说明操作符的应用逻辑（"通过EXTEND操作将P1的A→B与P2的B→C连接"）
+输出为可复制到Word的格式（带APA引用）
+3.4 增加"参考文献自动导出"功能
+模型确定后，一键导出：
+APA格式参考文献列表（包含模型中引用的所有论文）
+引用矩阵（Excel/CSV：行=变量，列=论文，单元格=该论文是否支持这个变量/关系）
+假设溯源表（Word表格：H1→来源论文→原假设编号→效应量→页码）
+四、新增的高价值体验功能建议
+4.1 "模型对比"功能（A/B对比视图）
+当用户生成了多个模型候选后，允许选择两个模型进行并排对比：
+左右两列显示两个模型的图
+中间列显示差异高亮：共有的边用绿色，独有的边用红色
+底部对比表格：节点数、边数、理论骨架、证据分数、操作符组合
+4.2 "模型演化历史"（时间线视图）
+你已经在数据库层面保留了 generationFeedbackTable，建议前端做一个时间线：
+plain
+复制
+[第一轮生成] ──用户选择了模型A并编辑了XX──→ [第二轮生成] ──...→ [最终版]
+每个节点可以展开查看当时的模型快照，方便用户回溯思路。
+4.3 协作功能（导师/同学审阅）
+博士论文写作通常需要导师审阅模型。建议增加：
+分享链接：生成一个只读链接，导师可以看到模型图 + 证据面板
+批注功能：导师可以在特定边上添加批注（如"这条关系需要补充文献"）
+版本对比分享：导师可以看到"学生改了什么"
+优先级排序建议
+表格
+优先级	功能	原因
+P0	从已添加论文中提取图表	直接解决图片"搜不到"的根本问题
+P0	构建 construct_relationships 关系图谱	模型组合从"AI乱连"变"数据驱动"的核心
+P1	Edge证据详情面板 + 可视化编码	直接解决"参考依据不清晰"问题
+P1	候选边集预览 + 操作符可视化	大幅提升模型生成的透明度和可控性
+P2	模型质量评分面板	帮助用户判断生成结果的好坏
+P2	自动生成文献综述段落	直接服务于博士论文写作场景
+P3	模型对比/演化历史/协作	提升长期使用的体验

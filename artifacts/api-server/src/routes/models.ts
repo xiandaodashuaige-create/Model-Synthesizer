@@ -17,6 +17,7 @@ import {
   UpdateModelParams,
   UpdateModelBody,
   GetSessionLearningStatsParams,
+  GenerateModelLiteratureReviewBody,
 } from "@workspace/api-zod";
 import { openai } from "@workspace/integrations-openai-ai-server";
 import {
@@ -779,6 +780,239 @@ router.patch("/models/:id", async (req, res): Promise<void> => {
   }
 
   res.json(formatModel(updated));
+});
+
+// Pure-compute model quality report. No AI cost. Reads model + session
+// hypotheses + variable layers, returns 5 health checks + a list of weak edges
+// for the UI to highlight.
+router.get("/models/:id/quality-report", async (req, res): Promise<void> => {
+  const params = GetModelParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: params.error.message });
+    return;
+  }
+
+  const [model] = await db.select().from(researchModelsTable).where(eq(researchModelsTable.id, params.data.id));
+  if (!model) {
+    res.status(404).json({ error: "Model not found" });
+    return;
+  }
+
+  const nodes = (model.nodes ?? []) as ModelNode[];
+  const edges = (model.edges ?? []) as ModelEdge[];
+
+  // Pull session-scoped variable layer info.
+  const sessionVars = await db.select().from(variablesTable).where(eq(variablesTable.sessionId, model.sessionId));
+  const layerByVarId = new Map<number, string | null>();
+  const canonicalByVarId = new Map<number, string | null>();
+  for (const v of sessionVars) {
+    layerByVarId.set(v.id, (v as { constructLayer?: string | null }).constructLayer ?? null);
+    canonicalByVarId.set(v.id, (v as { canonicalConstructId?: string | null }).canonicalConstructId ?? null);
+  }
+
+  // ---- structuralScore: heuristic match against any backbone slot ranges
+  const counts = nodes.reduce<Record<string, number>>((acc, n) => {
+    acc[n.type] = (acc[n.type] ?? 0) + 1;
+    return acc;
+  }, {});
+  const fitsBackbone = (b: typeof THEORY_BACKBONES[number]): number => {
+    const inRange = (n: number, slot?: { min: number; max: number }) =>
+      slot ? (n >= slot.min && n <= slot.max ? 1 : 0) : (n === 0 ? 1 : 0.5);
+    const indFit = inRange(counts.independent ?? 0, b.slots.independent);
+    const medFit = inRange(counts.mediator ?? 0, b.slots.mediator);
+    const modFit = inRange(counts.moderator ?? 0, b.slots.moderator);
+    const depFit = inRange(counts.dependent ?? 0, b.slots.dependent);
+    return (indFit + medFit + modFit + depFit) / 4;
+  };
+  const bestFit = THEORY_BACKBONES.reduce((m, b) => Math.max(m, fitsBackbone(b)), 0);
+  const structuralScore = Math.round(bestFit * 100);
+
+  // ---- evidenceScore: % of edges with hypothesisId or effectSize or location
+  const edgesWithEvidence = edges.filter(
+    (e) => (e.evidenceHypothesisId && e.evidenceHypothesisId.trim()) || (e.effectSize && e.effectSize.trim()) || (e.evidenceLocation && e.evidenceLocation.trim()),
+  ).length;
+  const evidenceScore = edges.length === 0 ? 0 : Math.round((edgesWithEvidence / edges.length) * 100);
+
+  // ---- layerCompliance + per-edge layer_jump weak-edges
+  const weakEdges: Array<{ fromVariableName: string; toVariableName: string; reason: string }> = [];
+  let layerCompliance = true;
+  for (const e of edges) {
+    if (e.relationship === "moderates") continue; // moderation has no directional layer rule
+    const fromLayer = layerByVarId.get(e.fromVariableId);
+    const toLayer = layerByVarId.get(e.toVariableId);
+    if (!fromLayer || !toLayer) continue;
+    const fi = layerIndex(fromLayer);
+    const ti = layerIndex(toLayer);
+    if (fi >= 0 && ti >= 0 && fi > ti) {
+      layerCompliance = false;
+      weakEdges.push({ fromVariableName: e.fromVariableName, toVariableName: e.toVariableName, reason: "layer_jump" });
+    }
+  }
+
+  // ---- duplicateRoleCheck: same canonical construct in conflicting roles
+  const canonRoles = new Map<string, Set<string>>();
+  for (const n of nodes) {
+    const c = canonicalByVarId.get(n.variableId);
+    if (!c) continue;
+    if (!canonRoles.has(c)) canonRoles.set(c, new Set());
+    canonRoles.get(c)!.add(n.type);
+  }
+  // Match generator validator: ANY canonical construct appearing in >1 role is a conflict.
+  let duplicateRoleCheck = true;
+  const conflictedCanon = new Set<string>();
+  for (const [c, roles] of canonRoles) {
+    if (roles.size > 1) {
+      duplicateRoleCheck = false;
+      conflictedCanon.add(c);
+    }
+  }
+  // Emit a weak edge for every edge whose endpoint canonical construct is conflicted.
+  if (conflictedCanon.size > 0) {
+    const seen = new Set<string>();
+    for (const e of edges) {
+      const cf = canonicalByVarId.get(e.fromVariableId);
+      const ct = canonicalByVarId.get(e.toVariableId);
+      if ((cf && conflictedCanon.has(cf)) || (ct && conflictedCanon.has(ct))) {
+        const k = `${e.fromVariableId}->${e.toVariableId}`;
+        if (seen.has(k)) continue;
+        seen.add(k);
+        weakEdges.push({ fromVariableName: e.fromVariableName, toVariableName: e.toVariableName, reason: "duplicate_role" });
+      }
+    }
+  }
+
+  // ---- moderatorJustified: every moderates edge needs a justification
+  const moderatesEdges = edges.filter((e) => e.relationship === "moderates");
+  const moderatesJustified = moderatesEdges.filter((e) => e.moderatorJustification && e.moderatorJustification.trim().length > 0).length;
+  const moderatorJustified = moderatesEdges.length === 0 || moderatesJustified === moderatesEdges.length;
+  for (const e of moderatesEdges) {
+    if (!e.moderatorJustification || !e.moderatorJustification.trim()) {
+      weakEdges.push({ fromVariableName: e.fromVariableName, toVariableName: e.toVariableName, reason: "missing_moderator_justification" });
+    }
+  }
+
+  // ---- weak-edge: no_evidence (no hypothesisId AND no effectSize AND no location AND no citation text)
+  for (const e of edges) {
+    const hasAny =
+      (e.evidenceHypothesisId && e.evidenceHypothesisId.trim()) ||
+      (e.effectSize && e.effectSize.trim()) ||
+      (e.evidenceLocation && e.evidenceLocation.trim()) ||
+      (e.evidenceCitationText && e.evidenceCitationText.trim());
+    if (!hasAny) {
+      weakEdges.push({ fromVariableName: e.fromVariableName, toVariableName: e.toVariableName, reason: "no_evidence" });
+    }
+  }
+
+  res.json({
+    structuralScore,
+    evidenceScore,
+    layerCompliance,
+    duplicateRoleCheck,
+    moderatorJustified,
+    weakEdges,
+    totals: {
+      edges: edges.length,
+      edgesWithEvidence,
+      moderatesEdges: moderatesEdges.length,
+      moderatesJustified,
+    },
+  });
+});
+
+// AI-generate a publication-ready literature review paragraph that summarizes
+// the model and cites every supporting paper in APA-7 in-text style.
+router.post("/models/:id/literature-review", async (req, res): Promise<void> => {
+  const params = GetModelParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: params.error.message });
+    return;
+  }
+  const body = GenerateModelLiteratureReviewBody.safeParse(req.body ?? {});
+  if (!body.success) {
+    res.status(400).json({ error: body.error.message });
+    return;
+  }
+  const lang: "zh" | "en" = body.data.lang ?? "zh";
+
+  const [model] = await db.select().from(researchModelsTable).where(eq(researchModelsTable.id, params.data.id));
+  if (!model) {
+    res.status(404).json({ error: "Model not found" });
+    return;
+  }
+
+  const nodes = (model.nodes ?? []) as ModelNode[];
+  const edges = (model.edges ?? []) as ModelEdge[];
+
+  // Build a compact APA-style citation key for each cited paper.
+  const apaInText = (authors: string[], year: number | null): string => {
+    const a = (authors ?? []).filter(Boolean);
+    const yr = year ?? "n.d.";
+    if (a.length === 0) return `(Unknown, ${yr})`;
+    if (a.length === 1) return `(${a[0]}, ${yr})`;
+    if (a.length === 2) return `(${a[0]} & ${a[1]}, ${yr})`;
+    return `(${a[0]} et al., ${yr})`;
+  };
+
+  const citedPapers = new Map<number, string>();
+  for (const n of nodes) if (!citedPapers.has(n.paperId)) citedPapers.set(n.paperId, apaInText(n.paperAuthors, n.paperYear));
+  for (const e of edges) if (!citedPapers.has(e.evidencePaperId)) citedPapers.set(e.evidencePaperId, apaInText(e.evidencePaperAuthors, e.evidencePaperYear));
+
+  const edgeLines = edges.map((e) => {
+    const cite = apaInText(e.evidencePaperAuthors, e.evidencePaperYear);
+    const hyp = e.evidenceHypothesisId ? ` [${e.evidenceHypothesisId}]` : "";
+    const eff = e.effectSize ? ` ${e.effectSize}` : "";
+    const loc = e.evidenceLocation ? ` (${e.evidenceLocation})` : "";
+    const just = e.relationship === "moderates" && e.moderatorJustification ? ` — moderator rationale: ${e.moderatorJustification}` : "";
+    return `- ${e.fromVariableName} -[${e.relationship}]-> ${e.toVariableName} ${cite}${hyp}${eff}${loc}${just}`;
+  }).join("\n");
+
+  const nodeLines = nodes.map((n) => `- ${n.variableName} [${n.type}] ${apaInText(n.paperAuthors, n.paperYear)}`).join("\n");
+
+  const sysPrompt = lang === "zh"
+    ? `你是一位严谨的中文学术写作助手。请把下面的研究模型改写成一段可直接放入论文的「研究模型」综述段落（中文，约 250-400 字，单段不分行），要求：
+1. 自然地嵌入 APA-7 行内引用，格式形如 (Wang & Liu, 2023) 或 (Zhang et al., 2022)。
+2. 至少描述：核心被解释变量、关键前因/中介/调节、关键路径关系，并把每条关系的引用嵌在描述它的句子里。
+3. 如果某条边带有效应量或假设编号，自然地写进句子里，例如"已有研究发现 A 显著正向影响 B (β=.42, p<.001; H2a)"。
+4. 不要逐条列举边；要写成连贯的学术段落。
+5. 不要捏造未在输入中出现的引用或效应量。
+只输出这一段中文文字，不要标题、不要 markdown 列表。`
+    : `You are a rigorous academic writing assistant. Rewrite the research model below into a single English paragraph (~200-350 words, suitable for a literature review section of a paper) that:
+1. Embeds APA-7 in-text citations naturally, e.g. (Wang & Liu, 2023) or (Zhang et al., 2022).
+2. Describes the focal dependent variable, the key antecedents/mediators/moderators, and the key paths, attaching each citation to the sentence where the relationship is described.
+3. If an edge carries an effect size or hypothesis id, weave it in, e.g. "prior work has shown that A significantly increases B (β=.42, p<.001; H2a)".
+4. Write a coherent paragraph, NOT a bullet list of edges.
+5. Do not fabricate citations or effect sizes not present in the input.
+Output only the paragraph — no title, no markdown headings, no bullet lists.`;
+
+  const userPrompt = `MODEL NAME: ${model.name}
+DESCRIPTION: ${model.description}
+RATIONALE: ${model.rationale}
+
+NODES:
+${nodeLines}
+
+EDGES (with evidence):
+${edgeLines}`;
+
+  try {
+    const completion = await openai.chat.completions.create({
+      model: "gpt-5.4",
+      max_completion_tokens: 1400,
+      messages: [
+        { role: "system", content: sysPrompt },
+        { role: "user", content: userPrompt },
+      ],
+    });
+    const markdown = (completion.choices[0]?.message?.content ?? "").trim();
+    if (!markdown) {
+      res.status(503).json({ error: "AI returned empty response" });
+      return;
+    }
+    res.json({ markdown, lang });
+  } catch (err) {
+    req.log.error({ err }, "literature review generation failed");
+    res.status(503).json({ error: "AI integration unavailable" });
+  }
 });
 
 router.post("/models/:id/select", async (req, res): Promise<void> => {

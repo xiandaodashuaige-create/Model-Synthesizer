@@ -492,6 +492,8 @@ export type SearchModelImages200ResultsItem = {
   height?: number;
   /** AI-assigned category — what KIND of model figure this is. Absent only when the AI gate was skipped (raw mode) or fell back. */
   category?: SearchModelImages200ResultsItemCategory;
+  /** Short AI-written reason (≤120 chars) explaining why this figure matches the user's session. Absent for fallbacks. */
+  why?: string;
 };
 
 export type SearchModelImages200 = {
@@ -599,6 +601,65 @@ export type UpdateModelBody = {
   rationale?: string;
   nodes?: UpdateModelBodyNodesItem[];
   edges?: UpdateModelBodyEdgesItem[];
+};
+
+export type GetModelQualityReport200WeakEdgesItem = {
+  fromVariableName: string;
+  toVariableName: string;
+  /** Short i18n-ready code-style reason, e.g. "no_evidence", "layer_jump", "duplicate_role", "missing_moderator_justification". */
+  reason: string;
+};
+
+export type GetModelQualityReport200Totals = {
+  edges: number;
+  edgesWithEvidence: number;
+  moderatesEdges: number;
+  moderatesJustified: number;
+};
+
+export type GetModelQualityReport200 = {
+  /** 0-100. Heuristic match against any of the 17 theory backbones. */
+  structuralScore: number;
+  /** 0-100. Percentage of edges with evidenceHypothesisId or effectSize or evidenceLocation. */
+  evidenceScore: number;
+  /** True when no edge crosses construct layers in the wrong direction (cognitive→stimulus is wrong). */
+  layerCompliance: boolean;
+  /** True when no canonical construct appears in two conflicting roles (mediator AND moderator). */
+  duplicateRoleCheck: boolean;
+  /** True when EVERY moderates-edge has a non-empty moderatorJustification. */
+  moderatorJustified: boolean;
+  weakEdges: GetModelQualityReport200WeakEdgesItem[];
+  totals: GetModelQualityReport200Totals;
+};
+
+/**
+ * Language for the generated paragraph. Defaults to "zh".
+ */
+export type GenerateModelLiteratureReviewBodyLang =
+  (typeof GenerateModelLiteratureReviewBodyLang)[keyof typeof GenerateModelLiteratureReviewBodyLang];
+
+export const GenerateModelLiteratureReviewBodyLang = {
+  zh: "zh",
+  en: "en",
+} as const;
+
+export type GenerateModelLiteratureReviewBody = {
+  /** Language for the generated paragraph. Defaults to "zh". */
+  lang?: GenerateModelLiteratureReviewBodyLang;
+};
+
+export type GenerateModelLiteratureReview200Lang =
+  (typeof GenerateModelLiteratureReview200Lang)[keyof typeof GenerateModelLiteratureReview200Lang];
+
+export const GenerateModelLiteratureReview200Lang = {
+  zh: "zh",
+  en: "en",
+} as const;
+
+export type GenerateModelLiteratureReview200 = {
+  /** Markdown paragraph with APA-7 in-text citations like (Wang & Liu, 2023). */
+  markdown: string;
+  lang: GenerateModelLiteratureReview200Lang;
 };
 
 export type AddLiveModelNodeBody = {

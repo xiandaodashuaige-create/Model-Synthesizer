@@ -12,6 +12,7 @@ type ImageHit = {
   width?: number;
   height?: number;
   category?: "conceptual_model" | "sem_path" | "framework";
+  why?: string;
 };
 
 type PaperHit = {
@@ -821,6 +822,15 @@ export function ModelAssistantChat({
                         )}
                         <div className="p-1.5 flex flex-col gap-1 min-h-0">
                           <div className="text-[11px] leading-tight line-clamp-2 text-foreground" title={r.title}>{r.title}</div>
+                          {r.why && (
+                            <div
+                              data-testid={`text-image-why-${i}`}
+                              className="text-[10px] leading-snug text-emerald-800 bg-emerald-50 border border-emerald-200 rounded px-1.5 py-1 italic line-clamp-2"
+                              title={r.why}
+                            >
+                              {r.why}
+                            </div>
+                          )}
                           <div className="flex items-center justify-between gap-1">
                             <span className="text-[10px] text-muted-foreground truncate" title={r.sourceDomain}>{r.sourceDomain}</span>
                             <a

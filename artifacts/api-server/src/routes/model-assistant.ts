@@ -320,7 +320,7 @@ async function aiRelevanceFilter(
   expandedQueries: string[],
   candidates: Array<{ title: string; sourceDomain: string }>,
   sessionCtx: SessionImageCtx | null,
-): Promise<Array<{ i: number; category: ImageCategory }> | null> {
+): Promise<Array<{ i: number; category: ImageCategory; why?: string }> | null> {
   if (candidates.length === 0) return [];
   try {
     const list = candidates
@@ -349,7 +349,9 @@ For each candidate, choose ONE category:
 Be GENEROUS for the first 3 categories when the source is a reputable academic publisher AND the topic words plausibly match — paper-figure thumbnails often have terse titles like "Fig. 1" or "Conceptual model".
 Be STRICT for "other" — when in doubt and topic words are missing, drop it.
 
-Output ONLY a JSON object: {"keep":[{"i":0,"category":"conceptual_model"}, {"i":3,"category":"sem_path"}, ...]} — only entries you are keeping. Do not echo the rest.`,
+For EACH kept entry, also write a SHORT "why" string (≤30 Chinese characters or ≤60 English characters) explaining concretely why this figure matches the user's research — reference the specific session topic / variables / construct chains when possible. Examples: "覆盖你研究中的感知信任→购买意愿路径", "Frames AI streamer trust as antecedent of purchase intention".
+
+Output ONLY a JSON object: {"keep":[{"i":0,"category":"conceptual_model","why":"..."}, {"i":3,"category":"sem_path","why":"..."}]} — only entries you are keeping. Do not echo the rest.`,
         },
         {
           role: "user",
@@ -367,14 +369,16 @@ ${list}`,
     const parsed = JSON.parse(match[0]) as { keep?: unknown };
     if (!Array.isArray(parsed.keep)) return null;
     const allowed = new Set<ImageCategory>(["conceptual_model", "sem_path", "framework"]);
-    const out: Array<{ i: number; category: ImageCategory }> = [];
+    const out: Array<{ i: number; category: ImageCategory; why?: string }> = [];
     for (const e of parsed.keep) {
       if (typeof e !== "object" || e === null) continue;
       const i = (e as { i?: unknown }).i;
       const c = (e as { category?: unknown }).category;
+      const w = (e as { why?: unknown }).why;
       if (typeof i !== "number" || !Number.isInteger(i) || i < 0 || i >= candidates.length) continue;
       if (typeof c !== "string" || !allowed.has(c as ImageCategory)) continue;
-      out.push({ i, category: c as ImageCategory });
+      const why = typeof w === "string" && w.trim().length > 0 ? w.trim().slice(0, 120) : undefined;
+      out.push({ i, category: c as ImageCategory, why });
     }
     // Defend against the AI returning an empty list when it shouldn't — if it
     // dropped EVERYTHING, fall back rather than show nothing.
@@ -836,9 +840,12 @@ router.post("/sessions/:id/model-assistant/search-model-images", async (req, res
         sessionCtx,
       );
       if (keep && keep.length > 0) {
-        const keepMap = new Map(keep.map((k) => [k.i, k.category]));
+        const keepMap = new Map(keep.map((k) => [k.i, { category: k.category, why: k.why }]));
         const approved = candidates
-          .map((c, i) => ({ ...c, category: keepMap.get(i) }))
+          .map((c, i) => {
+            const hit = keepMap.get(i);
+            return hit ? { ...c, category: hit.category, why: hit.why } : { ...c, category: undefined, why: undefined };
+          })
           .filter((c) => c.category !== undefined);
         // Backfill: if the AI was very strict and approved fewer than `count`,
         // top up from the highest-ranked unkept items (no category) so the

@@ -638,6 +638,9 @@ paths:
                           type: string
                           enum: [conceptual_model, sem_path, framework]
                           description: AI-assigned category — what KIND of model figure this is. Absent only when the AI gate was skipped (raw mode) or fell back.
+                        why:
+                          type: string
+                          description: Short AI-written reason (≤120 chars) explaining why this figure matches the user's session. Absent for fallbacks.
         "503":
           description: Search provider unavailable or not configured
           content:
@@ -887,6 +890,123 @@ paths:
                 $ref: "#/components/schemas/ResearchModel"
         "404":
           description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /models/{id}/quality-report:
+    get:
+      operationId: getModelQualityReport
+      tags: [models]
+      summary: Compute a structural / evidence / layer / role-duplication / moderator-justified quality report for a model. Pure compute — no AI call.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Quality report
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [structuralScore, evidenceScore, layerCompliance, duplicateRoleCheck, moderatorJustified, weakEdges, totals]
+                properties:
+                  structuralScore:
+                    type: integer
+                    description: 0-100. Heuristic match against any of the 17 theory backbones.
+                  evidenceScore:
+                    type: integer
+                    description: 0-100. Percentage of edges with evidenceHypothesisId or effectSize or evidenceLocation.
+                  layerCompliance:
+                    type: boolean
+                    description: True when no edge crosses construct layers in the wrong direction (cognitive→stimulus is wrong).
+                  duplicateRoleCheck:
+                    type: boolean
+                    description: True when no canonical construct appears in two conflicting roles (mediator AND moderator).
+                  moderatorJustified:
+                    type: boolean
+                    description: True when EVERY moderates-edge has a non-empty moderatorJustification.
+                  weakEdges:
+                    type: array
+                    items:
+                      type: object
+                      required: [fromVariableName, toVariableName, reason]
+                      properties:
+                        fromVariableName:
+                          type: string
+                        toVariableName:
+                          type: string
+                        reason:
+                          type: string
+                          description: Short i18n-ready code-style reason, e.g. "no_evidence", "layer_jump", "duplicate_role", "missing_moderator_justification".
+                  totals:
+                    type: object
+                    required: [edges, edgesWithEvidence, moderatesEdges, moderatesJustified]
+                    properties:
+                      edges:
+                        type: integer
+                      edgesWithEvidence:
+                        type: integer
+                      moderatesEdges:
+                        type: integer
+                      moderatesJustified:
+                        type: integer
+        "404":
+          description: Model not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /models/{id}/literature-review:
+    post:
+      operationId: generateModelLiteratureReview
+      tags: [models]
+      summary: AI-generate a publication-ready literature review paragraph (with APA-7 in-text citations) summarizing the model and its evidence.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                lang:
+                  type: string
+                  enum: [zh, en]
+                  description: Language for the generated paragraph. Defaults to "zh".
+      responses:
+        "200":
+          description: Generated paragraph
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [markdown, lang]
+                properties:
+                  markdown:
+                    type: string
+                    description: Markdown paragraph with APA-7 in-text citations like (Wang & Liu, 2023).
+                  lang:
+                    type: string
+                    enum: [zh, en]
+        "404":
+          description: Model not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: AI integration unavailable
           content:
             application/json:
               schema:

@@ -550,6 +550,12 @@ export const SearchModelImagesResponse = zod.object({
         .describe(
           "AI-assigned category — what KIND of model figure this is. Absent only when the AI gate was skipped (raw mode) or fell back.",
         ),
+      why: zod
+        .string()
+        .optional()
+        .describe(
+          "Short AI-written reason (≤120 chars) explaining why this figure matches the user's session. Absent for fallbacks.",
+        ),
     }),
   ),
 });
@@ -921,6 +927,79 @@ export const GetModelResponse = zod.object({
     }),
   ),
   createdAt: zod.string(),
+});
+
+/**
+ * @summary Compute a structural / evidence / layer / role-duplication / moderator-justified quality report for a model. Pure compute — no AI call.
+ */
+export const GetModelQualityReportParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const GetModelQualityReportResponse = zod.object({
+  structuralScore: zod
+    .number()
+    .describe("0-100. Heuristic match against any of the 17 theory backbones."),
+  evidenceScore: zod
+    .number()
+    .describe(
+      "0-100. Percentage of edges with evidenceHypothesisId or effectSize or evidenceLocation.",
+    ),
+  layerCompliance: zod
+    .boolean()
+    .describe(
+      "True when no edge crosses construct layers in the wrong direction (cognitive→stimulus is wrong).",
+    ),
+  duplicateRoleCheck: zod
+    .boolean()
+    .describe(
+      "True when no canonical construct appears in two conflicting roles (mediator AND moderator).",
+    ),
+  moderatorJustified: zod
+    .boolean()
+    .describe(
+      "True when EVERY moderates-edge has a non-empty moderatorJustification.",
+    ),
+  weakEdges: zod.array(
+    zod.object({
+      fromVariableName: zod.string(),
+      toVariableName: zod.string(),
+      reason: zod
+        .string()
+        .describe(
+          'Short i18n-ready code-style reason, e.g. \"no_evidence\", \"layer_jump\", \"duplicate_role\", \"missing_moderator_justification\".',
+        ),
+    }),
+  ),
+  totals: zod.object({
+    edges: zod.number(),
+    edgesWithEvidence: zod.number(),
+    moderatesEdges: zod.number(),
+    moderatesJustified: zod.number(),
+  }),
+});
+
+/**
+ * @summary AI-generate a publication-ready literature review paragraph (with APA-7 in-text citations) summarizing the model and its evidence.
+ */
+export const GenerateModelLiteratureReviewParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const GenerateModelLiteratureReviewBody = zod.object({
+  lang: zod
+    .enum(["zh", "en"])
+    .optional()
+    .describe('Language for the generated paragraph. Defaults to \"zh\".'),
+});
+
+export const GenerateModelLiteratureReviewResponse = zod.object({
+  markdown: zod
+    .string()
+    .describe(
+      "Markdown paragraph with APA-7 in-text citations like (Wang & Liu, 2023).",
+    ),
+  lang: zod.enum(["zh", "en"]),
 });
 
 /**
