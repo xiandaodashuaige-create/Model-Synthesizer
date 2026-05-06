@@ -1053,6 +1053,61 @@ OUTPUT FORMAT — return ONLY a JSON array, no markdown:
     ];
     const isSoftFail = (reason: string) => SOFT_FAIL_PATTERNS.some((re) => re.test(reason));
 
+    // === Auto-repair pass (runs before validate) ===
+    // The AI reliably commits a handful of small mechanical mistakes that
+    // pre-fix caused the entire model to be hard-rejected:
+    //   (a) one stray hallucinated variableId/paperId on a single node,
+    //   (b) one moderator edge with no `moderatorJustification`,
+    //   (c) missing/duplicate `secondaryOperator`.
+    // When all parallel calls hit any of these, the user previously saw
+    // "AI 生成的模型都没通过基础数据校验" with zero output. Now we strip
+    // unsalvageable nodes/edges and back-fill `secondaryOperator` BEFORE
+    // validate(), so structurally sound models survive minor AI typos.
+    // Anything that remains after repair still has to clear validate() —
+    // we never lower the bar, we just stop punishing the whole model for
+    // one cleanly-removable defect.
+    const ALL_OPS = ["EXTEND", "INSERT_MODERATOR", "PARALLEL_MEDIATORS", "SWAP_MEDIATOR", "THEORY_GRAFT"] as const;
+    const repairStats = { droppedNodes: 0, droppedEdges: 0, droppedModeratorEdges: 0, filledSecondaryOp: 0 };
+    for (const m of generated) {
+      if (!m || typeof m !== "object") continue;
+      if (Array.isArray(m.nodes)) {
+        const before = m.nodes.length;
+        m.nodes = m.nodes.filter((n) => validVarIds.has(n.variableId) && validPaperIds.has(n.paperId));
+        repairStats.droppedNodes += before - m.nodes.length;
+      }
+      if (Array.isArray(m.edges) && Array.isArray(m.nodes)) {
+        const nodeIdSet = new Set(m.nodes.map((n) => n.variableId));
+        const before = m.edges.length;
+        m.edges = m.edges.filter((e) => {
+          if (!nodeIdSet.has(e.fromVariableId) || !nodeIdSet.has(e.toVariableId)) return false;
+          if (!validPaperIds.has(e.evidencePaperId)) return false;
+          if (!e.evidenceCitationText || e.evidenceCitationText.trim().length < 12) return false;
+          if (e.relationship === "moderates") {
+            const just = (e as { moderatorJustification?: string | null }).moderatorJustification;
+            if (!just || String(just).trim().length < 12) {
+              repairStats.droppedModeratorEdges++;
+              return false;
+            }
+          }
+          return true;
+        });
+        repairStats.droppedEdges += before - m.edges.length;
+      }
+      // Back-fill missing/invalid secondaryOperator (must differ from primary).
+      if (m.operator && ALLOWED_OPERATORS.has(m.operator)) {
+        if (!m.secondaryOperator || !ALLOWED_OPERATORS.has(m.secondaryOperator) || m.secondaryOperator === m.operator) {
+          const choice = ALL_OPS.find((o) => o !== m.operator);
+          if (choice) {
+            m.secondaryOperator = choice;
+            repairStats.filledSecondaryOp++;
+          }
+        }
+      }
+    }
+    if (repairStats.droppedNodes || repairStats.droppedEdges || repairStats.droppedModeratorEdges || repairStats.filledSecondaryOp) {
+      req.log.info({ sessionId, ...repairStats }, "Auto-repair pass cleaned generated models before validation");
+    }
+
     const accepted: typeof generated = [];
     const rejected: Array<{ m: typeof generated[number]; v: { reason: string }; soft: boolean }> = [];
     const seenOpPairs = new Set<string>();
@@ -1090,8 +1145,14 @@ OUTPUT FORMAT — return ONLY a JSON array, no markdown:
     if (accepted.length === 0) {
       const softFails = rejected.filter((r) => r.soft && r.m && typeof r.m.name === "string" && Array.isArray(r.m.nodes) && Array.isArray(r.m.edges) && r.m.nodes.length > 0);
       if (softFails.length === 0) {
+        // Inline the top 3 rejection reasons in the message body itself so
+        // the user sees actionable info even if the toast component truncates
+        // the appended `rejected[]` summary.
+        const topReasons = rejected.slice(0, 3)
+          .map((r) => `• ${r.m?.name ?? "未命名模型"}: ${r.v.reason}`)
+          .join("\n");
         res.status(502).json({
-          error: "AI 生成的模型都没通过基础数据校验（如缺字段、变量 id 不存在）。请重试一次，或精简你的『自定义提示词』。",
+          error: `AI 生成的模型都没通过基础数据校验。\n本次拒绝原因（前 ${Math.min(3, rejected.length)} 条，共 ${rejected.length} 条）：\n${topReasons}\n请重试一次，或精简你的『自定义提示词』后再生成。`,
           rejected: rejected.map((r) => ({ name: r.m?.name ?? "(unnamed)", reason: r.v.reason })),
         });
         return;
