@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useChatModelAssistant, useSearchModelImages, useSearchModelPapers } from "@workspace/api-client-react";
+import { useChatModelAssistant, useSearchModelImages, useSearchModelPapers, useAddImageBlocklistEntry } from "@workspace/api-client-react";
 import { BookOpen, BookPlus, ChevronDown, ChevronUp, Download, ExternalLink, FileText, Heart, Image as ImageIcon, LayoutGrid, Loader2, MessageSquare, Paperclip, RefreshCw, Search, Send, Sparkles, Trash2, X } from "lucide-react";
 import { useT } from "@/lib/i18n";
 
@@ -65,6 +65,23 @@ export function ModelAssistantChat({
   // Image / paper search state
   const imageSearch = useSearchModelImages();
   const paperSearch = useSearchModelPapers();
+  const addBlocklist = useAddImageBlocklistEntry();
+  const [blockedUrls, setBlockedUrls] = useState<Set<string>>(new Set());
+
+  const blockImage = (img: ImageHit) => {
+    if (blockedUrls.has(img.sourceUrl)) return;
+    setBlockedUrls((prev) => new Set(prev).add(img.sourceUrl));
+    setImgResults((cur) => (cur ? cur.filter((r) => r.sourceUrl !== img.sourceUrl) : cur));
+    addBlocklist.mutate({
+      id: sessionId,
+      data: {
+        sourceUrl: img.sourceUrl,
+        sourceDomain: img.sourceDomain,
+        title: img.title || null,
+        reason: "user-dismissed",
+      },
+    });
+  };
   const [imgPanelOpen, setImgPanelOpen] = useState(false);
   const [searchMode, setSearchMode] = useState<SearchMode>("images");
   const [imgQuery, setImgQuery] = useState("");
@@ -758,22 +775,34 @@ export function ModelAssistantChat({
                             className="w-full h-full object-cover hover:scale-105 transition-transform"
                           />
                         </button>
-                        <button
-                          type="button"
-                          onClick={(e) => { e.stopPropagation(); toggleSavedImage(r); }}
-                          data-testid={`button-save-image-${i}`}
-                          aria-pressed={liked}
-                          aria-label={liked ? t("models.assistant.saved.toggle" as any) : t("models.assistant.save" as any)}
-                          title={liked ? t("models.assistant.saved.toggle" as any) : t("models.assistant.save" as any)}
-                          className={
-                            "absolute top-1 right-1 rounded-full p-1 backdrop-blur transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500 focus-visible:opacity-100 " +
-                            (liked
-                              ? "bg-pink-500/95 text-white opacity-100"
-                              : "bg-white/85 text-pink-500 opacity-0 group-hover:opacity-100 hover:bg-white")
-                          }
-                        >
-                          <Heart className={"w-3.5 h-3.5 " + (liked ? "fill-white" : "")} />
-                        </button>
+                        <div className="absolute top-1 right-1 flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); toggleSavedImage(r); }}
+                            data-testid={`button-save-image-${i}`}
+                            aria-pressed={liked}
+                            aria-label={liked ? t("models.assistant.saved.toggle" as any) : t("models.assistant.save" as any)}
+                            title={liked ? t("models.assistant.saved.toggle" as any) : t("models.assistant.save" as any)}
+                            className={
+                              "rounded-full p-1 backdrop-blur transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500 focus-visible:opacity-100 " +
+                              (liked
+                                ? "bg-pink-500/95 text-white opacity-100"
+                                : "bg-white/85 text-pink-500 opacity-0 group-hover:opacity-100 hover:bg-white")
+                            }
+                          >
+                            <Heart className={"w-3.5 h-3.5 " + (liked ? "fill-white" : "")} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); blockImage(r); }}
+                            data-testid={`button-block-image-${i}`}
+                            aria-label={t("models.assistant.searchImages.block" as any)}
+                            title={t("models.assistant.searchImages.blockTip" as any)}
+                            className="rounded-full p-1 backdrop-blur transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 bg-white/85 text-red-600 opacity-0 group-hover:opacity-100 hover:bg-white"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                         {r.category && (
                           <div
                             data-testid={`badge-image-category-${i}`}

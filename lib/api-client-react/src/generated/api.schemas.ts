@@ -150,6 +150,22 @@ export const VariableType = {
   dependent: "dependent",
 } as const;
 
+/**
+ * Standard psychology pipeline layer for the variable.
+ * @nullable
+ */
+export type VariableConstructLayer =
+  | (typeof VariableConstructLayer)[keyof typeof VariableConstructLayer]
+  | null;
+
+export const VariableConstructLayer = {
+  stimulus: "stimulus",
+  cognitive: "cognitive",
+  affective: "affective",
+  intention: "intention",
+  behavior: "behavior",
+} as const;
+
 export interface Variable {
   id: number;
   sessionId: number;
@@ -162,6 +178,62 @@ export interface Variable {
   type: VariableType;
   definition: string;
   citationText: string;
+  /**
+   * Lower-case canonical construct id (e.g. "trust", "purchase intention"). Variables across papers that map to the same construct share this id.
+   * @nullable
+   */
+  canonicalConstructId?: string | null;
+  /**
+   * Standard psychology pipeline layer for the variable.
+   * @nullable
+   */
+  constructLayer?: VariableConstructLayer;
+  createdAt: string;
+}
+
+export type PaperHypothesisRelationship =
+  (typeof PaperHypothesisRelationship)[keyof typeof PaperHypothesisRelationship];
+
+export const PaperHypothesisRelationship = {
+  positive: "positive",
+  negative: "negative",
+  moderates: "moderates",
+  mediates: "mediates",
+} as const;
+
+export interface PaperHypothesis {
+  id: number;
+  sessionId: number;
+  paperId: number;
+  paperTitle?: string;
+  paperAuthors?: string[];
+  /** @nullable */
+  paperYear?: number | null;
+  /** Hypothesis label as printed in the paper (e.g. "H1", "H2a"). */
+  hypothesisId: string;
+  fromVariable: string;
+  toVariable: string;
+  /** @nullable */
+  viaVariable?: string | null;
+  relationship: PaperHypothesisRelationship;
+  /** Verbatim hypothesis sentence from the paper. */
+  statement: string;
+  /** @nullable */
+  effectSize?: string | null;
+  /** @nullable */
+  pageOrSection?: string | null;
+  createdAt: string;
+}
+
+export interface ImageBlocklistEntry {
+  id: number;
+  sessionId: number;
+  sourceUrl: string;
+  sourceDomain: string;
+  /** @nullable */
+  title?: string | null;
+  /** @nullable */
+  reason?: string | null;
   createdAt: string;
 }
 
@@ -207,6 +279,26 @@ export interface ModelEdge {
   /** @nullable */
   evidencePaperYear?: number | null;
   evidenceCitationText: string;
+  /**
+   * References paper_hypotheses.hypothesis_id (e.g. "H2a") when the edge is grounded in a formal hypothesis.
+   * @nullable
+   */
+  evidenceHypothesisId?: string | null;
+  /**
+   * Reported effect size (e.g. "β=.34, p<.001") when extracted from the source paper.
+   * @nullable
+   */
+  effectSize?: string | null;
+  /**
+   * Where in the source paper the edge is supported (e.g. "p. 412", "Section 3.2").
+   * @nullable
+   */
+  evidenceLocation?: string | null;
+  /**
+   * REQUIRED when relationship="moderates". Explains theoretically why the variable can condition the moderated path.
+   * @nullable
+   */
+  moderatorJustification?: string | null;
 }
 
 export interface ResearchModel {
@@ -280,6 +372,15 @@ export interface LiveModelDetail {
 
 export type LookupPaper404 = {
   error: string;
+};
+
+export type AddImageBlocklistEntryBody = {
+  sourceUrl: string;
+  sourceDomain: string;
+  /** @nullable */
+  title?: string | null;
+  /** @nullable */
+  reason?: string | null;
 };
 
 export type ChatModelAssistantBodyMessagesItemRole =

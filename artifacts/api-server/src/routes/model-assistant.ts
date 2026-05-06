@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
-import { eq } from "drizzle-orm";
-import { db, papersTable, variablesTable, researchModelsTable } from "@workspace/db";
+import { eq, and, desc } from "drizzle-orm";
+import { db, papersTable, variablesTable, researchModelsTable, imageBlocklistTable } from "@workspace/db";
 import { ChatModelAssistantParams, ChatModelAssistantBody } from "@workspace/api-zod";
 import { openai } from "@workspace/integrations-openai-ai-server";
 import { backbonesAsPromptBlock, operatorsAsPromptBlock } from "../lib/theoryTemplates.js";
@@ -638,7 +638,8 @@ router.post("/sessions/:id/model-assistant/search-model-images", async (req, res
     // OR site: filters reliably so Lane B is SerpApi-only.
     const perQueryFetch = 25;
     let provider: "serpapi" | "brave" = "brave";
-    let allItems: Array<{ raw: any; title: string; sourceUrl: string; thumbnailUrl: string; fullImage: string; sourceDomain: string; width?: number; height?: number; _query: string; _lane: "general" | "publisher" }> = [];
+    type LaneItem = { raw: any; title: string; sourceUrl: string; thumbnailUrl: string; fullImage: string; sourceDomain: string; width?: number; height?: number; _query: string; _lane: "general" | "publisher" };
+    let allItems: LaneItem[] = [];
     let anyOk = false;
 
     if (serpKey) {
@@ -655,8 +656,8 @@ router.post("/sessions/:id/model-assistant/search-model-images", async (req, res
           items.map((it) => ({ ...it, _query: q, _lane: "publisher" as const })),
         ),
       );
-      const settled = await Promise.allSettled([...laneA, ...laneB]);
-      const items = settled.flatMap((s) => (s.status === "fulfilled" ? s.value : []));
+      const settled = await Promise.allSettled<LaneItem[]>([...laneA, ...laneB]);
+      const items: LaneItem[] = settled.flatMap((s) => (s.status === "fulfilled" ? s.value : []));
       const ok = settled.some((s) => s.status === "fulfilled" && s.value.length > 0);
       if (ok) {
         provider = "serpapi";
@@ -687,8 +688,21 @@ router.post("/sessions/:id/model-assistant/search-model-images", async (req, res
     // ---- Stage 2.5: HARD negative filter (cheap pre-clean) --------------
     // Drop obvious garbage BEFORE we spend AI tokens on it. Stock photo
     // domains, presentation templates, gene heatmaps, etc.
-    const droppedHard = { byDomain: 0, byTitle: 0 };
+    // Also: pull this session's per-user image blocklist and drop any URL the
+    // user previously dismissed via the ✕ button.
+    const blocklistRows = await db
+      .select({ sourceUrl: imageBlocklistTable.sourceUrl, sourceDomain: imageBlocklistTable.sourceDomain })
+      .from(imageBlocklistTable)
+      .where(eq(imageBlocklistTable.sessionId, params.data.id));
+    const blockedUrls = new Set(blocklistRows.map((r) => r.sourceUrl));
+    // Per-URL only — never block by domain. Blocking one figure must NOT remove the
+    // entire publisher (e.g. all of mdpi.com) from the session's future searches.
+    const droppedHard = { byDomain: 0, byTitle: 0, byUserBlock: 0 };
     const preFiltered = allItems.filter((it) => {
+      if (blockedUrls.has(it.sourceUrl)) {
+        droppedHard.byUserBlock++;
+        return false;
+      }
       if (HARD_NEGATIVE_DOMAIN_RE.test(it.sourceDomain) || HARD_NEGATIVE_DOMAIN_RE.test(it.sourceUrl)) {
         droppedHard.byDomain++;
         return false;
@@ -1101,6 +1115,94 @@ router.post("/sessions/:id/model-assistant/search-model-papers", async (req, res
     req.log.error({ err }, "Paper search threw");
     res.status(502).json({ error: "Paper search failed" });
   }
+});
+
+// =====================================================================
+// Image blocklist (per-session). Powers the ✕ button on image cards so
+// the user can dismiss noisy hits and never see them again in this session.
+// =====================================================================
+
+router.get("/sessions/:id/image-blocklist", async (req, res) => {
+  const params = ChatModelAssistantParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: "Invalid session id" });
+    return;
+  }
+  const rows = await db
+    .select()
+    .from(imageBlocklistTable)
+    .where(eq(imageBlocklistTable.sessionId, params.data.id))
+    .orderBy(desc(imageBlocklistTable.createdAt));
+  res.json(rows.map((r) => ({
+    id: r.id,
+    sessionId: r.sessionId,
+    sourceUrl: r.sourceUrl,
+    sourceDomain: r.sourceDomain,
+    title: r.title,
+    reason: r.reason,
+    createdAt: r.createdAt.toISOString(),
+  })));
+});
+
+router.post("/sessions/:id/image-blocklist", async (req, res) => {
+  const params = ChatModelAssistantParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: "Invalid session id" });
+    return;
+  }
+  const sourceUrl = typeof req.body?.sourceUrl === "string" ? req.body.sourceUrl.trim() : "";
+  const sourceDomain = typeof req.body?.sourceDomain === "string" ? req.body.sourceDomain.trim() : "";
+  if (!sourceUrl || !sourceDomain) {
+    res.status(400).json({ error: "Missing sourceUrl or sourceDomain" });
+    return;
+  }
+  const title = typeof req.body?.title === "string" ? req.body.title.slice(0, 500) : null;
+  const reason = typeof req.body?.reason === "string" ? req.body.reason.slice(0, 200) : null;
+  // Idempotent insert — backed by the (session_id, source_url) unique index.
+  // Two concurrent POSTs cannot both insert; the loser's `returning()` will be
+  // empty, in which case we re-read the existing row.
+  const insertResult = await db
+    .insert(imageBlocklistTable)
+    .values({ sessionId: params.data.id, sourceUrl, sourceDomain, title, reason })
+    .onConflictDoNothing({ target: [imageBlocklistTable.sessionId, imageBlocklistTable.sourceUrl] })
+    .returning();
+  let row = insertResult[0];
+  let created = true;
+  if (!row) {
+    created = false;
+    const [existing] = await db
+      .select()
+      .from(imageBlocklistTable)
+      .where(and(eq(imageBlocklistTable.sessionId, params.data.id), eq(imageBlocklistTable.sourceUrl, sourceUrl)))
+      .limit(1);
+    if (!existing) {
+      res.status(500).json({ error: "Failed to persist blocklist entry" });
+      return;
+    }
+    row = existing;
+  }
+  res.status(created ? 201 : 200).json({
+    id: row.id, sessionId: row.sessionId, sourceUrl: row.sourceUrl,
+    sourceDomain: row.sourceDomain, title: row.title, reason: row.reason,
+    createdAt: row.createdAt.toISOString(),
+  });
+});
+
+router.delete("/sessions/:id/image-blocklist/:entryId", async (req, res) => {
+  const params = ChatModelAssistantParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: "Invalid session id" });
+    return;
+  }
+  const entryId = Number(req.params.entryId);
+  if (!Number.isInteger(entryId) || entryId <= 0) {
+    res.status(400).json({ error: "Invalid entry id" });
+    return;
+  }
+  await db
+    .delete(imageBlocklistTable)
+    .where(and(eq(imageBlocklistTable.id, entryId), eq(imageBlocklistTable.sessionId, params.data.id)));
+  res.status(204).end();
 });
 
 export default router;

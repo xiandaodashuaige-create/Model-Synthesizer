@@ -12,7 +12,7 @@ import {
   getGetSessionLearningStatsQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Loader2, ArrowLeft, CheckCircle, BookOpen, Quote, Share2, Pencil, Save, X, Trash2, Plus } from "lucide-react";
+import { Loader2, ArrowLeft, CheckCircle, BookOpen, Quote, Share2, Pencil, Save, X, Trash2, Plus, Download, Hash, BarChart3, MapPin, Info } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useT } from "@/lib/i18n";
 
@@ -36,6 +36,21 @@ interface EdgeT {
   evidencePaperAuthors: string[];
   evidencePaperYear: number | null;
   evidenceCitationText: string;
+  evidenceHypothesisId?: string | null;
+  effectSize?: string | null;
+  evidenceLocation?: string | null;
+  moderatorJustification?: string | null;
+}
+
+// APA-7 reference string for a paper used as edge evidence.
+function formatApaReference(authors: string[], year: number | null, title: string): string {
+  const safeAuthors = (authors ?? []).filter(Boolean);
+  let authorStr = "Unknown";
+  if (safeAuthors.length === 1) authorStr = safeAuthors[0];
+  else if (safeAuthors.length === 2) authorStr = `${safeAuthors[0]} & ${safeAuthors[1]}`;
+  else if (safeAuthors.length >= 3) authorStr = `${safeAuthors[0]} et al.`;
+  const yr = year ? `(${year})` : "(n.d.)";
+  return `${authorStr} ${yr}. ${title}.`;
 }
 
 function useTypeMeta() {
@@ -190,6 +205,34 @@ export default function SessionModelDetail({ params: routeParams }: { params?: {
 
   const typeOrder = ["independent", "mediator", "moderator", "dependent"];
 
+  const exportApaReferences = () => {
+    const seen = new Map<number, { authors: string[]; year: number | null; title: string }>();
+    for (const e of displayEdges) {
+      if (!seen.has(e.evidencePaperId)) {
+        seen.set(e.evidencePaperId, { authors: e.evidencePaperAuthors, year: e.evidencePaperYear, title: e.evidencePaperTitle });
+      }
+    }
+    for (const n of displayNodes) {
+      if (!seen.has(n.paperId)) {
+        seen.set(n.paperId, { authors: n.paperAuthors, year: n.paperYear, title: n.paperTitle });
+      }
+    }
+    const refs = [...seen.values()]
+      .map((p) => formatApaReference(p.authors, p.year, p.title))
+      .sort((a, b) => a.localeCompare(b));
+    const body = `${model.name}\n\nReferences (APA-7)\n\n${refs.map((r, i) => `${i + 1}. ${r}`).join("\n")}\n`;
+    const blob = new Blob([body], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `references-${model.name.replace(/[^\w]+/g, "-").toLowerCase()}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast({ title: t("md.export.done" as any), description: t("md.export.doneDesc" as any, { n: refs.length }) });
+  };
+
   return (
     <div className="max-w-4xl mx-auto space-y-8">
       <div className="flex items-start gap-4">
@@ -230,13 +273,23 @@ export default function SessionModelDetail({ params: routeParams }: { params?: {
         </div>
         <div className="flex flex-col gap-2 shrink-0">
           {!editing && (
-            <button
-              data-testid="button-edit-model"
-              onClick={startEdit}
-              className="inline-flex items-center gap-1.5 rounded-md text-sm font-medium border border-border bg-background hover:bg-accent h-9 px-3 transition-colors"
-            >
-              <Pencil className="w-3.5 h-3.5" /> {t("md.edit" as any)}
-            </button>
+            <>
+              <button
+                data-testid="button-edit-model"
+                onClick={startEdit}
+                className="inline-flex items-center gap-1.5 rounded-md text-sm font-medium border border-border bg-background hover:bg-accent h-9 px-3 transition-colors"
+              >
+                <Pencil className="w-3.5 h-3.5" /> {t("md.edit" as any)}
+              </button>
+              <button
+                data-testid="button-export-apa"
+                onClick={exportApaReferences}
+                title={t("md.export.apaTip" as any)}
+                className="inline-flex items-center gap-1.5 rounded-md text-sm font-medium border border-border bg-background hover:bg-accent h-9 px-3 transition-colors"
+              >
+                <Download className="w-3.5 h-3.5" /> {t("md.export.apa" as any)}
+              </button>
+            </>
           )}
           {editing && (
             <>
@@ -367,6 +420,25 @@ export default function SessionModelDetail({ params: routeParams }: { params?: {
                   )}
                 </div>
                 <div className="bg-muted/40 rounded-md p-4 border border-border">
+                  {(edge.evidenceHypothesisId || edge.effectSize || edge.evidenceLocation) && (
+                    <div className="flex flex-wrap items-center gap-1.5 mb-3">
+                      {edge.evidenceHypothesisId && (
+                        <span data-testid={`badge-edge-hyp-${i}`} className="inline-flex items-center gap-1 text-[11px] font-semibold rounded-full bg-indigo-100 text-indigo-800 border border-indigo-200 px-2 py-0.5">
+                          <Hash className="w-3 h-3" /> {edge.evidenceHypothesisId}
+                        </span>
+                      )}
+                      {edge.effectSize && (
+                        <span data-testid={`badge-edge-effect-${i}`} className="inline-flex items-center gap-1 text-[11px] font-mono rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200 px-2 py-0.5">
+                          <BarChart3 className="w-3 h-3" /> {edge.effectSize}
+                        </span>
+                      )}
+                      {edge.evidenceLocation && (
+                        <span data-testid={`badge-edge-loc-${i}`} className="inline-flex items-center gap-1 text-[11px] rounded-full bg-slate-100 text-slate-700 border border-slate-200 px-2 py-0.5">
+                          <MapPin className="w-3 h-3" /> {edge.evidenceLocation}
+                        </span>
+                      )}
+                    </div>
+                  )}
                   <div className="flex items-start gap-2 mb-3">
                     <Quote className="w-4 h-4 text-primary/60 shrink-0 mt-0.5" />
                     {editing ? (
@@ -381,6 +453,12 @@ export default function SessionModelDetail({ params: routeParams }: { params?: {
                       <p className="text-sm text-muted-foreground italic leading-relaxed">{edge.evidenceCitationText}</p>
                     )}
                   </div>
+                  {edge.relationship === "moderates" && edge.moderatorJustification && (
+                    <div data-testid={`text-edge-modjust-${i}`} className="mb-3 flex items-start gap-2 text-xs leading-relaxed bg-purple-50 border border-purple-200 text-purple-900 rounded-md p-2">
+                      <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                      <span><span className="font-semibold">{t("md.modJust" as any)}: </span>{edge.moderatorJustification}</span>
+                    </div>
+                  )}
                   <div className="flex items-center gap-1.5 text-xs text-muted-foreground border-t border-border pt-3">
                     <BookOpen className="w-3.5 h-3.5 text-primary/60 shrink-0" />
                     <span className="font-medium text-foreground">{edge.evidencePaperTitle}</span>

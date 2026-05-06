@@ -6,6 +6,7 @@ import {
   variablesTable,
   papersTable,
   generationFeedbackTable,
+  paperHypothesesTable,
 } from "@workspace/db";
 import {
   GenerateModelsParams,
@@ -22,6 +23,8 @@ import {
   THEORY_BACKBONES,
   backbonesAsPromptBlock,
   operatorsAsPromptBlock,
+  recommendBackbones,
+  layerIndex,
 } from "../lib/theoryTemplates.js";
 
 const router: IRouter = Router();
@@ -47,6 +50,11 @@ interface ModelEdge {
   evidencePaperAuthors: string[];
   evidencePaperYear: number | null;
   evidenceCitationText: string;
+  // Optional provenance fields (P2 — populated by the new generation prompt)
+  evidenceHypothesisId?: string | null;     // e.g. "H2a" — links back to paper_hypotheses row
+  effectSize?: string | null;               // e.g. "β=.34, p<.001"
+  evidenceLocation?: string | null;         // e.g. "p. 412" or "Section 3.2"
+  moderatorJustification?: string | null;   // REQUIRED for relationship = "moderates"
 }
 
 // New typed-graph form of a paper's own research model (cached on papers.researchModel).
@@ -241,8 +249,33 @@ router.post("/sessions/:id/models/generate", async (req, res): Promise<void> => 
     const paper = paperMap.get(v.paperId);
     const tag = paperTagById.get(v.paperId) ?? "?";
     const focus = focusVariableIds.includes(v.id) ? " [USER-PRIORITY]" : "";
-    return `- ID:${v.id}${focus} | Name: "${v.name}" | Type: ${v.type} | Source: ${tag} ${paper?.title} (${(paper?.authors ?? []).slice(0, 2).join(", ")}, ${paper?.year ?? "n.d."}) | Definition: ${v.definition} | Citation: "${v.citationText}"`;
+    const canonical = v.canonicalConstructId ? ` | Canonical: "${v.canonicalConstructId}"` : "";
+    const layer = v.constructLayer ? ` | Layer: ${v.constructLayer}` : "";
+    return `- ID:${v.id}${focus} | Name: "${v.name}" | Type: ${v.type}${canonical}${layer} | Source: ${tag} ${paper?.title} (${(paper?.authors ?? []).slice(0, 2).join(", ")}, ${paper?.year ?? "n.d."}) | Definition: ${v.definition} | Citation: "${v.citationText}"`;
   }).join("\n");
+
+  // Pull formal hypotheses from the database (extracted by /papers/:paperId/extract).
+  const allHyps = await db.select().from(paperHypothesesTable).where(eq(paperHypothesesTable.sessionId, sessionId));
+  const hypothesesBlock = allHyps.length > 0
+    ? "\n\n================================================================\nFORMAL HYPOTHESES POOL (each edge in your output models SHOULD reference one of these by hypothesisId when applicable; copy `statement` verbatim into evidenceCitationText, `effectSize` into effectSize, `pageOrSection` into evidenceLocation):\n" +
+      allHyps.map((h) => {
+        const tag = paperTagById.get(h.paperId) ?? "?";
+        const via = h.viaVariable ? ` via ${h.viaVariable}` : "";
+        const fx = h.effectSize ? ` [${h.effectSize}]` : "";
+        const loc = h.pageOrSection ? ` (${h.pageOrSection})` : "";
+        return `  - [${tag}] ${h.hypothesisId}: ${h.fromVariable} -(${h.relationship})-> ${h.toVariable}${via}${fx}${loc}\n      "${h.statement.slice(0, 220)}"`;
+      }).join("\n")
+    : "";
+
+  // Pick the top backbones based on the DV keywords in the variable pool — prevents
+  // the AI from defaulting to the same TAM/SOR pair on every session.
+  const dvKeywords = variables
+    .filter((v) => v.type === "dependent")
+    .map((v) => `${v.canonicalConstructId ?? v.name}`);
+  const recommendedBackbones = recommendBackbones(dvKeywords, 8);
+  const recommendedBackbonesBlock = recommendedBackbones.map(
+    (b) => `  - ${b.id} | ${b.name} (${b.domain})\n    Shape: ${b.shape}\n    When to use: ${b.description}`,
+  ).join("\n");
 
   // Build per-paper variable lists (fallback signal when typed-graph extraction is empty).
   const varsByPaper = new Map<number, typeof variables>();
@@ -351,8 +384,13 @@ EXTRACTED VARIABLES POOL (each variable is tagged with its source paper):
 ${variableList}
 
 ================================================================
-CLASSICAL THEORY BACKBONES you may graft onto (operator THEORY_GRAFT):
+CLASSICAL THEORY BACKBONES you may graft onto (operator THEORY_GRAFT) — RECOMMENDED for this session's dependent variables (try these FIRST, but you may use any of the 17 backbones):
+${recommendedBackbonesBlock}
+
+(Full backbone catalog if none of the above fit:
 ${backbonesAsPromptBlock()}
+)
+${hypothesesBlock}
 
 ================================================================
 STRUCTURAL OPERATORS (each output model must use TWO of these — a primary and a different secondary — applied in sequence):
@@ -370,6 +408,10 @@ HARD RULES (violations = invalid output):
 7. **Layout discipline**: order nodes Independent → Mediator → Moderator → Dependent. Never put a dependent left of an independent.
 8. **Size**: 5–8 nodes and 4–8 edges per model. Smaller is too thin to count as a real recombination.
 9. **Variety**: each model must have a clearly different theoretical focus (different DV, different mediator chain, or different moderator).
+10. **Construct-layer ordering (CRITICAL — anti "logic jump")**: every directed edge MUST go FORWARD in the standard psychology pipeline (stimulus → cognitive → affective → intention → behavior). Backward edges (e.g. behavior → cognition) and 2-step jumps (e.g. stimulus → behavior with no cognitive/affective mediator) are PROHIBITED unless your rationale explicitly invokes a feedback-loop theory. Mediator chains MUST NOT exceed 3 hops between the IV and the DV — chains longer than 3 are diluted and will be rejected.
+11. **One role per canonical construct**: a single canonicalConstruct may NOT appear with two different roles in the same model (e.g. you cannot use "trust" as both a mediator AND a moderator in the same model). This prevents nonsensical self-moderation.
+12. **Moderator justification (REQUIRED when relationship = "moderates")**: every moderator edge MUST include a non-empty \`moderatorJustification\` field (≥ 1 sentence) explaining (a) WHY this variable can theoretically condition the moderated path (e.g. it's a contextual factor, individual difference, or boundary condition) and (b) WHICH paper grounds this moderating role. Without justification, the moderator edge is rejected.
+13. **Hypothesis-grounded evidence (preferred)**: when an edge corresponds to a row in the FORMAL HYPOTHESES POOL above, set \`evidenceHypothesisId\` to that row's id (e.g. "H2a"), copy \`statement\` verbatim into \`evidenceCitationText\`, copy \`effectSize\` and \`pageOrSection\` if available. Edges grounded in formal hypotheses are stronger than those grounded only in narrative citations.
 
 OUTPUT FORMAT — return ONLY a JSON array, no markdown:
 [
@@ -385,7 +427,7 @@ OUTPUT FORMAT — return ONLY a JSON array, no markdown:
       { "variableId": <int>, "variableName": "<name>", "type": "independent|mediator|moderator|dependent", "paperId": <int>, "paperTitle": "<title>", "paperAuthors": ["<author>"], "paperYear": <year or null> }
     ],
     "edges": [
-      { "fromVariableId": <int>, "toVariableId": <int>, "fromVariableName": "<name>", "toVariableName": "<name>", "relationship": "positive|negative|moderates|mediates", "evidencePaperId": <int>, "evidencePaperTitle": "<title>", "evidencePaperAuthors": ["<author>"], "evidencePaperYear": <year or null>, "evidenceCitationText": "<verbatim sentence from the paper>" }
+      { "fromVariableId": <int>, "toVariableId": <int>, "fromVariableName": "<name>", "toVariableName": "<name>", "relationship": "positive|negative|moderates|mediates", "evidencePaperId": <int>, "evidencePaperTitle": "<title>", "evidencePaperAuthors": ["<author>"], "evidencePaperYear": <year or null>, "evidenceCitationText": "<verbatim sentence from the paper>", "evidenceHypothesisId": "<H1|H2a|null>", "effectSize": "<β=.34, p<.001 | null>", "evidenceLocation": "<p.412 | Section 3.2 | null>", "moderatorJustification": "<REQUIRED when relationship=moderates; null otherwise>" }
     ]
   }
 ]`;
@@ -488,11 +530,83 @@ OUTPUT FORMAT — return ONLY a JSON array, no markdown:
       const distinctPapers = new Set(m.nodes.map((n) => n.paperId));
       if (distinctPapers.size < minDistinctPapers) return { ok: false, reason: `requires nodes from ≥ ${minDistinctPapers} different papers (got ${distinctPapers.size})` };
       const nodeIds = new Set(m.nodes.map((n) => n.variableId));
+      // Lookup canonical+layer for each node by variableId.
+      const varMeta = new Map(variables.map((v) => [v.id, v]));
+
+      // RULE 11: one role per canonical construct.
+      const canonicalRoleMap = new Map<string, Set<string>>();
+      for (const n of m.nodes) {
+        const v = varMeta.get(n.variableId);
+        const canon = v?.canonicalConstructId;
+        if (!canon) continue;
+        if (!canonicalRoleMap.has(canon)) canonicalRoleMap.set(canon, new Set());
+        canonicalRoleMap.get(canon)!.add(n.type);
+      }
+      for (const [canon, roles] of canonicalRoleMap) {
+        if (roles.size > 1) return { ok: false, reason: `canonical construct "${canon}" plays multiple roles (${[...roles].join(",")}) in the same model` };
+      }
+
       // every edge references a node that exists, and has non-empty evidence
       for (const e of m.edges) {
         if (!nodeIds.has(e.fromVariableId) || !nodeIds.has(e.toVariableId)) return { ok: false, reason: "edge references unknown node" };
         if (!e.evidenceCitationText || e.evidenceCitationText.trim().length < 12) return { ok: false, reason: "missing/too-short evidence text" };
         if (!validPaperIds.has(e.evidencePaperId)) return { ok: false, reason: `unknown evidencePaperId ${e.evidencePaperId}` };
+        // RULE 12: moderator edges MUST have justification.
+        if (e.relationship === "moderates") {
+          const just = (e as { moderatorJustification?: string | null }).moderatorJustification;
+          if (!just || String(just).trim().length < 12) return { ok: false, reason: `moderator edge ${e.fromVariableName} → ${e.toVariableName} missing moderatorJustification` };
+        }
+        // RULE 10a: construct-layer ordering — non-moderator edges must go FORWARD.
+        if (e.relationship !== "moderates") {
+          const fromV = varMeta.get(e.fromVariableId);
+          const toV = varMeta.get(e.toVariableId);
+          const fi = layerIndex(fromV?.constructLayer);
+          const ti = layerIndex(toV?.constructLayer);
+          if (fi >= 0 && ti >= 0) {
+            if (ti < fi) {
+              return { ok: false, reason: `backward layer edge: ${fromV?.constructLayer}(${fromV?.name}) → ${toV?.constructLayer}(${toV?.name})` };
+            }
+            // RULE 10c: prohibit 2-layer jumps (e.g. stimulus → behavior with no cognitive/affective mediator).
+            // Skipping ≥3 layers in a single edge is structurally a "logic jump" and is rejected.
+            if (ti - fi >= 3) {
+              return { ok: false, reason: `2-step layer jump: ${fromV?.constructLayer}(${fromV?.name}) → ${toV?.constructLayer}(${toV?.name}) (insert a mediator)` };
+            }
+          }
+        }
+      }
+
+      // RULE 10b: mediator chain length ≤ 3 hops, measured ONLY along IV → … → DV paths.
+      // Long side branches that don't terminate at a DV must not trigger rejection.
+      const adj = new Map<number, number[]>();
+      for (const e of m.edges) {
+        if (e.relationship === "moderates") continue;
+        if (!adj.has(e.fromVariableId)) adj.set(e.fromVariableId, []);
+        adj.get(e.fromVariableId)!.push(e.toVariableId);
+      }
+      const dvIds = new Set(m.nodes.filter((n) => n.type === "dependent").map((n) => n.variableId));
+      // longestToDV(start) = longest # of nodes on any path from `start` ending at a DV; -Infinity if none.
+      function longestToDV(start: number, visited: Set<number>): number {
+        if (visited.has(start)) return -Infinity; // cycle guard
+        const isDV = dvIds.has(start);
+        const next = adj.get(start) ?? [];
+        if (next.length === 0) return isDV ? 1 : -Infinity;
+        const v2 = new Set(visited); v2.add(start);
+        let best = isDV ? 1 : -Infinity;
+        for (const n of next) {
+          const sub = longestToDV(n, v2);
+          if (sub !== -Infinity) best = Math.max(best, 1 + sub);
+        }
+        return best;
+      }
+      const ivIds = m.nodes.filter((n) => n.type === "independent").map((n) => n.variableId);
+      let maxChain = 0;
+      for (const iv of ivIds) {
+        const r = longestToDV(iv, new Set());
+        if (r !== -Infinity) maxChain = Math.max(maxChain, r);
+      }
+      if (maxChain > 4) {
+        // 4 = IV + up to 2 mediators + DV (3 hops). Reject if any IV→DV path is > 3 hops.
+        return { ok: false, reason: `mediator chain too long (${maxChain - 1} hops on an IV→DV path, max allowed = 3)` };
       }
       return { ok: true };
     }

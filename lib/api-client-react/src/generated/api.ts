@@ -17,6 +17,7 @@ import type {
 } from "@tanstack/react-query";
 
 import type {
+  AddImageBlocklistEntryBody,
   AddLiveModelEdgeBody,
   AddLiveModelNodeBody,
   AddPaperBody,
@@ -29,11 +30,13 @@ import type {
   GenerateModelsBody,
   GetSessionLearningStats200,
   HealthStatus,
+  ImageBlocklistEntry,
   ImportLiveModelFromModelBody,
   LiveModelDetail,
   LookupPaper404,
   LookupPaperBody,
   Paper,
+  PaperHypothesis,
   PaperSearchResult,
   ResearchModel,
   SearchModelImages200,
@@ -1332,6 +1335,357 @@ export function useListSessionVariables<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * @summary List all formal hypotheses extracted from this session's papers.
+ */
+export const getListSessionHypothesesUrl = (id: number) => {
+  return `/api/sessions/${id}/hypotheses`;
+};
+
+export const listSessionHypotheses = async (
+  id: number,
+  options?: RequestInit,
+): Promise<PaperHypothesis[]> => {
+  return customFetch<PaperHypothesis[]>(getListSessionHypothesesUrl(id), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListSessionHypothesesQueryKey = (id: number) => {
+  return [`/api/sessions/${id}/hypotheses`] as const;
+};
+
+export const getListSessionHypothesesQueryOptions = <
+  TData = Awaited<ReturnType<typeof listSessionHypotheses>>,
+  TError = ErrorType<unknown>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listSessionHypotheses>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListSessionHypothesesQueryKey(id);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listSessionHypotheses>>
+  > = ({ signal }) => listSessionHypotheses(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof listSessionHypotheses>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListSessionHypothesesQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listSessionHypotheses>>
+>;
+export type ListSessionHypothesesQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List all formal hypotheses extracted from this session's papers.
+ */
+
+export function useListSessionHypotheses<
+  TData = Awaited<ReturnType<typeof listSessionHypotheses>>,
+  TError = ErrorType<unknown>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listSessionHypotheses>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListSessionHypothesesQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary List images the user has dismissed for this session.
+ */
+export const getListImageBlocklistUrl = (id: number) => {
+  return `/api/sessions/${id}/image-blocklist`;
+};
+
+export const listImageBlocklist = async (
+  id: number,
+  options?: RequestInit,
+): Promise<ImageBlocklistEntry[]> => {
+  return customFetch<ImageBlocklistEntry[]>(getListImageBlocklistUrl(id), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListImageBlocklistQueryKey = (id: number) => {
+  return [`/api/sessions/${id}/image-blocklist`] as const;
+};
+
+export const getListImageBlocklistQueryOptions = <
+  TData = Awaited<ReturnType<typeof listImageBlocklist>>,
+  TError = ErrorType<unknown>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listImageBlocklist>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListImageBlocklistQueryKey(id);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listImageBlocklist>>
+  > = ({ signal }) => listImageBlocklist(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof listImageBlocklist>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListImageBlocklistQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listImageBlocklist>>
+>;
+export type ListImageBlocklistQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List images the user has dismissed for this session.
+ */
+
+export function useListImageBlocklist<
+  TData = Awaited<ReturnType<typeof listImageBlocklist>>,
+  TError = ErrorType<unknown>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listImageBlocklist>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListImageBlocklistQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Block an image (by sourceUrl) from future searches in this session.
+ */
+export const getAddImageBlocklistEntryUrl = (id: number) => {
+  return `/api/sessions/${id}/image-blocklist`;
+};
+
+export const addImageBlocklistEntry = async (
+  id: number,
+  addImageBlocklistEntryBody: AddImageBlocklistEntryBody,
+  options?: RequestInit,
+): Promise<ImageBlocklistEntry> => {
+  return customFetch<ImageBlocklistEntry>(getAddImageBlocklistEntryUrl(id), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(addImageBlocklistEntryBody),
+  });
+};
+
+export const getAddImageBlocklistEntryMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof addImageBlocklistEntry>>,
+    TError,
+    { id: number; data: BodyType<AddImageBlocklistEntryBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof addImageBlocklistEntry>>,
+  TError,
+  { id: number; data: BodyType<AddImageBlocklistEntryBody> },
+  TContext
+> => {
+  const mutationKey = ["addImageBlocklistEntry"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof addImageBlocklistEntry>>,
+    { id: number; data: BodyType<AddImageBlocklistEntryBody> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return addImageBlocklistEntry(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AddImageBlocklistEntryMutationResult = NonNullable<
+  Awaited<ReturnType<typeof addImageBlocklistEntry>>
+>;
+export type AddImageBlocklistEntryMutationBody =
+  BodyType<AddImageBlocklistEntryBody>;
+export type AddImageBlocklistEntryMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Block an image (by sourceUrl) from future searches in this session.
+ */
+export const useAddImageBlocklistEntry = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof addImageBlocklistEntry>>,
+    TError,
+    { id: number; data: BodyType<AddImageBlocklistEntryBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof addImageBlocklistEntry>>,
+  TError,
+  { id: number; data: BodyType<AddImageBlocklistEntryBody> },
+  TContext
+> => {
+  return useMutation(getAddImageBlocklistEntryMutationOptions(options));
+};
+
+/**
+ * @summary Remove an entry from this session's image blocklist.
+ */
+export const getRemoveImageBlocklistEntryUrl = (
+  id: number,
+  entryId: number,
+) => {
+  return `/api/sessions/${id}/image-blocklist/${entryId}`;
+};
+
+export const removeImageBlocklistEntry = async (
+  id: number,
+  entryId: number,
+  options?: RequestInit,
+): Promise<void> => {
+  return customFetch<void>(getRemoveImageBlocklistEntryUrl(id, entryId), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getRemoveImageBlocklistEntryMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof removeImageBlocklistEntry>>,
+    TError,
+    { id: number; entryId: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof removeImageBlocklistEntry>>,
+  TError,
+  { id: number; entryId: number },
+  TContext
+> => {
+  const mutationKey = ["removeImageBlocklistEntry"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof removeImageBlocklistEntry>>,
+    { id: number; entryId: number }
+  > = (props) => {
+    const { id, entryId } = props ?? {};
+
+    return removeImageBlocklistEntry(id, entryId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RemoveImageBlocklistEntryMutationResult = NonNullable<
+  Awaited<ReturnType<typeof removeImageBlocklistEntry>>
+>;
+
+export type RemoveImageBlocklistEntryMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Remove an entry from this session's image blocklist.
+ */
+export const useRemoveImageBlocklistEntry = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof removeImageBlocklistEntry>>,
+    TError,
+    { id: number; entryId: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof removeImageBlocklistEntry>>,
+  TError,
+  { id: number; entryId: number },
+  TContext
+> => {
+  return useMutation(getRemoveImageBlocklistEntryMutationOptions(options));
+};
 
 /**
  * @summary Get variable relationship graph data for visualization

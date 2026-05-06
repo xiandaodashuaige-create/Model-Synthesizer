@@ -348,6 +348,107 @@ paths:
                 items:
                   $ref: "#/components/schemas/Variable"
 
+  /sessions/{id}/hypotheses:
+    get:
+      operationId: listSessionHypotheses
+      tags: [variables]
+      summary: List all formal hypotheses extracted from this session's papers.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Hypotheses list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PaperHypothesis"
+
+  /sessions/{id}/image-blocklist:
+    get:
+      operationId: listImageBlocklist
+      tags: [models]
+      summary: List images the user has dismissed for this session.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Blocklist entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ImageBlocklistEntry"
+    post:
+      operationId: addImageBlocklistEntry
+      tags: [models]
+      summary: Block an image (by sourceUrl) from future searches in this session.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sourceUrl, sourceDomain]
+              properties:
+                sourceUrl:
+                  type: string
+                sourceDomain:
+                  type: string
+                title:
+                  type: ["string", "null"]
+                reason:
+                  type: ["string", "null"]
+      responses:
+        "200":
+          description: Already blocked (idempotent)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImageBlocklistEntry"
+        "201":
+          description: Newly blocked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImageBlocklistEntry"
+
+  /sessions/{id}/image-blocklist/{entryId}:
+    delete:
+      operationId: removeImageBlocklistEntry
+      tags: [models]
+      summary: Remove an entry from this session's image blocklist.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: entryId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Removed
+
   /sessions/{id}/variable-graph:
     get:
       operationId: getVariableGraph
@@ -1289,6 +1390,13 @@ components:
           type: string
         citationText:
           type: string
+        canonicalConstructId:
+          type: ["string", "null"]
+          description: Lower-case canonical construct id (e.g. "trust", "purchase intention"). Variables across papers that map to the same construct share this id.
+        constructLayer:
+          type: ["string", "null"]
+          enum: [stimulus, cognitive, affective, intention, behavior, null]
+          description: Standard psychology pipeline layer for the variable.
         createdAt:
           type: string
       required:
@@ -1301,6 +1409,79 @@ components:
         - type
         - definition
         - citationText
+        - createdAt
+
+    PaperHypothesis:
+      type: object
+      properties:
+        id:
+          type: integer
+        sessionId:
+          type: integer
+        paperId:
+          type: integer
+        paperTitle:
+          type: string
+        paperAuthors:
+          type: array
+          items:
+            type: string
+        paperYear:
+          type: ["integer", "null"]
+        hypothesisId:
+          type: string
+          description: Hypothesis label as printed in the paper (e.g. "H1", "H2a").
+        fromVariable:
+          type: string
+        toVariable:
+          type: string
+        viaVariable:
+          type: ["string", "null"]
+        relationship:
+          type: string
+          enum: [positive, negative, moderates, mediates]
+        statement:
+          type: string
+          description: Verbatim hypothesis sentence from the paper.
+        effectSize:
+          type: ["string", "null"]
+        pageOrSection:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+      required:
+        - id
+        - sessionId
+        - paperId
+        - hypothesisId
+        - fromVariable
+        - toVariable
+        - relationship
+        - statement
+        - createdAt
+
+    ImageBlocklistEntry:
+      type: object
+      properties:
+        id:
+          type: integer
+        sessionId:
+          type: integer
+        sourceUrl:
+          type: string
+        sourceDomain:
+          type: string
+        title:
+          type: ["string", "null"]
+        reason:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+      required:
+        - id
+        - sessionId
+        - sourceUrl
+        - sourceDomain
         - createdAt
 
     VariableGraph:
@@ -1440,6 +1621,18 @@ components:
           type: ["integer", "null"]
         evidenceCitationText:
           type: string
+        evidenceHypothesisId:
+          type: ["string", "null"]
+          description: References paper_hypotheses.hypothesis_id (e.g. "H2a") when the edge is grounded in a formal hypothesis.
+        effectSize:
+          type: ["string", "null"]
+          description: Reported effect size (e.g. "β=.34, p<.001") when extracted from the source paper.
+        evidenceLocation:
+          type: ["string", "null"]
+          description: Where in the source paper the edge is supported (e.g. "p. 412", "Section 3.2").
+        moderatorJustification:
+          type: ["string", "null"]
+          description: REQUIRED when relationship="moderates". Explains theoretically why the variable can condition the moderated path.
       required:
         - fromVariableId
         - toVariableId

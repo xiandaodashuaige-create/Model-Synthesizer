@@ -113,6 +113,25 @@ Per-session user-curated research model with provenance-tracked edges. Independe
 
 **i18n note**: interpolation uses single-brace `{key}` syntax, NOT `{{key}}`.
 
+## P1+P2 Optimization Push (May 2026)
+
+**Schema additions** (`pnpm --filter @workspace/db run push`):
+- `paper_hypotheses` (`lib/db/src/schema/hypotheses.ts`) — verbatim formal hypotheses extracted from each paper (id, fromVariable, toVariable, viaVariable, relationship, statement, effectSize, pageOrSection).
+- `image_blocklist` (`lib/db/src/schema/image-blocklist.ts`) — per-session image dismissals (sourceUrl, sourceDomain, title, reason).
+- `research_variables` gained `canonicalConstructId` + `constructLayer` (stimulus / cognitive / affective / intention / behavior).
+
+**Theory** (`artifacts/api-server/src/lib/theoryTemplates.ts`): 17 backbones, `recommendBackbones(dvKeywords,k)`, `CONSTRUCT_LAYERS` + `layerIndex()`, structural operators with layer constraints.
+
+**Variables route**: extraction returns `{variables, hypotheses}` with canonical+layer; persists to `paper_hypotheses`. New `GET /sessions/:id/hypotheses` lists them.
+
+**Models route**: `ModelEdge` gained optional `evidenceHypothesisId`, `effectSize`, `evidenceLocation`, `moderatorJustification`. The generator prompt now injects a hypothesesBlock + recommendedBackbonesBlock and enforces Rules 10-13 (layer-ordered chain ≤3, one role per canonical construct, moderator must justify, hypothesis grounding preferred). The `validate()` function rejects edges that violate layer ordering, exceed chain depth, repeat a canonical-construct in conflicting roles, or moderate without justification.
+
+**Image blocklist**: 3 endpoints (`GET/POST /sessions/:id/image-blocklist`, `DELETE /sessions/:id/image-blocklist/{entryId}`). Stage 2.5 of the search pipeline reads `imageBlocklistTable` per session and drops blocked sourceUrls before AI gating. Frontend exposes a ✕ button next to each image (red-on-white, hover-revealed) → `useAddImageBlocklistEntry`.
+
+**Frontend** (`artifacts/research-model/src/pages/sessions/model-detail.tsx`): edge cards render new badges (hypothesisId/effectSize/evidenceLocation) + a purple "调节理由 / Moderation rationale" callout when `relationship === "moderates"`. New "Export APA references" button compiles every cited paper as APA-7 strings and downloads as .txt.
+
+**i18n** (`artifacts/research-model/src/lib/i18n.tsx`): added `md.modJust`, `md.export.{apa,apaTip,done,doneDesc}`, `models.assistant.searchImages.{block,blockTip}` for both zh + en.
+
 ## Image Search Pipeline (`POST /sessions/:id/model-assistant/search-model-images`)
 
 Multi-stage pipeline in `artifacts/api-server/src/routes/model-assistant.ts` that finds research-model figures from published papers. Designed for three goals: wide database, queries close to user need, pre-cleaned results.

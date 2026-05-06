@@ -249,6 +249,23 @@ export const ExtractVariablesResponseItem = zod.object({
   type: zod.enum(["independent", "mediator", "moderator", "dependent"]),
   definition: zod.string(),
   citationText: zod.string(),
+  canonicalConstructId: zod
+    .string()
+    .nullish()
+    .describe(
+      'Lower-case canonical construct id (e.g. \"trust\", \"purchase intention\"). Variables across papers that map to the same construct share this id.',
+    ),
+  constructLayer: zod
+    .union([
+      zod.literal("stimulus"),
+      zod.literal("cognitive"),
+      zod.literal("affective"),
+      zod.literal("intention"),
+      zod.literal("behavior"),
+      zod.literal(null),
+    ])
+    .nullish()
+    .describe("Standard psychology pipeline layer for the variable."),
   createdAt: zod.string(),
 });
 export const ExtractVariablesResponse = zod.array(ExtractVariablesResponseItem);
@@ -271,11 +288,114 @@ export const ListSessionVariablesResponseItem = zod.object({
   type: zod.enum(["independent", "mediator", "moderator", "dependent"]),
   definition: zod.string(),
   citationText: zod.string(),
+  canonicalConstructId: zod
+    .string()
+    .nullish()
+    .describe(
+      'Lower-case canonical construct id (e.g. \"trust\", \"purchase intention\"). Variables across papers that map to the same construct share this id.',
+    ),
+  constructLayer: zod
+    .union([
+      zod.literal("stimulus"),
+      zod.literal("cognitive"),
+      zod.literal("affective"),
+      zod.literal("intention"),
+      zod.literal("behavior"),
+      zod.literal(null),
+    ])
+    .nullish()
+    .describe("Standard psychology pipeline layer for the variable."),
   createdAt: zod.string(),
 });
 export const ListSessionVariablesResponse = zod.array(
   ListSessionVariablesResponseItem,
 );
+
+/**
+ * @summary List all formal hypotheses extracted from this session's papers.
+ */
+export const ListSessionHypothesesParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const ListSessionHypothesesResponseItem = zod.object({
+  id: zod.number(),
+  sessionId: zod.number(),
+  paperId: zod.number(),
+  paperTitle: zod.string().optional(),
+  paperAuthors: zod.array(zod.string()).optional(),
+  paperYear: zod.number().nullish(),
+  hypothesisId: zod
+    .string()
+    .describe(
+      'Hypothesis label as printed in the paper (e.g. \"H1\", \"H2a\").',
+    ),
+  fromVariable: zod.string(),
+  toVariable: zod.string(),
+  viaVariable: zod.string().nullish(),
+  relationship: zod.enum(["positive", "negative", "moderates", "mediates"]),
+  statement: zod
+    .string()
+    .describe("Verbatim hypothesis sentence from the paper."),
+  effectSize: zod.string().nullish(),
+  pageOrSection: zod.string().nullish(),
+  createdAt: zod.string(),
+});
+export const ListSessionHypothesesResponse = zod.array(
+  ListSessionHypothesesResponseItem,
+);
+
+/**
+ * @summary List images the user has dismissed for this session.
+ */
+export const ListImageBlocklistParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const ListImageBlocklistResponseItem = zod.object({
+  id: zod.number(),
+  sessionId: zod.number(),
+  sourceUrl: zod.string(),
+  sourceDomain: zod.string(),
+  title: zod.string().nullish(),
+  reason: zod.string().nullish(),
+  createdAt: zod.string(),
+});
+export const ListImageBlocklistResponse = zod.array(
+  ListImageBlocklistResponseItem,
+);
+
+/**
+ * @summary Block an image (by sourceUrl) from future searches in this session.
+ */
+export const AddImageBlocklistEntryParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const AddImageBlocklistEntryBody = zod.object({
+  sourceUrl: zod.string(),
+  sourceDomain: zod.string(),
+  title: zod.string().nullish(),
+  reason: zod.string().nullish(),
+});
+
+export const AddImageBlocklistEntryResponse = zod.object({
+  id: zod.number(),
+  sessionId: zod.number(),
+  sourceUrl: zod.string(),
+  sourceDomain: zod.string(),
+  title: zod.string().nullish(),
+  reason: zod.string().nullish(),
+  createdAt: zod.string(),
+});
+
+/**
+ * @summary Remove an entry from this session's image blocklist.
+ */
+export const RemoveImageBlocklistEntryParams = zod.object({
+  id: zod.coerce.number(),
+  entryId: zod.coerce.number(),
+});
 
 /**
  * @summary Get variable relationship graph data for visualization
@@ -551,6 +671,30 @@ export const GenerateModelsResponseItem = zod.object({
       evidencePaperAuthors: zod.array(zod.string()),
       evidencePaperYear: zod.number().nullish(),
       evidenceCitationText: zod.string(),
+      evidenceHypothesisId: zod
+        .string()
+        .nullish()
+        .describe(
+          'References paper_hypotheses.hypothesis_id (e.g. \"H2a\") when the edge is grounded in a formal hypothesis.',
+        ),
+      effectSize: zod
+        .string()
+        .nullish()
+        .describe(
+          'Reported effect size (e.g. \"β=.34, p<.001\") when extracted from the source paper.',
+        ),
+      evidenceLocation: zod
+        .string()
+        .nullish()
+        .describe(
+          'Where in the source paper the edge is supported (e.g. \"p. 412\", \"Section 3.2\").',
+        ),
+      moderatorJustification: zod
+        .string()
+        .nullish()
+        .describe(
+          'REQUIRED when relationship=\"moderates\". Explains theoretically why the variable can condition the moderated path.',
+        ),
     }),
   ),
   createdAt: zod.string(),
@@ -594,6 +738,30 @@ export const ListSessionModelsResponseItem = zod.object({
       evidencePaperAuthors: zod.array(zod.string()),
       evidencePaperYear: zod.number().nullish(),
       evidenceCitationText: zod.string(),
+      evidenceHypothesisId: zod
+        .string()
+        .nullish()
+        .describe(
+          'References paper_hypotheses.hypothesis_id (e.g. \"H2a\") when the edge is grounded in a formal hypothesis.',
+        ),
+      effectSize: zod
+        .string()
+        .nullish()
+        .describe(
+          'Reported effect size (e.g. \"β=.34, p<.001\") when extracted from the source paper.',
+        ),
+      evidenceLocation: zod
+        .string()
+        .nullish()
+        .describe(
+          'Where in the source paper the edge is supported (e.g. \"p. 412\", \"Section 3.2\").',
+        ),
+      moderatorJustification: zod
+        .string()
+        .nullish()
+        .describe(
+          'REQUIRED when relationship=\"moderates\". Explains theoretically why the variable can condition the moderated path.',
+        ),
     }),
   ),
   createdAt: zod.string(),
@@ -660,6 +828,30 @@ export const UpdateModelResponse = zod.object({
       evidencePaperAuthors: zod.array(zod.string()),
       evidencePaperYear: zod.number().nullish(),
       evidenceCitationText: zod.string(),
+      evidenceHypothesisId: zod
+        .string()
+        .nullish()
+        .describe(
+          'References paper_hypotheses.hypothesis_id (e.g. \"H2a\") when the edge is grounded in a formal hypothesis.',
+        ),
+      effectSize: zod
+        .string()
+        .nullish()
+        .describe(
+          'Reported effect size (e.g. \"β=.34, p<.001\") when extracted from the source paper.',
+        ),
+      evidenceLocation: zod
+        .string()
+        .nullish()
+        .describe(
+          'Where in the source paper the edge is supported (e.g. \"p. 412\", \"Section 3.2\").',
+        ),
+      moderatorJustification: zod
+        .string()
+        .nullish()
+        .describe(
+          'REQUIRED when relationship=\"moderates\". Explains theoretically why the variable can condition the moderated path.',
+        ),
     }),
   ),
   createdAt: zod.string(),
@@ -702,6 +894,30 @@ export const GetModelResponse = zod.object({
       evidencePaperAuthors: zod.array(zod.string()),
       evidencePaperYear: zod.number().nullish(),
       evidenceCitationText: zod.string(),
+      evidenceHypothesisId: zod
+        .string()
+        .nullish()
+        .describe(
+          'References paper_hypotheses.hypothesis_id (e.g. \"H2a\") when the edge is grounded in a formal hypothesis.',
+        ),
+      effectSize: zod
+        .string()
+        .nullish()
+        .describe(
+          'Reported effect size (e.g. \"β=.34, p<.001\") when extracted from the source paper.',
+        ),
+      evidenceLocation: zod
+        .string()
+        .nullish()
+        .describe(
+          'Where in the source paper the edge is supported (e.g. \"p. 412\", \"Section 3.2\").',
+        ),
+      moderatorJustification: zod
+        .string()
+        .nullish()
+        .describe(
+          'REQUIRED when relationship=\"moderates\". Explains theoretically why the variable can condition the moderated path.',
+        ),
     }),
   ),
   createdAt: zod.string(),
@@ -744,6 +960,30 @@ export const SelectModelResponse = zod.object({
       evidencePaperAuthors: zod.array(zod.string()),
       evidencePaperYear: zod.number().nullish(),
       evidenceCitationText: zod.string(),
+      evidenceHypothesisId: zod
+        .string()
+        .nullish()
+        .describe(
+          'References paper_hypotheses.hypothesis_id (e.g. \"H2a\") when the edge is grounded in a formal hypothesis.',
+        ),
+      effectSize: zod
+        .string()
+        .nullish()
+        .describe(
+          'Reported effect size (e.g. \"β=.34, p<.001\") when extracted from the source paper.',
+        ),
+      evidenceLocation: zod
+        .string()
+        .nullish()
+        .describe(
+          'Where in the source paper the edge is supported (e.g. \"p. 412\", \"Section 3.2\").',
+        ),
+      moderatorJustification: zod
+        .string()
+        .nullish()
+        .describe(
+          'REQUIRED when relationship=\"moderates\". Explains theoretically why the variable can condition the moderated path.',
+        ),
     }),
   ),
   createdAt: zod.string(),
