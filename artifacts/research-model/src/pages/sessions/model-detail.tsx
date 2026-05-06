@@ -17,9 +17,10 @@ import {
   getGetPaperModelFiguresQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Loader2, ArrowLeft, CheckCircle, BookOpen, Quote, Share2, Pencil, Save, X, Trash2, Plus, Download, Hash, BarChart3, MapPin, Info, FileText, AlertTriangle, Copy as CopyIcon, GitBranch, Image as ImageIcon, ChevronDown, ChevronUp, ExternalLink } from "lucide-react";
+import { Loader2, ArrowLeft, CheckCircle, BookOpen, Quote, Share2, Pencil, Save, X, Trash2, Plus, Download, Hash, BarChart3, MapPin, Info, FileText, AlertTriangle, Copy as CopyIcon, GitBranch, Image as ImageIcon, ChevronDown, ChevronUp, ExternalLink, Sparkles } from "lucide-react";
 import { ModelGraph, buildEdgeHTagMap, buildPaperTagMap } from "@/components/model-graph";
 import { EditableModelGraph } from "@/components/editable-model-graph";
+import { EvidenceMatchDialog } from "@/components/evidence-match-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { useT } from "@/lib/i18n";
 
@@ -253,6 +254,7 @@ export default function SessionModelDetail({ params: routeParams }: { params?: {
   // Canvas drag-to-connect → opens a small modal to capture the required evidence quote.
   const [pendingCanvasEdge, setPendingCanvasEdge] = useState<{ from: number; to: number } | null>(null);
 
+  const [evidenceOpen, setEvidenceOpen] = useState(false);
   // Lit review dialog state
   const [litOpen, setLitOpen] = useState(false);
   const [litMd, setLitMd] = useState<string>("");
@@ -460,6 +462,15 @@ export default function SessionModelDetail({ params: routeParams }: { params?: {
                 className="inline-flex items-center gap-1.5 rounded-md text-sm font-medium border border-border bg-background hover:bg-accent h-9 px-3 transition-colors"
               >
                 <Download className="w-3.5 h-3.5" /> {t("md.export.apa" as any)}
+              </button>
+              <button
+                data-testid="button-evidence-match"
+                onClick={() => setEvidenceOpen(true)}
+                disabled={editing}
+                title={t("evidence.btnTip" as any) as string}
+                className="inline-flex items-center gap-1.5 rounded-md text-sm font-medium border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 h-9 px-3 transition-colors disabled:opacity-50"
+              >
+                <Sparkles className="w-3.5 h-3.5" /> {t("evidence.btn" as any)}
               </button>
               <button
                 data-testid="button-generate-lit-review"
@@ -1018,6 +1029,14 @@ export default function SessionModelDetail({ params: routeParams }: { params?: {
           </div>
         </div>
       )}
+
+      <EvidenceMatchDialog
+        open={evidenceOpen}
+        onClose={() => setEvidenceOpen(false)}
+        mode="candidate"
+        sessionId={sessionId}
+        modelId={modelId}
+      />
     </div>
   );
 }

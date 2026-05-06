@@ -16,6 +16,7 @@ import { Loader2, Plus, X, AlertTriangle, BookOpen, ArrowRight, Sparkles, GitBra
 import { useToast } from "@/hooks/use-toast";
 import { useT } from "@/lib/i18n";
 import { EditableModelGraph, type CanvasNode, type CanvasEdge, type VariablePoolEntry } from "@/components/editable-model-graph";
+import { EvidenceMatchDialog } from "@/components/evidence-match-dialog";
 
 const TYPE_COLORS: Record<string, string> = {
   independent: "#2563eb",
@@ -45,6 +46,7 @@ export default function LiveModelPage({ params }: { params?: { id: string } }) {
     query: { enabled: !!sessionId, queryKey: getListSessionVariablesQueryKey(sessionId) },
   });
 
+  const [evidenceOpen, setEvidenceOpen] = useState(false);
   const addNode = useAddLiveModelNode();
   const removeNode = useRemoveLiveModelNode();
   const addEdge = useAddLiveModelEdge();
@@ -242,6 +244,15 @@ export default function LiveModelPage({ params }: { params?: { id: string } }) {
           <p className="text-sm text-muted-foreground max-w-2xl mt-1">{t("live.intro" as any)}</p>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => setEvidenceOpen(true)}
+            disabled={isEmpty}
+            title={t("evidence.btnTip" as any) as string}
+            data-testid="button-evidence-match"
+            className="inline-flex items-center gap-1.5 rounded-md text-xs font-medium border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 h-8 px-3 transition-colors disabled:opacity-50"
+          >
+            <Sparkles className="w-3.5 h-3.5" /> {t("evidence.btn" as any)}
+          </button>
           <span className="inline-flex items-center gap-1.5 text-xs font-medium text-foreground bg-secondary px-2.5 py-1 rounded-full">
             {t("live.stats" as any, { vars: nodes.length, edges: edges.length })}
           </span>
@@ -517,6 +528,13 @@ export default function LiveModelPage({ params }: { params?: { id: string } }) {
           </aside>
         </div>
       )}
+
+      <EvidenceMatchDialog
+        open={evidenceOpen}
+        onClose={() => setEvidenceOpen(false)}
+        mode="live"
+        sessionId={sessionId}
+      />
     </div>
   );
 }

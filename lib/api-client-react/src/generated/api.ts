@@ -27,6 +27,9 @@ import type {
   ChatModelAssistantBody,
   CreateSessionBody,
   ErrorResponse,
+  EvidenceApplyRequest,
+  EvidenceSearchRequest,
+  EvidenceSearchResult,
   GenerateModelLiteratureReview200,
   GenerateModelLiteratureReviewBody,
   GenerateModelsBody,
@@ -40,6 +43,7 @@ import type {
   LiveModelDetail,
   LookupPaper404,
   LookupPaperBody,
+  ModelVersionSummary,
   Paper,
   PaperHypothesis,
   PaperSearchResult,
@@ -3420,6 +3424,727 @@ export const useRemoveLiveModelEdge = <
   TContext
 > => {
   return useMutation(getRemoveLiveModelEdgeMutationOptions(options));
+};
+
+/**
+ * @summary Find papers (in session library and/or via web search) that support each edge of an AI candidate model. Read-only — no DB writes.
+ */
+export const getSearchModelEvidenceUrl = (id: number, modelId: number) => {
+  return `/api/sessions/${id}/models/${modelId}/evidence-search`;
+};
+
+export const searchModelEvidence = async (
+  id: number,
+  modelId: number,
+  evidenceSearchRequest: EvidenceSearchRequest,
+  options?: RequestInit,
+): Promise<EvidenceSearchResult> => {
+  return customFetch<EvidenceSearchResult>(
+    getSearchModelEvidenceUrl(id, modelId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(evidenceSearchRequest),
+    },
+  );
+};
+
+export const getSearchModelEvidenceMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof searchModelEvidence>>,
+    TError,
+    { id: number; modelId: number; data: BodyType<EvidenceSearchRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof searchModelEvidence>>,
+  TError,
+  { id: number; modelId: number; data: BodyType<EvidenceSearchRequest> },
+  TContext
+> => {
+  const mutationKey = ["searchModelEvidence"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof searchModelEvidence>>,
+    { id: number; modelId: number; data: BodyType<EvidenceSearchRequest> }
+  > = (props) => {
+    const { id, modelId, data } = props ?? {};
+
+    return searchModelEvidence(id, modelId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type SearchModelEvidenceMutationResult = NonNullable<
+  Awaited<ReturnType<typeof searchModelEvidence>>
+>;
+export type SearchModelEvidenceMutationBody = BodyType<EvidenceSearchRequest>;
+export type SearchModelEvidenceMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Find papers (in session library and/or via web search) that support each edge of an AI candidate model. Read-only — no DB writes.
+ */
+export const useSearchModelEvidence = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof searchModelEvidence>>,
+    TError,
+    { id: number; modelId: number; data: BodyType<EvidenceSearchRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof searchModelEvidence>>,
+  TError,
+  { id: number; modelId: number; data: BodyType<EvidenceSearchRequest> },
+  TContext
+> => {
+  return useMutation(getSearchModelEvidenceMutationOptions(options));
+};
+
+/**
+ * @summary Snapshot the current model, add chosen web papers to the session library, and attach evidence to candidate-model edges. Returns the updated model.
+ */
+export const getApplyModelEvidenceUrl = (id: number, modelId: number) => {
+  return `/api/sessions/${id}/models/${modelId}/evidence-apply`;
+};
+
+export const applyModelEvidence = async (
+  id: number,
+  modelId: number,
+  evidenceApplyRequest: EvidenceApplyRequest,
+  options?: RequestInit,
+): Promise<ResearchModel> => {
+  return customFetch<ResearchModel>(getApplyModelEvidenceUrl(id, modelId), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(evidenceApplyRequest),
+  });
+};
+
+export const getApplyModelEvidenceMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof applyModelEvidence>>,
+    TError,
+    { id: number; modelId: number; data: BodyType<EvidenceApplyRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof applyModelEvidence>>,
+  TError,
+  { id: number; modelId: number; data: BodyType<EvidenceApplyRequest> },
+  TContext
+> => {
+  const mutationKey = ["applyModelEvidence"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof applyModelEvidence>>,
+    { id: number; modelId: number; data: BodyType<EvidenceApplyRequest> }
+  > = (props) => {
+    const { id, modelId, data } = props ?? {};
+
+    return applyModelEvidence(id, modelId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ApplyModelEvidenceMutationResult = NonNullable<
+  Awaited<ReturnType<typeof applyModelEvidence>>
+>;
+export type ApplyModelEvidenceMutationBody = BodyType<EvidenceApplyRequest>;
+export type ApplyModelEvidenceMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Snapshot the current model, add chosen web papers to the session library, and attach evidence to candidate-model edges. Returns the updated model.
+ */
+export const useApplyModelEvidence = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof applyModelEvidence>>,
+    TError,
+    { id: number; modelId: number; data: BodyType<EvidenceApplyRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof applyModelEvidence>>,
+  TError,
+  { id: number; modelId: number; data: BodyType<EvidenceApplyRequest> },
+  TContext
+> => {
+  return useMutation(getApplyModelEvidenceMutationOptions(options));
+};
+
+/**
+ * @summary List recent saved snapshots of this candidate model (most recent first).
+ */
+export const getListModelVersionsUrl = (id: number, modelId: number) => {
+  return `/api/sessions/${id}/models/${modelId}/versions`;
+};
+
+export const listModelVersions = async (
+  id: number,
+  modelId: number,
+  options?: RequestInit,
+): Promise<ModelVersionSummary[]> => {
+  return customFetch<ModelVersionSummary[]>(
+    getListModelVersionsUrl(id, modelId),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getListModelVersionsQueryKey = (id: number, modelId: number) => {
+  return [`/api/sessions/${id}/models/${modelId}/versions`] as const;
+};
+
+export const getListModelVersionsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listModelVersions>>,
+  TError = ErrorType<unknown>,
+>(
+  id: number,
+  modelId: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listModelVersions>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListModelVersionsQueryKey(id, modelId);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listModelVersions>>
+  > = ({ signal }) =>
+    listModelVersions(id, modelId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!(id && modelId),
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof listModelVersions>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListModelVersionsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listModelVersions>>
+>;
+export type ListModelVersionsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List recent saved snapshots of this candidate model (most recent first).
+ */
+
+export function useListModelVersions<
+  TData = Awaited<ReturnType<typeof listModelVersions>>,
+  TError = ErrorType<unknown>,
+>(
+  id: number,
+  modelId: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listModelVersions>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListModelVersionsQueryOptions(id, modelId, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Restore the candidate model from a saved snapshot (also snapshots the current state first so the revert itself is undoable).
+ */
+export const getRevertModelToVersionUrl = (
+  id: number,
+  modelId: number,
+  versionId: number,
+) => {
+  return `/api/sessions/${id}/models/${modelId}/revert/${versionId}`;
+};
+
+export const revertModelToVersion = async (
+  id: number,
+  modelId: number,
+  versionId: number,
+  options?: RequestInit,
+): Promise<ResearchModel> => {
+  return customFetch<ResearchModel>(
+    getRevertModelToVersionUrl(id, modelId, versionId),
+    {
+      ...options,
+      method: "POST",
+    },
+  );
+};
+
+export const getRevertModelToVersionMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof revertModelToVersion>>,
+    TError,
+    { id: number; modelId: number; versionId: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof revertModelToVersion>>,
+  TError,
+  { id: number; modelId: number; versionId: number },
+  TContext
+> => {
+  const mutationKey = ["revertModelToVersion"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof revertModelToVersion>>,
+    { id: number; modelId: number; versionId: number }
+  > = (props) => {
+    const { id, modelId, versionId } = props ?? {};
+
+    return revertModelToVersion(id, modelId, versionId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RevertModelToVersionMutationResult = NonNullable<
+  Awaited<ReturnType<typeof revertModelToVersion>>
+>;
+
+export type RevertModelToVersionMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Restore the candidate model from a saved snapshot (also snapshots the current state first so the revert itself is undoable).
+ */
+export const useRevertModelToVersion = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof revertModelToVersion>>,
+    TError,
+    { id: number; modelId: number; versionId: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof revertModelToVersion>>,
+  TError,
+  { id: number; modelId: number; versionId: number },
+  TContext
+> => {
+  return useMutation(getRevertModelToVersionMutationOptions(options));
+};
+
+/**
+ * @summary Find papers (library and/or web) that support each edge of the user's live model. Read-only.
+ */
+export const getSearchLiveModelEvidenceUrl = (id: number) => {
+  return `/api/sessions/${id}/live-model/evidence-search`;
+};
+
+export const searchLiveModelEvidence = async (
+  id: number,
+  evidenceSearchRequest: EvidenceSearchRequest,
+  options?: RequestInit,
+): Promise<EvidenceSearchResult> => {
+  return customFetch<EvidenceSearchResult>(getSearchLiveModelEvidenceUrl(id), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(evidenceSearchRequest),
+  });
+};
+
+export const getSearchLiveModelEvidenceMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof searchLiveModelEvidence>>,
+    TError,
+    { id: number; data: BodyType<EvidenceSearchRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof searchLiveModelEvidence>>,
+  TError,
+  { id: number; data: BodyType<EvidenceSearchRequest> },
+  TContext
+> => {
+  const mutationKey = ["searchLiveModelEvidence"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof searchLiveModelEvidence>>,
+    { id: number; data: BodyType<EvidenceSearchRequest> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return searchLiveModelEvidence(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type SearchLiveModelEvidenceMutationResult = NonNullable<
+  Awaited<ReturnType<typeof searchLiveModelEvidence>>
+>;
+export type SearchLiveModelEvidenceMutationBody =
+  BodyType<EvidenceSearchRequest>;
+export type SearchLiveModelEvidenceMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Find papers (library and/or web) that support each edge of the user's live model. Read-only.
+ */
+export const useSearchLiveModelEvidence = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof searchLiveModelEvidence>>,
+    TError,
+    { id: number; data: BodyType<EvidenceSearchRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof searchLiveModelEvidence>>,
+  TError,
+  { id: number; data: BodyType<EvidenceSearchRequest> },
+  TContext
+> => {
+  return useMutation(getSearchLiveModelEvidenceMutationOptions(options));
+};
+
+/**
+ * @summary Snapshot the current live model, import chosen web papers into the session library, and attach evidence to live-model edges.
+ */
+export const getApplyLiveModelEvidenceUrl = (id: number) => {
+  return `/api/sessions/${id}/live-model/evidence-apply`;
+};
+
+export const applyLiveModelEvidence = async (
+  id: number,
+  evidenceApplyRequest: EvidenceApplyRequest,
+  options?: RequestInit,
+): Promise<LiveModelDetail> => {
+  return customFetch<LiveModelDetail>(getApplyLiveModelEvidenceUrl(id), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(evidenceApplyRequest),
+  });
+};
+
+export const getApplyLiveModelEvidenceMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof applyLiveModelEvidence>>,
+    TError,
+    { id: number; data: BodyType<EvidenceApplyRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof applyLiveModelEvidence>>,
+  TError,
+  { id: number; data: BodyType<EvidenceApplyRequest> },
+  TContext
+> => {
+  const mutationKey = ["applyLiveModelEvidence"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof applyLiveModelEvidence>>,
+    { id: number; data: BodyType<EvidenceApplyRequest> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return applyLiveModelEvidence(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ApplyLiveModelEvidenceMutationResult = NonNullable<
+  Awaited<ReturnType<typeof applyLiveModelEvidence>>
+>;
+export type ApplyLiveModelEvidenceMutationBody = BodyType<EvidenceApplyRequest>;
+export type ApplyLiveModelEvidenceMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Snapshot the current live model, import chosen web papers into the session library, and attach evidence to live-model edges.
+ */
+export const useApplyLiveModelEvidence = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof applyLiveModelEvidence>>,
+    TError,
+    { id: number; data: BodyType<EvidenceApplyRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof applyLiveModelEvidence>>,
+  TError,
+  { id: number; data: BodyType<EvidenceApplyRequest> },
+  TContext
+> => {
+  return useMutation(getApplyLiveModelEvidenceMutationOptions(options));
+};
+
+/**
+ * @summary List recent saved snapshots of the live model.
+ */
+export const getListLiveModelVersionsUrl = (id: number) => {
+  return `/api/sessions/${id}/live-model/versions`;
+};
+
+export const listLiveModelVersions = async (
+  id: number,
+  options?: RequestInit,
+): Promise<ModelVersionSummary[]> => {
+  return customFetch<ModelVersionSummary[]>(getListLiveModelVersionsUrl(id), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListLiveModelVersionsQueryKey = (id: number) => {
+  return [`/api/sessions/${id}/live-model/versions`] as const;
+};
+
+export const getListLiveModelVersionsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listLiveModelVersions>>,
+  TError = ErrorType<unknown>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listLiveModelVersions>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListLiveModelVersionsQueryKey(id);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listLiveModelVersions>>
+  > = ({ signal }) => listLiveModelVersions(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof listLiveModelVersions>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListLiveModelVersionsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listLiveModelVersions>>
+>;
+export type ListLiveModelVersionsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List recent saved snapshots of the live model.
+ */
+
+export function useListLiveModelVersions<
+  TData = Awaited<ReturnType<typeof listLiveModelVersions>>,
+  TError = ErrorType<unknown>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listLiveModelVersions>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListLiveModelVersionsQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Restore the live model from a saved snapshot.
+ */
+export const getRevertLiveModelToVersionUrl = (
+  id: number,
+  versionId: number,
+) => {
+  return `/api/sessions/${id}/live-model/revert/${versionId}`;
+};
+
+export const revertLiveModelToVersion = async (
+  id: number,
+  versionId: number,
+  options?: RequestInit,
+): Promise<LiveModelDetail> => {
+  return customFetch<LiveModelDetail>(
+    getRevertLiveModelToVersionUrl(id, versionId),
+    {
+      ...options,
+      method: "POST",
+    },
+  );
+};
+
+export const getRevertLiveModelToVersionMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof revertLiveModelToVersion>>,
+    TError,
+    { id: number; versionId: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof revertLiveModelToVersion>>,
+  TError,
+  { id: number; versionId: number },
+  TContext
+> => {
+  const mutationKey = ["revertLiveModelToVersion"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof revertLiveModelToVersion>>,
+    { id: number; versionId: number }
+  > = (props) => {
+    const { id, versionId } = props ?? {};
+
+    return revertLiveModelToVersion(id, versionId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RevertLiveModelToVersionMutationResult = NonNullable<
+  Awaited<ReturnType<typeof revertLiveModelToVersion>>
+>;
+
+export type RevertLiveModelToVersionMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Restore the live model from a saved snapshot.
+ */
+export const useRevertLiveModelToVersion = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof revertLiveModelToVersion>>,
+    TError,
+    { id: number; versionId: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof revertLiveModelToVersion>>,
+  TError,
+  { id: number; versionId: number },
+  TContext
+> => {
+  return useMutation(getRevertLiveModelToVersionMutationOptions(options));
 };
 
 /**

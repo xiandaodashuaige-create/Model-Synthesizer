@@ -277,6 +277,27 @@ export interface ModelNode {
   positionY?: number | null;
 }
 
+export type AdditionalEvidenceSource =
+  (typeof AdditionalEvidenceSource)[keyof typeof AdditionalEvidenceSource];
+
+export const AdditionalEvidenceSource = {
+  library: "library",
+  web: "web",
+} as const;
+
+export interface AdditionalEvidence {
+  paperId: number;
+  paperTitle: string;
+  paperAuthors?: string[];
+  /** @nullable */
+  paperYear?: number | null;
+  citationText: string;
+  source: AdditionalEvidenceSource;
+  /** @nullable */
+  score?: number | null;
+  addedAt?: string;
+}
+
 export interface ModelEdge {
   fromVariableId: number;
   toVariableId: number;
@@ -309,6 +330,8 @@ export interface ModelEdge {
    * @nullable
    */
   moderatorJustification?: string | null;
+  /** Extra supporting papers attached after-the-fact via the AI evidence-matching feature. */
+  additionalEvidence?: AdditionalEvidence[];
 }
 
 export interface ResearchModel {
@@ -370,6 +393,7 @@ export interface LiveModelEdgeOut {
   userAdded: boolean;
   /** True if a paperId+citationText backs this edge. */
   hasProvenance: boolean;
+  additionalEvidence?: AdditionalEvidence[];
   createdAt: string;
 }
 
@@ -388,6 +412,118 @@ export interface LiveModelDetail {
   edges: LiveModelEdgeOut[];
   /** Number of edges with no provenance (paper backing) — UI should warn. */
   unsupportedEdgeCount: number;
+}
+
+export type EvidenceSearchRequestScopesItem =
+  (typeof EvidenceSearchRequestScopesItem)[keyof typeof EvidenceSearchRequestScopesItem];
+
+export const EvidenceSearchRequestScopesItem = {
+  library: "library",
+  web: "web",
+} as const;
+
+export type EvidenceSearchRequestGranularityItem =
+  (typeof EvidenceSearchRequestGranularityItem)[keyof typeof EvidenceSearchRequestGranularityItem];
+
+export const EvidenceSearchRequestGranularityItem = {
+  overall: "overall",
+  "per-edge": "per-edge",
+} as const;
+
+export interface EvidenceSearchRequest {
+  scopes?: EvidenceSearchRequestScopesItem[];
+  granularity?: EvidenceSearchRequestGranularityItem[];
+  /** Optional natural-language guidance from the user (e.g. "prefer recent meta-analyses"). */
+  instructions?: string | null;
+}
+
+export type EvidencePaperHitSource =
+  (typeof EvidencePaperHitSource)[keyof typeof EvidencePaperHitSource];
+
+export const EvidencePaperHitSource = {
+  library: "library",
+  web: "web",
+} as const;
+
+export interface EvidencePaperHit {
+  source: EvidencePaperHitSource;
+  /** Present when source=library. */
+  paperId?: number | null;
+  /** OpenAlex W-id when source=web. */
+  externalId?: string | null;
+  title: string;
+  authors: string[];
+  year?: number | null;
+  abstract?: string | null;
+  url?: string | null;
+  /** AI-assessed relevance, 0..1. */
+  score: number;
+  /** Short why-this-matches. */
+  rationale: string;
+  /** Verbatim sentence supporting the matched edge (per-edge hits only). */
+  evidenceQuote?: string | null;
+}
+
+export interface EvidenceEdgeMatch {
+  /** Stable identifier "fromVariableId-toVariableId-relationship". */
+  edgeKey: string;
+  fromVariableId?: number;
+  toVariableId?: number;
+  fromVariableName: string;
+  toVariableName: string;
+  relationship: string;
+  hits: EvidencePaperHit[];
+}
+
+export interface EvidenceSearchResult {
+  overallMatches: EvidencePaperHit[];
+  perEdgeMatches: EvidenceEdgeMatch[];
+  durationMs?: number;
+}
+
+export type EvidenceApplyRequestAddPapersItem = {
+  externalId: string;
+  title: string;
+  authors?: string[];
+  year?: number | null;
+  abstract?: string | null;
+  url?: string | null;
+};
+
+export type EvidenceApplyRequestEdgeAttachmentsItem = {
+  /** fromVariableId-toVariableId-relationship */
+  edgeKey: string;
+  /** Library paper id; takes precedence over externalId. */
+  paperId?: number | null;
+  /** OpenAlex W-id for web hit; resolved against addPapers and the session library. */
+  externalId?: string | null;
+  evidenceQuote: string;
+};
+
+export interface EvidenceApplyRequest {
+  /** Web hits the user confirmed; will be imported into the session library if not already present. */
+  addPapers?: EvidenceApplyRequestAddPapersItem[];
+  edgeAttachments?: EvidenceApplyRequestEdgeAttachmentsItem[];
+  /** Optional human-readable description of the change (shown in version history). */
+  reason?: string | null;
+}
+
+export type ModelVersionSummaryKind =
+  (typeof ModelVersionSummaryKind)[keyof typeof ModelVersionSummaryKind];
+
+export const ModelVersionSummaryKind = {
+  candidate: "candidate",
+  live: "live",
+} as const;
+
+export interface ModelVersionSummary {
+  id: number;
+  kind: ModelVersionSummaryKind;
+  modelId?: number | null;
+  reason: string;
+  nodeCount: number;
+  edgeCount: number;
+  createdAt: string;
 }
 
 export type LookupPaper404 = {

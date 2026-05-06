@@ -743,6 +743,23 @@ export const GenerateModelsResponseItem = zod.object({
         .describe(
           'REQUIRED when relationship=\"moderates\". Explains theoretically why the variable can condition the moderated path.',
         ),
+      additionalEvidence: zod
+        .array(
+          zod.object({
+            paperId: zod.number(),
+            paperTitle: zod.string(),
+            paperAuthors: zod.array(zod.string()).optional(),
+            paperYear: zod.number().nullish(),
+            citationText: zod.string(),
+            source: zod.enum(["library", "web"]),
+            score: zod.number().nullish(),
+            addedAt: zod.coerce.date().optional(),
+          }),
+        )
+        .optional()
+        .describe(
+          "Extra supporting papers attached after-the-fact via the AI evidence-matching feature.",
+        ),
     }),
   ),
   createdAt: zod.string(),
@@ -821,6 +838,23 @@ export const ListSessionModelsResponseItem = zod.object({
         .nullish()
         .describe(
           'REQUIRED when relationship=\"moderates\". Explains theoretically why the variable can condition the moderated path.',
+        ),
+      additionalEvidence: zod
+        .array(
+          zod.object({
+            paperId: zod.number(),
+            paperTitle: zod.string(),
+            paperAuthors: zod.array(zod.string()).optional(),
+            paperYear: zod.number().nullish(),
+            citationText: zod.string(),
+            source: zod.enum(["library", "web"]),
+            score: zod.number().nullish(),
+            addedAt: zod.coerce.date().optional(),
+          }),
+        )
+        .optional()
+        .describe(
+          "Extra supporting papers attached after-the-fact via the AI evidence-matching feature.",
         ),
     }),
   ),
@@ -924,6 +958,23 @@ export const UpdateModelResponse = zod.object({
         .describe(
           'REQUIRED when relationship=\"moderates\". Explains theoretically why the variable can condition the moderated path.',
         ),
+      additionalEvidence: zod
+        .array(
+          zod.object({
+            paperId: zod.number(),
+            paperTitle: zod.string(),
+            paperAuthors: zod.array(zod.string()).optional(),
+            paperYear: zod.number().nullish(),
+            citationText: zod.string(),
+            source: zod.enum(["library", "web"]),
+            score: zod.number().nullish(),
+            addedAt: zod.coerce.date().optional(),
+          }),
+        )
+        .optional()
+        .describe(
+          "Extra supporting papers attached after-the-fact via the AI evidence-matching feature.",
+        ),
     }),
   ),
   createdAt: zod.string(),
@@ -1001,6 +1052,23 @@ export const GetModelResponse = zod.object({
         .nullish()
         .describe(
           'REQUIRED when relationship=\"moderates\". Explains theoretically why the variable can condition the moderated path.',
+        ),
+      additionalEvidence: zod
+        .array(
+          zod.object({
+            paperId: zod.number(),
+            paperTitle: zod.string(),
+            paperAuthors: zod.array(zod.string()).optional(),
+            paperYear: zod.number().nullish(),
+            citationText: zod.string(),
+            source: zod.enum(["library", "web"]),
+            score: zod.number().nullish(),
+            addedAt: zod.coerce.date().optional(),
+          }),
+        )
+        .optional()
+        .describe(
+          "Extra supporting papers attached after-the-fact via the AI evidence-matching feature.",
         ),
     }),
   ),
@@ -1153,6 +1221,23 @@ export const SelectModelResponse = zod.object({
         .describe(
           'REQUIRED when relationship=\"moderates\". Explains theoretically why the variable can condition the moderated path.',
         ),
+      additionalEvidence: zod
+        .array(
+          zod.object({
+            paperId: zod.number(),
+            paperTitle: zod.string(),
+            paperAuthors: zod.array(zod.string()).optional(),
+            paperYear: zod.number().nullish(),
+            citationText: zod.string(),
+            source: zod.enum(["library", "web"]),
+            score: zod.number().nullish(),
+            addedAt: zod.coerce.date().optional(),
+          }),
+        )
+        .optional()
+        .describe(
+          "Extra supporting papers attached after-the-fact via the AI evidence-matching feature.",
+        ),
     }),
   ),
   createdAt: zod.string(),
@@ -1218,6 +1303,20 @@ export const GetLiveModelResponse = zod.object({
       hasProvenance: zod
         .boolean()
         .describe("True if a paperId+citationText backs this edge."),
+      additionalEvidence: zod
+        .array(
+          zod.object({
+            paperId: zod.number(),
+            paperTitle: zod.string(),
+            paperAuthors: zod.array(zod.string()).optional(),
+            paperYear: zod.number().nullish(),
+            citationText: zod.string(),
+            source: zod.enum(["library", "web"]),
+            score: zod.number().nullish(),
+            addedAt: zod.coerce.date().optional(),
+          }),
+        )
+        .optional(),
       createdAt: zod.string(),
     }),
   ),
@@ -1301,6 +1400,20 @@ export const AddLiveModelNodeResponse = zod.object({
       hasProvenance: zod
         .boolean()
         .describe("True if a paperId+citationText backs this edge."),
+      additionalEvidence: zod
+        .array(
+          zod.object({
+            paperId: zod.number(),
+            paperTitle: zod.string(),
+            paperAuthors: zod.array(zod.string()).optional(),
+            paperYear: zod.number().nullish(),
+            citationText: zod.string(),
+            source: zod.enum(["library", "web"]),
+            score: zod.number().nullish(),
+            addedAt: zod.coerce.date().optional(),
+          }),
+        )
+        .optional(),
       createdAt: zod.string(),
     }),
   ),
@@ -1372,6 +1485,20 @@ export const RemoveLiveModelNodeResponse = zod.object({
       hasProvenance: zod
         .boolean()
         .describe("True if a paperId+citationText backs this edge."),
+      additionalEvidence: zod
+        .array(
+          zod.object({
+            paperId: zod.number(),
+            paperTitle: zod.string(),
+            paperAuthors: zod.array(zod.string()).optional(),
+            paperYear: zod.number().nullish(),
+            citationText: zod.string(),
+            source: zod.enum(["library", "web"]),
+            score: zod.number().nullish(),
+            addedAt: zod.coerce.date().optional(),
+          }),
+        )
+        .optional(),
       createdAt: zod.string(),
     }),
   ),
@@ -1448,6 +1575,20 @@ export const UpdateLiveModelNodePositionResponse = zod.object({
       hasProvenance: zod
         .boolean()
         .describe("True if a paperId+citationText backs this edge."),
+      additionalEvidence: zod
+        .array(
+          zod.object({
+            paperId: zod.number(),
+            paperTitle: zod.string(),
+            paperAuthors: zod.array(zod.string()).optional(),
+            paperYear: zod.number().nullish(),
+            citationText: zod.string(),
+            source: zod.enum(["library", "web"]),
+            score: zod.number().nullish(),
+            addedAt: zod.coerce.date().optional(),
+          }),
+        )
+        .optional(),
       createdAt: zod.string(),
     }),
   ),
@@ -1537,6 +1678,20 @@ export const AddLiveModelEdgeResponse = zod.object({
       hasProvenance: zod
         .boolean()
         .describe("True if a paperId+citationText backs this edge."),
+      additionalEvidence: zod
+        .array(
+          zod.object({
+            paperId: zod.number(),
+            paperTitle: zod.string(),
+            paperAuthors: zod.array(zod.string()).optional(),
+            paperYear: zod.number().nullish(),
+            citationText: zod.string(),
+            source: zod.enum(["library", "web"]),
+            score: zod.number().nullish(),
+            addedAt: zod.coerce.date().optional(),
+          }),
+        )
+        .optional(),
       createdAt: zod.string(),
     }),
   ),
@@ -1608,6 +1763,686 @@ export const RemoveLiveModelEdgeResponse = zod.object({
       hasProvenance: zod
         .boolean()
         .describe("True if a paperId+citationText backs this edge."),
+      additionalEvidence: zod
+        .array(
+          zod.object({
+            paperId: zod.number(),
+            paperTitle: zod.string(),
+            paperAuthors: zod.array(zod.string()).optional(),
+            paperYear: zod.number().nullish(),
+            citationText: zod.string(),
+            source: zod.enum(["library", "web"]),
+            score: zod.number().nullish(),
+            addedAt: zod.coerce.date().optional(),
+          }),
+        )
+        .optional(),
+      createdAt: zod.string(),
+    }),
+  ),
+  unsupportedEdgeCount: zod
+    .number()
+    .describe(
+      "Number of edges with no provenance (paper backing) — UI should warn.",
+    ),
+});
+
+/**
+ * @summary Find papers (in session library and/or via web search) that support each edge of an AI candidate model. Read-only — no DB writes.
+ */
+export const SearchModelEvidenceParams = zod.object({
+  id: zod.coerce.number(),
+  modelId: zod.coerce.number(),
+});
+
+export const SearchModelEvidenceBody = zod.object({
+  scopes: zod.array(zod.enum(["library", "web"])).default([`library`, `web`]),
+  granularity: zod
+    .array(zod.enum(["overall", "per-edge"]))
+    .default([`overall`, `per-edge`]),
+  instructions: zod
+    .string()
+    .nullish()
+    .describe(
+      'Optional natural-language guidance from the user (e.g. \"prefer recent meta-analyses\").',
+    ),
+});
+
+export const SearchModelEvidenceResponse = zod.object({
+  overallMatches: zod.array(
+    zod.object({
+      source: zod.enum(["library", "web"]),
+      paperId: zod.number().nullish().describe("Present when source=library."),
+      externalId: zod
+        .string()
+        .nullish()
+        .describe("OpenAlex W-id when source=web."),
+      title: zod.string(),
+      authors: zod.array(zod.string()),
+      year: zod.number().nullish(),
+      abstract: zod.string().nullish(),
+      url: zod.string().nullish(),
+      score: zod.number().describe("AI-assessed relevance, 0..1."),
+      rationale: zod.string().describe("Short why-this-matches."),
+      evidenceQuote: zod
+        .string()
+        .nullish()
+        .describe(
+          "Verbatim sentence supporting the matched edge (per-edge hits only).",
+        ),
+    }),
+  ),
+  perEdgeMatches: zod.array(
+    zod.object({
+      edgeKey: zod
+        .string()
+        .describe(
+          'Stable identifier \"fromVariableId-toVariableId-relationship\".',
+        ),
+      fromVariableId: zod.number().optional(),
+      toVariableId: zod.number().optional(),
+      fromVariableName: zod.string(),
+      toVariableName: zod.string(),
+      relationship: zod.string(),
+      hits: zod.array(
+        zod.object({
+          source: zod.enum(["library", "web"]),
+          paperId: zod
+            .number()
+            .nullish()
+            .describe("Present when source=library."),
+          externalId: zod
+            .string()
+            .nullish()
+            .describe("OpenAlex W-id when source=web."),
+          title: zod.string(),
+          authors: zod.array(zod.string()),
+          year: zod.number().nullish(),
+          abstract: zod.string().nullish(),
+          url: zod.string().nullish(),
+          score: zod.number().describe("AI-assessed relevance, 0..1."),
+          rationale: zod.string().describe("Short why-this-matches."),
+          evidenceQuote: zod
+            .string()
+            .nullish()
+            .describe(
+              "Verbatim sentence supporting the matched edge (per-edge hits only).",
+            ),
+        }),
+      ),
+    }),
+  ),
+  durationMs: zod.number().optional(),
+});
+
+/**
+ * @summary Snapshot the current model, add chosen web papers to the session library, and attach evidence to candidate-model edges. Returns the updated model.
+ */
+export const ApplyModelEvidenceParams = zod.object({
+  id: zod.coerce.number(),
+  modelId: zod.coerce.number(),
+});
+
+export const ApplyModelEvidenceBody = zod.object({
+  addPapers: zod
+    .array(
+      zod.object({
+        externalId: zod.string(),
+        title: zod.string(),
+        authors: zod.array(zod.string()).optional(),
+        year: zod.number().nullish(),
+        abstract: zod.string().nullish(),
+        url: zod.string().nullish(),
+      }),
+    )
+    .optional()
+    .describe(
+      "Web hits the user confirmed; will be imported into the session library if not already present.",
+    ),
+  edgeAttachments: zod
+    .array(
+      zod.object({
+        edgeKey: zod
+          .string()
+          .describe("fromVariableId-toVariableId-relationship"),
+        paperId: zod
+          .number()
+          .nullish()
+          .describe("Library paper id; takes precedence over externalId."),
+        externalId: zod
+          .string()
+          .nullish()
+          .describe(
+            "OpenAlex W-id for web hit; resolved against addPapers and the session library.",
+          ),
+        evidenceQuote: zod.string(),
+      }),
+    )
+    .optional(),
+  reason: zod
+    .string()
+    .nullish()
+    .describe(
+      "Optional human-readable description of the change (shown in version history).",
+    ),
+});
+
+export const ApplyModelEvidenceResponse = zod.object({
+  id: zod.number(),
+  sessionId: zod.number(),
+  name: zod.string(),
+  description: zod.string(),
+  rationale: zod.string(),
+  selected: zod.boolean(),
+  nodes: zod.array(
+    zod.object({
+      variableId: zod.number(),
+      variableName: zod.string(),
+      type: zod.string(),
+      paperId: zod.number(),
+      paperTitle: zod.string(),
+      paperAuthors: zod.array(zod.string()),
+      paperYear: zod.number().nullish(),
+      positionX: zod
+        .number()
+        .nullish()
+        .describe(
+          "User-arranged X position on the editable canvas (null = use auto layout).",
+        ),
+      positionY: zod
+        .number()
+        .nullish()
+        .describe(
+          "User-arranged Y position on the editable canvas (null = use auto layout).",
+        ),
+    }),
+  ),
+  edges: zod.array(
+    zod.object({
+      fromVariableId: zod.number(),
+      toVariableId: zod.number(),
+      fromVariableName: zod.string(),
+      toVariableName: zod.string(),
+      relationship: zod.string(),
+      evidencePaperId: zod.number(),
+      evidencePaperTitle: zod.string(),
+      evidencePaperAuthors: zod.array(zod.string()),
+      evidencePaperYear: zod.number().nullish(),
+      evidenceCitationText: zod.string(),
+      evidenceHypothesisId: zod
+        .string()
+        .nullish()
+        .describe(
+          'References paper_hypotheses.hypothesis_id (e.g. \"H2a\") when the edge is grounded in a formal hypothesis.',
+        ),
+      effectSize: zod
+        .string()
+        .nullish()
+        .describe(
+          'Reported effect size (e.g. \"β=.34, p<.001\") when extracted from the source paper.',
+        ),
+      evidenceLocation: zod
+        .string()
+        .nullish()
+        .describe(
+          'Where in the source paper the edge is supported (e.g. \"p. 412\", \"Section 3.2\").',
+        ),
+      moderatorJustification: zod
+        .string()
+        .nullish()
+        .describe(
+          'REQUIRED when relationship=\"moderates\". Explains theoretically why the variable can condition the moderated path.',
+        ),
+      additionalEvidence: zod
+        .array(
+          zod.object({
+            paperId: zod.number(),
+            paperTitle: zod.string(),
+            paperAuthors: zod.array(zod.string()).optional(),
+            paperYear: zod.number().nullish(),
+            citationText: zod.string(),
+            source: zod.enum(["library", "web"]),
+            score: zod.number().nullish(),
+            addedAt: zod.coerce.date().optional(),
+          }),
+        )
+        .optional()
+        .describe(
+          "Extra supporting papers attached after-the-fact via the AI evidence-matching feature.",
+        ),
+    }),
+  ),
+  createdAt: zod.string(),
+});
+
+/**
+ * @summary List recent saved snapshots of this candidate model (most recent first).
+ */
+export const ListModelVersionsParams = zod.object({
+  id: zod.coerce.number(),
+  modelId: zod.coerce.number(),
+});
+
+export const ListModelVersionsResponseItem = zod.object({
+  id: zod.number(),
+  kind: zod.enum(["candidate", "live"]),
+  modelId: zod.number().nullish(),
+  reason: zod.string(),
+  nodeCount: zod.number(),
+  edgeCount: zod.number(),
+  createdAt: zod.coerce.date(),
+});
+export const ListModelVersionsResponse = zod.array(
+  ListModelVersionsResponseItem,
+);
+
+/**
+ * @summary Restore the candidate model from a saved snapshot (also snapshots the current state first so the revert itself is undoable).
+ */
+export const RevertModelToVersionParams = zod.object({
+  id: zod.coerce.number(),
+  modelId: zod.coerce.number(),
+  versionId: zod.coerce.number(),
+});
+
+export const RevertModelToVersionResponse = zod.object({
+  id: zod.number(),
+  sessionId: zod.number(),
+  name: zod.string(),
+  description: zod.string(),
+  rationale: zod.string(),
+  selected: zod.boolean(),
+  nodes: zod.array(
+    zod.object({
+      variableId: zod.number(),
+      variableName: zod.string(),
+      type: zod.string(),
+      paperId: zod.number(),
+      paperTitle: zod.string(),
+      paperAuthors: zod.array(zod.string()),
+      paperYear: zod.number().nullish(),
+      positionX: zod
+        .number()
+        .nullish()
+        .describe(
+          "User-arranged X position on the editable canvas (null = use auto layout).",
+        ),
+      positionY: zod
+        .number()
+        .nullish()
+        .describe(
+          "User-arranged Y position on the editable canvas (null = use auto layout).",
+        ),
+    }),
+  ),
+  edges: zod.array(
+    zod.object({
+      fromVariableId: zod.number(),
+      toVariableId: zod.number(),
+      fromVariableName: zod.string(),
+      toVariableName: zod.string(),
+      relationship: zod.string(),
+      evidencePaperId: zod.number(),
+      evidencePaperTitle: zod.string(),
+      evidencePaperAuthors: zod.array(zod.string()),
+      evidencePaperYear: zod.number().nullish(),
+      evidenceCitationText: zod.string(),
+      evidenceHypothesisId: zod
+        .string()
+        .nullish()
+        .describe(
+          'References paper_hypotheses.hypothesis_id (e.g. \"H2a\") when the edge is grounded in a formal hypothesis.',
+        ),
+      effectSize: zod
+        .string()
+        .nullish()
+        .describe(
+          'Reported effect size (e.g. \"β=.34, p<.001\") when extracted from the source paper.',
+        ),
+      evidenceLocation: zod
+        .string()
+        .nullish()
+        .describe(
+          'Where in the source paper the edge is supported (e.g. \"p. 412\", \"Section 3.2\").',
+        ),
+      moderatorJustification: zod
+        .string()
+        .nullish()
+        .describe(
+          'REQUIRED when relationship=\"moderates\". Explains theoretically why the variable can condition the moderated path.',
+        ),
+      additionalEvidence: zod
+        .array(
+          zod.object({
+            paperId: zod.number(),
+            paperTitle: zod.string(),
+            paperAuthors: zod.array(zod.string()).optional(),
+            paperYear: zod.number().nullish(),
+            citationText: zod.string(),
+            source: zod.enum(["library", "web"]),
+            score: zod.number().nullish(),
+            addedAt: zod.coerce.date().optional(),
+          }),
+        )
+        .optional()
+        .describe(
+          "Extra supporting papers attached after-the-fact via the AI evidence-matching feature.",
+        ),
+    }),
+  ),
+  createdAt: zod.string(),
+});
+
+/**
+ * @summary Find papers (library and/or web) that support each edge of the user's live model. Read-only.
+ */
+export const SearchLiveModelEvidenceParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const SearchLiveModelEvidenceBody = zod.object({
+  scopes: zod.array(zod.enum(["library", "web"])).default([`library`, `web`]),
+  granularity: zod
+    .array(zod.enum(["overall", "per-edge"]))
+    .default([`overall`, `per-edge`]),
+  instructions: zod
+    .string()
+    .nullish()
+    .describe(
+      'Optional natural-language guidance from the user (e.g. \"prefer recent meta-analyses\").',
+    ),
+});
+
+export const SearchLiveModelEvidenceResponse = zod.object({
+  overallMatches: zod.array(
+    zod.object({
+      source: zod.enum(["library", "web"]),
+      paperId: zod.number().nullish().describe("Present when source=library."),
+      externalId: zod
+        .string()
+        .nullish()
+        .describe("OpenAlex W-id when source=web."),
+      title: zod.string(),
+      authors: zod.array(zod.string()),
+      year: zod.number().nullish(),
+      abstract: zod.string().nullish(),
+      url: zod.string().nullish(),
+      score: zod.number().describe("AI-assessed relevance, 0..1."),
+      rationale: zod.string().describe("Short why-this-matches."),
+      evidenceQuote: zod
+        .string()
+        .nullish()
+        .describe(
+          "Verbatim sentence supporting the matched edge (per-edge hits only).",
+        ),
+    }),
+  ),
+  perEdgeMatches: zod.array(
+    zod.object({
+      edgeKey: zod
+        .string()
+        .describe(
+          'Stable identifier \"fromVariableId-toVariableId-relationship\".',
+        ),
+      fromVariableId: zod.number().optional(),
+      toVariableId: zod.number().optional(),
+      fromVariableName: zod.string(),
+      toVariableName: zod.string(),
+      relationship: zod.string(),
+      hits: zod.array(
+        zod.object({
+          source: zod.enum(["library", "web"]),
+          paperId: zod
+            .number()
+            .nullish()
+            .describe("Present when source=library."),
+          externalId: zod
+            .string()
+            .nullish()
+            .describe("OpenAlex W-id when source=web."),
+          title: zod.string(),
+          authors: zod.array(zod.string()),
+          year: zod.number().nullish(),
+          abstract: zod.string().nullish(),
+          url: zod.string().nullish(),
+          score: zod.number().describe("AI-assessed relevance, 0..1."),
+          rationale: zod.string().describe("Short why-this-matches."),
+          evidenceQuote: zod
+            .string()
+            .nullish()
+            .describe(
+              "Verbatim sentence supporting the matched edge (per-edge hits only).",
+            ),
+        }),
+      ),
+    }),
+  ),
+  durationMs: zod.number().optional(),
+});
+
+/**
+ * @summary Snapshot the current live model, import chosen web papers into the session library, and attach evidence to live-model edges.
+ */
+export const ApplyLiveModelEvidenceParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const ApplyLiveModelEvidenceBody = zod.object({
+  addPapers: zod
+    .array(
+      zod.object({
+        externalId: zod.string(),
+        title: zod.string(),
+        authors: zod.array(zod.string()).optional(),
+        year: zod.number().nullish(),
+        abstract: zod.string().nullish(),
+        url: zod.string().nullish(),
+      }),
+    )
+    .optional()
+    .describe(
+      "Web hits the user confirmed; will be imported into the session library if not already present.",
+    ),
+  edgeAttachments: zod
+    .array(
+      zod.object({
+        edgeKey: zod
+          .string()
+          .describe("fromVariableId-toVariableId-relationship"),
+        paperId: zod
+          .number()
+          .nullish()
+          .describe("Library paper id; takes precedence over externalId."),
+        externalId: zod
+          .string()
+          .nullish()
+          .describe(
+            "OpenAlex W-id for web hit; resolved against addPapers and the session library.",
+          ),
+        evidenceQuote: zod.string(),
+      }),
+    )
+    .optional(),
+  reason: zod
+    .string()
+    .nullish()
+    .describe(
+      "Optional human-readable description of the change (shown in version history).",
+    ),
+});
+
+export const ApplyLiveModelEvidenceResponse = zod.object({
+  liveModel: zod.object({
+    id: zod.number(),
+    sessionId: zod.number(),
+    notes: zod.string(),
+    version: zod.number(),
+    createdAt: zod.string(),
+    updatedAt: zod.string(),
+  }),
+  nodes: zod.array(
+    zod.object({
+      id: zod.number(),
+      variableId: zod.number(),
+      variableName: zod.string(),
+      variableType: zod.string(),
+      paperId: zod.number(),
+      sourceModelId: zod.number().nullish(),
+      userAdded: zod.boolean(),
+      positionX: zod
+        .number()
+        .nullish()
+        .describe(
+          "User-arranged X position on the editable canvas (null = use auto layout).",
+        ),
+      positionY: zod
+        .number()
+        .nullish()
+        .describe(
+          "User-arranged Y position on the editable canvas (null = use auto layout).",
+        ),
+      createdAt: zod.string(),
+    }),
+  ),
+  edges: zod.array(
+    zod.object({
+      id: zod.number(),
+      fromVariableId: zod.number(),
+      toVariableId: zod.number(),
+      fromVariableName: zod.string(),
+      toVariableName: zod.string(),
+      relationship: zod.string(),
+      provenancePaperId: zod.number().nullish(),
+      provenancePaperTitle: zod.string().nullish(),
+      provenanceCitationText: zod.string().nullish(),
+      provenanceFigureThumbnailUrl: zod.string().nullish(),
+      provenanceFigureSourceUrl: zod.string().nullish(),
+      provenanceFigureSourceDomain: zod.string().nullish(),
+      confidence: zod.string(),
+      sourceModelId: zod.number().nullish(),
+      userAdded: zod.boolean(),
+      hasProvenance: zod
+        .boolean()
+        .describe("True if a paperId+citationText backs this edge."),
+      additionalEvidence: zod
+        .array(
+          zod.object({
+            paperId: zod.number(),
+            paperTitle: zod.string(),
+            paperAuthors: zod.array(zod.string()).optional(),
+            paperYear: zod.number().nullish(),
+            citationText: zod.string(),
+            source: zod.enum(["library", "web"]),
+            score: zod.number().nullish(),
+            addedAt: zod.coerce.date().optional(),
+          }),
+        )
+        .optional(),
+      createdAt: zod.string(),
+    }),
+  ),
+  unsupportedEdgeCount: zod
+    .number()
+    .describe(
+      "Number of edges with no provenance (paper backing) — UI should warn.",
+    ),
+});
+
+/**
+ * @summary List recent saved snapshots of the live model.
+ */
+export const ListLiveModelVersionsParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const ListLiveModelVersionsResponseItem = zod.object({
+  id: zod.number(),
+  kind: zod.enum(["candidate", "live"]),
+  modelId: zod.number().nullish(),
+  reason: zod.string(),
+  nodeCount: zod.number(),
+  edgeCount: zod.number(),
+  createdAt: zod.coerce.date(),
+});
+export const ListLiveModelVersionsResponse = zod.array(
+  ListLiveModelVersionsResponseItem,
+);
+
+/**
+ * @summary Restore the live model from a saved snapshot.
+ */
+export const RevertLiveModelToVersionParams = zod.object({
+  id: zod.coerce.number(),
+  versionId: zod.coerce.number(),
+});
+
+export const RevertLiveModelToVersionResponse = zod.object({
+  liveModel: zod.object({
+    id: zod.number(),
+    sessionId: zod.number(),
+    notes: zod.string(),
+    version: zod.number(),
+    createdAt: zod.string(),
+    updatedAt: zod.string(),
+  }),
+  nodes: zod.array(
+    zod.object({
+      id: zod.number(),
+      variableId: zod.number(),
+      variableName: zod.string(),
+      variableType: zod.string(),
+      paperId: zod.number(),
+      sourceModelId: zod.number().nullish(),
+      userAdded: zod.boolean(),
+      positionX: zod
+        .number()
+        .nullish()
+        .describe(
+          "User-arranged X position on the editable canvas (null = use auto layout).",
+        ),
+      positionY: zod
+        .number()
+        .nullish()
+        .describe(
+          "User-arranged Y position on the editable canvas (null = use auto layout).",
+        ),
+      createdAt: zod.string(),
+    }),
+  ),
+  edges: zod.array(
+    zod.object({
+      id: zod.number(),
+      fromVariableId: zod.number(),
+      toVariableId: zod.number(),
+      fromVariableName: zod.string(),
+      toVariableName: zod.string(),
+      relationship: zod.string(),
+      provenancePaperId: zod.number().nullish(),
+      provenancePaperTitle: zod.string().nullish(),
+      provenanceCitationText: zod.string().nullish(),
+      provenanceFigureThumbnailUrl: zod.string().nullish(),
+      provenanceFigureSourceUrl: zod.string().nullish(),
+      provenanceFigureSourceDomain: zod.string().nullish(),
+      confidence: zod.string(),
+      sourceModelId: zod.number().nullish(),
+      userAdded: zod.boolean(),
+      hasProvenance: zod
+        .boolean()
+        .describe("True if a paperId+citationText backs this edge."),
+      additionalEvidence: zod
+        .array(
+          zod.object({
+            paperId: zod.number(),
+            paperTitle: zod.string(),
+            paperAuthors: zod.array(zod.string()).optional(),
+            paperYear: zod.number().nullish(),
+            citationText: zod.string(),
+            source: zod.enum(["library", "web"]),
+            score: zod.number().nullish(),
+            addedAt: zod.coerce.date().optional(),
+          }),
+        )
+        .optional(),
       createdAt: zod.string(),
     }),
   ),
@@ -1688,6 +2523,20 @@ export const ImportLiveModelFromModelResponse = zod.object({
       hasProvenance: zod
         .boolean()
         .describe("True if a paperId+citationText backs this edge."),
+      additionalEvidence: zod
+        .array(
+          zod.object({
+            paperId: zod.number(),
+            paperTitle: zod.string(),
+            paperAuthors: zod.array(zod.string()).optional(),
+            paperYear: zod.number().nullish(),
+            citationText: zod.string(),
+            source: zod.enum(["library", "web"]),
+            score: zod.number().nullish(),
+            addedAt: zod.coerce.date().optional(),
+          }),
+        )
+        .optional(),
       createdAt: zod.string(),
     }),
   ),

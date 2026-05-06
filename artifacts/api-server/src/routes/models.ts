@@ -7,7 +7,9 @@ import {
   papersTable,
   generationFeedbackTable,
   paperHypothesesTable,
+  modelVersionsTable,
 } from "@workspace/db";
+import { findEvidenceForModel, importWebPaper, makeEdgeKey, type EdgeInput } from "../lib/evidence-matching.js";
 import {
   GenerateModelsParams,
   GenerateModelsBody,
@@ -1044,6 +1046,247 @@ router.post("/models/:id/select", async (req, res): Promise<void> => {
       .where(eq(generationFeedbackTable.id, latestFeedback.id));
   }
 
+  res.json(formatModel(updated));
+});
+
+// ============================================================================
+// Smart evidence matching (candidate models)
+// ============================================================================
+
+type EvidenceSearchBody = {
+  scopes?: Array<"library" | "web">;
+  granularity?: Array<"overall" | "per-edge">;
+  instructions?: string | null;
+};
+
+type AdditionalEvidence = {
+  paperId: number;
+  paperTitle: string;
+  paperAuthors: string[];
+  paperYear: number | null;
+  citationText: string;
+  source: "library" | "web";
+  score: number | null;
+  addedAt: string;
+};
+
+type ModelEdgeWithEvidence = ModelEdge & { additionalEvidence?: AdditionalEvidence[] };
+
+function buildEdgeInputs(edges: ModelEdge[]): EdgeInput[] {
+  return edges.map((e) => ({
+    edgeKey: makeEdgeKey(e.fromVariableId, e.toVariableId, e.relationship),
+    fromVariableId: e.fromVariableId,
+    toVariableId: e.toVariableId,
+    fromVariableName: e.fromVariableName,
+    toVariableName: e.toVariableName,
+    relationship: e.relationship,
+  }));
+}
+
+function summariseModel(m: { name: string; description: string; rationale: string; nodes: ModelNode[]; edges: ModelEdge[] }): string {
+  const nodeLine = m.nodes.map((n) => `${n.variableName} [${n.type}]`).join(", ");
+  const edgeLine = m.edges.map((e) => `${e.fromVariableName} --${e.relationship}--> ${e.toVariableName}`).join("; ");
+  return `Title: ${m.name}\nDescription: ${m.description}\nRationale: ${m.rationale}\nVariables: ${nodeLine}\nRelationships: ${edgeLine}`;
+}
+
+router.post("/sessions/:id/models/:modelId/evidence-search", async (req, res): Promise<void> => {
+  const sessionId = parseInt(req.params.id, 10);
+  const modelId = parseInt(req.params.modelId, 10);
+  if (!Number.isFinite(sessionId) || !Number.isFinite(modelId)) {
+    res.status(400).json({ error: "invalid id" });
+    return;
+  }
+  const [model] = await db.select().from(researchModelsTable).where(eq(researchModelsTable.id, modelId));
+  if (!model || model.sessionId !== sessionId) {
+    res.status(404).json({ error: "Model not found" });
+    return;
+  }
+  const body = (req.body ?? {}) as EvidenceSearchBody;
+  const scopes: Array<"library" | "web"> = Array.isArray(body.scopes) && body.scopes.length > 0 ? body.scopes : ["library", "web"];
+  const granularity: Array<"overall" | "per-edge"> = Array.isArray(body.granularity) && body.granularity.length > 0 ? body.granularity : ["overall", "per-edge"];
+  const formatted = formatModel(model);
+  try {
+    const result = await findEvidenceForModel({
+      sessionId,
+      edges: buildEdgeInputs(formatted.edges),
+      modelSummary: summariseModel(formatted),
+      options: { scopes, granularity, instructions: body.instructions ?? null },
+    });
+    res.json(result);
+  } catch (err) {
+    req.log.error({ err }, "evidence search failed");
+    res.status(503).json({ error: "AI integration unavailable" });
+  }
+});
+
+router.post("/sessions/:id/models/:modelId/evidence-apply", async (req, res): Promise<void> => {
+  const sessionId = parseInt(req.params.id, 10);
+  const modelId = parseInt(req.params.modelId, 10);
+  if (!Number.isFinite(sessionId) || !Number.isFinite(modelId)) {
+    res.status(400).json({ error: "invalid id" });
+    return;
+  }
+  const [model] = await db.select().from(researchModelsTable).where(eq(researchModelsTable.id, modelId));
+  if (!model || model.sessionId !== sessionId) {
+    res.status(404).json({ error: "Model not found" });
+    return;
+  }
+  const body = (req.body ?? {}) as {
+    addPapers?: Array<{ externalId: string; title: string; authors?: string[]; year?: number | null; abstract?: string | null; url?: string | null }>;
+    edgeAttachments?: Array<{ edgeKey: string; paperId?: number | null; externalId?: string | null; evidenceQuote: string }>;
+    reason?: string | null;
+  };
+
+  // 1. Snapshot the model BEFORE any change so the user can revert.
+  await db.insert(modelVersionsTable).values({
+    sessionId,
+    kind: "candidate",
+    modelId,
+    snapshot: formatModel(model) as unknown as Record<string, unknown>,
+    reason: (body.reason ?? "evidence_apply").slice(0, 200),
+  });
+
+  // 2. Import any chosen web papers; build externalId → paperId map.
+  const externalToPaperId = new Map<string, number>();
+  for (const p of body.addPapers ?? []) {
+    if (!p?.externalId) continue;
+    try {
+      const id = await importWebPaper({
+        sessionId,
+        externalId: p.externalId,
+        title: p.title,
+        authors: p.authors ?? [],
+        year: p.year ?? null,
+        abstract: p.abstract ?? null,
+        url: p.url ?? null,
+      });
+      externalToPaperId.set(p.externalId, id);
+    } catch (err) {
+      req.log.warn({ err, externalId: p.externalId }, "importWebPaper failed");
+    }
+  }
+
+  // 3. Look up paper metadata for everything we'll attach.
+  const allPaperIds = new Set<number>();
+  for (const a of body.edgeAttachments ?? []) {
+    if (a.paperId) allPaperIds.add(a.paperId);
+    else if (a.externalId && externalToPaperId.has(a.externalId)) allPaperIds.add(externalToPaperId.get(a.externalId)!);
+  }
+  const paperMeta = new Map<number, { title: string; authors: string[]; year: number | null }>();
+  if (allPaperIds.size > 0) {
+    const rows = await db.select().from(papersTable).where(eq(papersTable.sessionId, sessionId));
+    for (const r of rows) {
+      if (allPaperIds.has(r.id)) paperMeta.set(r.id, { title: r.title, authors: (r.authors as string[]) ?? [], year: r.year ?? null });
+    }
+  }
+
+  // 4. Attach evidence to edges by appending to additionalEvidence[].
+  const edges = (model.edges ?? []) as ModelEdgeWithEvidence[];
+  const now = new Date().toISOString();
+  for (const a of body.edgeAttachments ?? []) {
+    if (!a?.evidenceQuote || !a.evidenceQuote.trim()) continue;
+    let pid: number | null = a.paperId ?? null;
+    if (!pid && a.externalId) pid = externalToPaperId.get(a.externalId) ?? null;
+    if (!pid) continue;
+    const meta = paperMeta.get(pid);
+    if (!meta) continue;
+    const targetIdx = edges.findIndex(
+      (e) => makeEdgeKey(e.fromVariableId, e.toVariableId, e.relationship) === a.edgeKey,
+    );
+    if (targetIdx === -1) continue;
+    const target = edges[targetIdx]!;
+    const list: AdditionalEvidence[] = Array.isArray(target.additionalEvidence) ? [...target.additionalEvidence] : [];
+    if (list.some((x) => x.paperId === pid && x.citationText === a.evidenceQuote)) continue; // dedupe
+    list.push({
+      paperId: pid,
+      paperTitle: meta.title,
+      paperAuthors: meta.authors,
+      paperYear: meta.year,
+      citationText: a.evidenceQuote.slice(0, 1000),
+      source: a.externalId && externalToPaperId.has(a.externalId) ? "web" : "library",
+      score: null,
+      addedAt: now,
+    });
+    edges[targetIdx] = { ...target, additionalEvidence: list };
+  }
+
+  const [updated] = await db
+    .update(researchModelsTable)
+    .set({ edges: edges as unknown as ModelEdge[] })
+    .where(eq(researchModelsTable.id, modelId))
+    .returning();
+
+  res.json(formatModel(updated));
+});
+
+router.get("/sessions/:id/models/:modelId/versions", async (req, res): Promise<void> => {
+  const sessionId = parseInt(req.params.id, 10);
+  const modelId = parseInt(req.params.modelId, 10);
+  if (!Number.isFinite(sessionId) || !Number.isFinite(modelId)) {
+    res.status(400).json({ error: "invalid id" });
+    return;
+  }
+  const rows = await db
+    .select()
+    .from(modelVersionsTable)
+    .where(eq(modelVersionsTable.sessionId, sessionId))
+    .orderBy(desc(modelVersionsTable.createdAt))
+    .limit(50);
+  const out = rows
+    .filter((v) => v.kind === "candidate" && v.modelId === modelId)
+    .map((v) => {
+      const snap = (v.snapshot ?? {}) as { nodes?: unknown[]; edges?: unknown[] };
+      return {
+        id: v.id,
+        kind: "candidate",
+        modelId: v.modelId,
+        reason: v.reason,
+        nodeCount: Array.isArray(snap.nodes) ? snap.nodes.length : 0,
+        edgeCount: Array.isArray(snap.edges) ? snap.edges.length : 0,
+        createdAt: v.createdAt.toISOString(),
+      };
+    });
+  res.json(out);
+});
+
+router.post("/sessions/:id/models/:modelId/revert/:versionId", async (req, res): Promise<void> => {
+  const sessionId = parseInt(req.params.id, 10);
+  const modelId = parseInt(req.params.modelId, 10);
+  const versionId = parseInt(req.params.versionId, 10);
+  if (!Number.isFinite(sessionId) || !Number.isFinite(modelId) || !Number.isFinite(versionId)) {
+    res.status(400).json({ error: "invalid id" });
+    return;
+  }
+  const [version] = await db.select().from(modelVersionsTable).where(eq(modelVersionsTable.id, versionId));
+  if (!version || version.sessionId !== sessionId || version.kind !== "candidate" || version.modelId !== modelId) {
+    res.status(404).json({ error: "Version not found" });
+    return;
+  }
+  const [model] = await db.select().from(researchModelsTable).where(eq(researchModelsTable.id, modelId));
+  if (!model) {
+    res.status(404).json({ error: "Model not found" });
+    return;
+  }
+  // Snapshot the *current* state first so the revert itself is undoable.
+  await db.insert(modelVersionsTable).values({
+    sessionId,
+    kind: "candidate",
+    modelId,
+    snapshot: formatModel(model) as unknown as Record<string, unknown>,
+    reason: `pre_revert_to_v${versionId}`,
+  });
+  const snap = version.snapshot as { name?: string; description?: string; rationale?: string; nodes?: ModelNode[]; edges?: ModelEdge[] };
+  const [updated] = await db
+    .update(researchModelsTable)
+    .set({
+      name: typeof snap.name === "string" ? snap.name : model.name,
+      description: typeof snap.description === "string" ? snap.description : model.description,
+      rationale: typeof snap.rationale === "string" ? snap.rationale : model.rationale,
+      nodes: (snap.nodes ?? model.nodes) as unknown as ModelNode[],
+      edges: (snap.edges ?? model.edges) as unknown as ModelEdge[],
+    })
+    .where(eq(researchModelsTable.id, modelId))
+    .returning();
   res.json(formatModel(updated));
 });
 

@@ -1294,6 +1294,160 @@ paths:
               schema:
                 $ref: "#/components/schemas/LiveModelDetail"
 
+  /sessions/{id}/models/{modelId}/evidence-search:
+    post:
+      operationId: searchModelEvidence
+      tags: [evidence]
+      summary: Find papers (in session library and/or via web search) that support each edge of an AI candidate model. Read-only — no DB writes.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+        - { name: modelId, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EvidenceSearchRequest"
+      responses:
+        "200":
+          description: Match results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EvidenceSearchResult"
+
+  /sessions/{id}/models/{modelId}/evidence-apply:
+    post:
+      operationId: applyModelEvidence
+      tags: [evidence]
+      summary: Snapshot the current model, add chosen web papers to the session library, and attach evidence to candidate-model edges. Returns the updated model.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+        - { name: modelId, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EvidenceApplyRequest"
+      responses:
+        "200":
+          description: Updated candidate model
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResearchModel"
+
+  /sessions/{id}/models/{modelId}/versions:
+    get:
+      operationId: listModelVersions
+      tags: [evidence]
+      summary: List recent saved snapshots of this candidate model (most recent first).
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+        - { name: modelId, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: Versions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ModelVersionSummary"
+
+  /sessions/{id}/models/{modelId}/revert/{versionId}:
+    post:
+      operationId: revertModelToVersion
+      tags: [evidence]
+      summary: Restore the candidate model from a saved snapshot (also snapshots the current state first so the revert itself is undoable).
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+        - { name: modelId, in: path, required: true, schema: { type: integer } }
+        - { name: versionId, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: Reverted candidate model
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResearchModel"
+
+  /sessions/{id}/live-model/evidence-search:
+    post:
+      operationId: searchLiveModelEvidence
+      tags: [evidence]
+      summary: Find papers (library and/or web) that support each edge of the user's live model. Read-only.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EvidenceSearchRequest"
+      responses:
+        "200":
+          description: Match results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EvidenceSearchResult"
+
+  /sessions/{id}/live-model/evidence-apply:
+    post:
+      operationId: applyLiveModelEvidence
+      tags: [evidence]
+      summary: Snapshot the current live model, import chosen web papers into the session library, and attach evidence to live-model edges.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EvidenceApplyRequest"
+      responses:
+        "200":
+          description: Updated live model
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LiveModelDetail"
+
+  /sessions/{id}/live-model/versions:
+    get:
+      operationId: listLiveModelVersions
+      tags: [evidence]
+      summary: List recent saved snapshots of the live model.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: Versions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ModelVersionSummary"
+
+  /sessions/{id}/live-model/revert/{versionId}:
+    post:
+      operationId: revertLiveModelToVersion
+      tags: [evidence]
+      summary: Restore the live model from a saved snapshot.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+        - { name: versionId, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: Reverted live model
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LiveModelDetail"
+
   /sessions/{id}/live-model/import-from-model:
     post:
       operationId: importLiveModelFromModel
@@ -1860,6 +2014,11 @@ components:
         moderatorJustification:
           type: ["string", "null"]
           description: REQUIRED when relationship="moderates". Explains theoretically why the variable can condition the moderated path.
+        additionalEvidence:
+          type: array
+          description: Extra supporting papers attached after-the-fact via the AI evidence-matching feature.
+          items:
+            $ref: "#/components/schemas/AdditionalEvidence"
       required:
         - fromVariableId
         - toVariableId
@@ -1870,6 +2029,32 @@ components:
         - evidencePaperTitle
         - evidencePaperAuthors
         - evidenceCitationText
+
+    AdditionalEvidence:
+      type: object
+      required: [paperId, paperTitle, citationText, source]
+      properties:
+        paperId:
+          type: integer
+        paperTitle:
+          type: string
+        paperAuthors:
+          type: array
+          items:
+            type: string
+        paperYear:
+          type: ["integer", "null"]
+        citationText:
+          type: string
+        source:
+          type: string
+          enum: [library, web]
+        score:
+          type: ["number", "null"]
+        addedAt:
+          type: string
+          format: date-time
+
     LiveModelNodeOut:
       type: object
       properties:
@@ -1940,6 +2125,10 @@ components:
         hasProvenance:
           type: boolean
           description: True if a paperId+citationText backs this edge.
+        additionalEvidence:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdditionalEvidence"
         createdAt:
           type: string
       required:
@@ -1989,3 +2178,174 @@ components:
         - nodes
         - edges
         - unsupportedEdgeCount
+
+    EvidenceSearchRequest:
+      type: object
+      properties:
+        scopes:
+          type: array
+          items:
+            type: string
+            enum: [library, web]
+          default: [library, web]
+        granularity:
+          type: array
+          items:
+            type: string
+            enum: [overall, per-edge]
+          default: [overall, per-edge]
+        instructions:
+          type: string
+          nullable: true
+          description: Optional natural-language guidance from the user (e.g. "prefer recent meta-analyses").
+
+    EvidencePaperHit:
+      type: object
+      required: [source, title, authors, score, rationale]
+      properties:
+        source:
+          type: string
+          enum: [library, web]
+        paperId:
+          type: integer
+          nullable: true
+          description: Present when source=library.
+        externalId:
+          type: string
+          nullable: true
+          description: OpenAlex W-id when source=web.
+        title:
+          type: string
+        authors:
+          type: array
+          items:
+            type: string
+        year:
+          type: integer
+          nullable: true
+        abstract:
+          type: string
+          nullable: true
+        url:
+          type: string
+          nullable: true
+        score:
+          type: number
+          description: AI-assessed relevance, 0..1.
+        rationale:
+          type: string
+          description: Short why-this-matches.
+        evidenceQuote:
+          type: string
+          nullable: true
+          description: Verbatim sentence supporting the matched edge (per-edge hits only).
+
+    EvidenceEdgeMatch:
+      type: object
+      required: [edgeKey, fromVariableName, toVariableName, relationship, hits]
+      properties:
+        edgeKey:
+          type: string
+          description: Stable identifier "fromVariableId-toVariableId-relationship".
+        fromVariableId:
+          type: integer
+        toVariableId:
+          type: integer
+        fromVariableName:
+          type: string
+        toVariableName:
+          type: string
+        relationship:
+          type: string
+        hits:
+          type: array
+          items:
+            $ref: "#/components/schemas/EvidencePaperHit"
+
+    EvidenceSearchResult:
+      type: object
+      required: [overallMatches, perEdgeMatches]
+      properties:
+        overallMatches:
+          type: array
+          items:
+            $ref: "#/components/schemas/EvidencePaperHit"
+        perEdgeMatches:
+          type: array
+          items:
+            $ref: "#/components/schemas/EvidenceEdgeMatch"
+        durationMs:
+          type: integer
+
+    EvidenceApplyRequest:
+      type: object
+      properties:
+        addPapers:
+          type: array
+          description: Web hits the user confirmed; will be imported into the session library if not already present.
+          items:
+            type: object
+            required: [externalId, title]
+            properties:
+              externalId:
+                type: string
+              title:
+                type: string
+              authors:
+                type: array
+                items:
+                  type: string
+              year:
+                type: integer
+                nullable: true
+              abstract:
+                type: string
+                nullable: true
+              url:
+                type: string
+                nullable: true
+        edgeAttachments:
+          type: array
+          items:
+            type: object
+            required: [edgeKey, evidenceQuote]
+            properties:
+              edgeKey:
+                type: string
+                description: "fromVariableId-toVariableId-relationship"
+              paperId:
+                type: integer
+                nullable: true
+                description: Library paper id; takes precedence over externalId.
+              externalId:
+                type: string
+                nullable: true
+                description: OpenAlex W-id for web hit; resolved against addPapers and the session library.
+              evidenceQuote:
+                type: string
+        reason:
+          type: string
+          nullable: true
+          description: Optional human-readable description of the change (shown in version history).
+
+    ModelVersionSummary:
+      type: object
+      required: [id, kind, reason, nodeCount, edgeCount, createdAt]
+      properties:
+        id:
+          type: integer
+        kind:
+          type: string
+          enum: [candidate, live]
+        modelId:
+          type: integer
+          nullable: true
+        reason:
+          type: string
+        nodeCount:
+          type: integer
+        edgeCount:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time

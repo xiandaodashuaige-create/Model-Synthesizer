@@ -9,7 +9,10 @@ import {
   papersTable,
   researchModelsTable,
   sessionsTable,
+  modelVersionsTable,
 } from "@workspace/db";
+import { desc } from "drizzle-orm";
+import { findEvidenceForModel, importWebPaper, makeEdgeKey, type EdgeInput } from "../lib/evidence-matching.js";
 
 const router: IRouter = Router();
 
@@ -63,6 +66,7 @@ async function loadLiveModelDetail(sessionId: number) {
       confidence: liveModelEdgesTable.confidence,
       sourceModelId: liveModelEdgesTable.sourceModelId,
       userAdded: liveModelEdgesTable.userAdded,
+      additionalEvidence: liveModelEdgesTable.additionalEvidence,
       createdAt: liveModelEdgesTable.createdAt,
     })
     .from(liveModelEdgesTable)
@@ -120,6 +124,7 @@ async function loadLiveModelDetail(sessionId: number) {
       sourceModelId: e.sourceModelId,
       userAdded: e.userAdded,
       hasProvenance,
+      additionalEvidence: (e.additionalEvidence as unknown as unknown[]) ?? [],
       createdAt: e.createdAt.toISOString(),
     };
   });
@@ -427,6 +432,260 @@ router.post("/sessions/:id/live-model/import-from-model", async (req, res) => {
 
   const detail = await loadLiveModelDetail(sessionId);
   return res.json(detail);
+});
+
+// ============================================================================
+// Smart evidence matching (live model)
+// ============================================================================
+
+type LiveAddEvidence = {
+  paperId: number;
+  paperTitle: string;
+  paperAuthors: string[];
+  paperYear: number | null;
+  citationText: string;
+  source: "library" | "web";
+  score: number | null;
+  addedAt: string;
+};
+
+router.post("/sessions/:id/live-model/evidence-search", async (req, res) => {
+  const sessionId = parseInt(req.params.id, 10);
+  if (!Number.isFinite(sessionId)) return res.status(400).json({ error: "invalid session id" });
+  if (!(await ensureSessionExists(sessionId))) return res.status(404).json({ error: "session not found" });
+  const detail = await loadLiveModelDetail(sessionId);
+  const body = (req.body ?? {}) as { scopes?: Array<"library" | "web">; granularity?: Array<"overall" | "per-edge">; instructions?: string | null };
+  const scopes: Array<"library" | "web"> = Array.isArray(body.scopes) && body.scopes.length > 0 ? body.scopes : ["library", "web"];
+  const granularity: Array<"overall" | "per-edge"> = Array.isArray(body.granularity) && body.granularity.length > 0 ? body.granularity : ["overall", "per-edge"];
+
+  const edges: EdgeInput[] = detail.edges.map((e) => ({
+    edgeKey: makeEdgeKey(e.fromVariableId, e.toVariableId, e.relationship),
+    fromVariableId: e.fromVariableId,
+    toVariableId: e.toVariableId,
+    fromVariableName: e.fromVariableName,
+    toVariableName: e.toVariableName,
+    relationship: e.relationship,
+  }));
+  const summary = `Live model with ${detail.nodes.length} variables and ${detail.edges.length} relationships.\nVariables: ${detail.nodes.map((n) => `${n.variableName} [${n.variableType}]`).join(", ")}\nRelationships: ${detail.edges.map((e) => `${e.fromVariableName} --${e.relationship}--> ${e.toVariableName}`).join("; ")}`;
+
+  try {
+    const result = await findEvidenceForModel({
+      sessionId,
+      edges,
+      modelSummary: summary,
+      options: { scopes, granularity, instructions: body.instructions ?? null },
+    });
+    return res.json(result);
+  } catch (err) {
+    req.log.error({ err }, "live evidence search failed");
+    return res.status(503).json({ error: "AI integration unavailable" });
+  }
+});
+
+router.post("/sessions/:id/live-model/evidence-apply", async (req, res) => {
+  const sessionId = parseInt(req.params.id, 10);
+  if (!Number.isFinite(sessionId)) return res.status(400).json({ error: "invalid session id" });
+  if (!(await ensureSessionExists(sessionId))) return res.status(404).json({ error: "session not found" });
+  const body = (req.body ?? {}) as {
+    addPapers?: Array<{ externalId: string; title: string; authors?: string[]; year?: number | null; abstract?: string | null; url?: string | null }>;
+    edgeAttachments?: Array<{ edgeKey: string; paperId?: number | null; externalId?: string | null; evidenceQuote: string }>;
+    reason?: string | null;
+  };
+
+  // Snapshot current live model so revert works.
+  const before = await loadLiveModelDetail(sessionId);
+  await db.insert(modelVersionsTable).values({
+    sessionId,
+    kind: "live",
+    modelId: before.liveModel.id,
+    snapshot: before as unknown as Record<string, unknown>,
+    reason: (body.reason ?? "evidence_apply").slice(0, 200),
+  });
+
+  // Import web papers.
+  const externalToPaperId = new Map<string, number>();
+  for (const p of body.addPapers ?? []) {
+    if (!p?.externalId) continue;
+    try {
+      const id = await importWebPaper({
+        sessionId,
+        externalId: p.externalId,
+        title: p.title,
+        authors: p.authors ?? [],
+        year: p.year ?? null,
+        abstract: p.abstract ?? null,
+        url: p.url ?? null,
+      });
+      externalToPaperId.set(p.externalId, id);
+    } catch (err) {
+      req.log.warn({ err, externalId: p.externalId }, "importWebPaper failed");
+    }
+  }
+
+  // Resolve attachments to actual edge rows.
+  const allPaperIds = new Set<number>();
+  for (const a of body.edgeAttachments ?? []) {
+    if (a.paperId) allPaperIds.add(a.paperId);
+    else if (a.externalId && externalToPaperId.has(a.externalId)) allPaperIds.add(externalToPaperId.get(a.externalId)!);
+  }
+  const paperMeta = new Map<number, { title: string; authors: string[]; year: number | null }>();
+  if (allPaperIds.size > 0) {
+    const rows = await db.select().from(papersTable).where(eq(papersTable.sessionId, sessionId));
+    for (const r of rows) {
+      if (allPaperIds.has(r.id)) paperMeta.set(r.id, { title: r.title, authors: (r.authors as string[]) ?? [], year: r.year ?? null });
+    }
+  }
+
+  const now = new Date().toISOString();
+  // Group attachments by edgeKey so we update each edge once.
+  const byKey = new Map<string, LiveAddEvidence[]>();
+  for (const a of body.edgeAttachments ?? []) {
+    if (!a?.evidenceQuote || !a.evidenceQuote.trim()) continue;
+    let pid: number | null = a.paperId ?? null;
+    if (!pid && a.externalId) pid = externalToPaperId.get(a.externalId) ?? null;
+    if (!pid) continue;
+    const meta = paperMeta.get(pid);
+    if (!meta) continue;
+    const list = byKey.get(a.edgeKey) ?? [];
+    list.push({
+      paperId: pid,
+      paperTitle: meta.title,
+      paperAuthors: meta.authors,
+      paperYear: meta.year,
+      citationText: a.evidenceQuote.slice(0, 1000),
+      source: a.externalId && externalToPaperId.has(a.externalId) ? "web" : "library",
+      score: null,
+      addedAt: now,
+    });
+    byKey.set(a.edgeKey, list);
+  }
+
+  for (const e of before.edges) {
+    const k = makeEdgeKey(e.fromVariableId, e.toVariableId, e.relationship);
+    const additions = byKey.get(k);
+    if (!additions || additions.length === 0) continue;
+    const existing = (e.additionalEvidence as LiveAddEvidence[]) ?? [];
+    const merged = [...existing];
+    for (const add of additions) {
+      if (merged.some((x) => x.paperId === add.paperId && x.citationText === add.citationText)) continue;
+      merged.push(add);
+    }
+    await db
+      .update(liveModelEdgesTable)
+      .set({ additionalEvidence: merged as unknown as Record<string, unknown>[] })
+      .where(eq(liveModelEdgesTable.id, e.id));
+  }
+
+  const after = await loadLiveModelDetail(sessionId);
+  return res.json(after);
+});
+
+router.get("/sessions/:id/live-model/versions", async (req, res) => {
+  const sessionId = parseInt(req.params.id, 10);
+  if (!Number.isFinite(sessionId)) return res.status(400).json({ error: "invalid session id" });
+  if (!(await ensureSessionExists(sessionId))) return res.status(404).json({ error: "session not found" });
+  const rows = await db
+    .select()
+    .from(modelVersionsTable)
+    .where(and(eq(modelVersionsTable.sessionId, sessionId), eq(modelVersionsTable.kind, "live")))
+    .orderBy(desc(modelVersionsTable.createdAt))
+    .limit(50);
+  const out = rows.map((v) => {
+    const snap = (v.snapshot ?? {}) as { nodes?: unknown[]; edges?: unknown[] };
+    return {
+      id: v.id,
+      kind: "live" as const,
+      modelId: v.modelId,
+      reason: v.reason,
+      nodeCount: Array.isArray(snap.nodes) ? snap.nodes.length : 0,
+      edgeCount: Array.isArray(snap.edges) ? snap.edges.length : 0,
+      createdAt: v.createdAt.toISOString(),
+    };
+  });
+  return res.json(out);
+});
+
+router.post("/sessions/:id/live-model/revert/:versionId", async (req, res) => {
+  const sessionId = parseInt(req.params.id, 10);
+  const versionId = parseInt(req.params.versionId, 10);
+  if (!Number.isFinite(sessionId) || !Number.isFinite(versionId)) return res.status(400).json({ error: "invalid id" });
+  if (!(await ensureSessionExists(sessionId))) return res.status(404).json({ error: "session not found" });
+
+  const [version] = await db.select().from(modelVersionsTable).where(eq(modelVersionsTable.id, versionId));
+  if (!version || version.sessionId !== sessionId || version.kind !== "live") {
+    return res.status(404).json({ error: "Version not found" });
+  }
+
+  // Snapshot current state first.
+  const current = await loadLiveModelDetail(sessionId);
+  await db.insert(modelVersionsTable).values({
+    sessionId,
+    kind: "live",
+    modelId: current.liveModel.id,
+    snapshot: current as unknown as Record<string, unknown>,
+    reason: `pre_revert_to_v${versionId}`,
+  });
+
+  const snap = version.snapshot as {
+    nodes?: Array<{ variableId: number; sourceModelId?: number | null; userAdded?: boolean; positionX?: number | null; positionY?: number | null }>;
+    edges?: Array<{
+      fromVariableId: number;
+      toVariableId: number;
+      relationship: string;
+      provenancePaperId?: number | null;
+      provenanceCitationText?: string | null;
+      provenanceFigureThumbnailUrl?: string | null;
+      provenanceFigureSourceUrl?: string | null;
+      provenanceFigureSourceDomain?: string | null;
+      confidence?: string;
+      sourceModelId?: number | null;
+      userAdded?: boolean;
+      additionalEvidence?: unknown[];
+    }>;
+  };
+
+  // Wipe and reinsert.
+  await db.delete(liveModelEdgesTable).where(eq(liveModelEdgesTable.liveModelId, current.liveModel.id));
+  await db.delete(liveModelNodesTable).where(eq(liveModelNodesTable.liveModelId, current.liveModel.id));
+
+  for (const n of snap.nodes ?? []) {
+    try {
+      await db.insert(liveModelNodesTable).values({
+        liveModelId: current.liveModel.id,
+        variableId: n.variableId,
+        sourceModelId: n.sourceModelId ?? null,
+        userAdded: n.userAdded ?? false,
+        positionX: n.positionX ?? null,
+        positionY: n.positionY ?? null,
+      });
+    } catch (err) {
+      if (!isUniqueViolation(err)) throw err;
+    }
+  }
+  for (const e of snap.edges ?? []) {
+    try {
+      await db.insert(liveModelEdgesTable).values({
+        liveModelId: current.liveModel.id,
+        fromVariableId: e.fromVariableId,
+        toVariableId: e.toVariableId,
+        relationship: e.relationship,
+        provenancePaperId: e.provenancePaperId ?? null,
+        provenanceCitationText: e.provenanceCitationText ?? null,
+        provenanceFigureThumbnailUrl: e.provenanceFigureThumbnailUrl ?? null,
+        provenanceFigureSourceUrl: e.provenanceFigureSourceUrl ?? null,
+        provenanceFigureSourceDomain: e.provenanceFigureSourceDomain ?? null,
+        confidence: e.confidence ?? "medium",
+        sourceModelId: e.sourceModelId ?? null,
+        userAdded: e.userAdded ?? false,
+        additionalEvidence: (e.additionalEvidence as Record<string, unknown>[]) ?? [],
+      });
+    } catch (err) {
+      if (!isUniqueViolation(err)) throw err;
+    }
+  }
+
+  const after = await loadLiveModelDetail(sessionId);
+  return res.json(after);
 });
 
 export default router;
