@@ -291,9 +291,16 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
     const pending = (sessionPapers ?? []).filter((p) => !p.extracted);
     if (pending.length === 0) return;
     const runId = beginExtraction(sessionId, pending.length);
-    let ok = 0, fail = 0;
-    try {
-      for (let i = 0; i < pending.length; i++) {
+    let ok = 0, fail = 0, done = 0;
+    // Concurrency 4 — matches the backend per-variable extraction limit and
+    // is a safe ceiling for the OpenAI proxy + Postgres connection pool. With
+    // 19 papers this drops wall-clock from ~9 min (serial) to ~2.5 min.
+    const CONCURRENCY = 4;
+    let cursor = 0;
+    const worker = async () => {
+      while (true) {
+        const i = cursor++;
+        if (i >= pending.length) return;
         const p = pending[i];
         try {
           await extractVariables.mutateAsync({ id: sessionId, paperId: p.id });
@@ -301,8 +308,12 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
         } catch {
           fail++;
         }
-        updateExtraction(sessionId, runId, i + 1, pending.length);
+        done++;
+        updateExtraction(sessionId, runId, done, pending.length);
       }
+    };
+    try {
+      await Promise.all(Array.from({ length: Math.min(CONCURRENCY, pending.length) }, () => worker()));
     } finally {
       endExtraction(sessionId, runId);
     }
