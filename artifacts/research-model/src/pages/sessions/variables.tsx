@@ -46,8 +46,19 @@ function ReExtractAllButton({ sessionId }: { sessionId: number }) {
       try {
         await extractVariables.mutateAsync({ id: sessionId, paperId: all[i].id });
         ok++;
-      } catch {
+      } catch (err: any) {
         fail++;
+        // Cap per-paper toasts so a wholesale outage doesn't flood the screen;
+        // the summary toast at the end still reports total failures.
+        if (fail <= 3) {
+          const title = (all[i] as any).title ?? `#${all[i].id}`;
+          const reason = err?.data?.error ?? err?.response?.data?.error ?? err?.message ?? "";
+          toast({
+            title: t("papers.toast.extractOneFailed" as any, { title: String(title).slice(0, 60) }),
+            description: reason ? String(reason).slice(0, 200) : undefined,
+            variant: "destructive",
+          });
+        }
       }
       setProgress({ done: i + 1, total: all.length });
     }

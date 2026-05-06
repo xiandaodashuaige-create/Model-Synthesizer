@@ -10,7 +10,6 @@ const dict = {
     "brand.tagline": "从文献到原创模型，AI 帮你一站式完成",
 
     "nav.sessions": "我的项目",
-    "nav.settings": "设置",
     "nav.lang.zh": "中文",
     "nav.lang.en": "English",
 
@@ -314,6 +313,11 @@ const dict = {
     "vars.graph.focus.count": "{n} 条相关",
     "vars.graph.focus.clear": "显示全部",
     "vars.graph.focus.empty": "该变量在论文中暂无已抽取的关系。",
+    "papers.toast.extractOneFailed": "提取失败：{title}",
+    "models.guard.noVars.title": "请先提取变量",
+    "models.guard.noVars.body": "AI 需要先看到论文里的变量才能组合模型。请回到『添加论文』页，对每篇论文点一次『提取变量』。",
+    "models.guard.noVars.cta": "去提取变量",
+    "models.confirm.overwriteTitle": "这会覆盖你在『我的研究模型』里手动添加的 {n} 条关系，确认继续？",
     "vars.graph.partial.tip": "提示：图中边只来自论文里真实的假设/关系。{withCount}/{totalCount} 篇论文已抽取到关系；其它论文请点『重新提取变量』来补全。",
     "vars.cluster.hint": "已自动合并：{totalCount} 个原始变量提取被聚合成 {clusterCount} 个独立概念（同一概念出现在多篇论文中只算一个）。",
     "vars.cluster.suffix": "{unique} 个独立概念 · {total} 处提取",
@@ -484,7 +488,6 @@ const dict = {
     "brand.tagline": "From literature to a novel model, end-to-end with AI",
 
     "nav.sessions": "Sessions",
-    "nav.settings": "Settings",
     "nav.lang.zh": "中文",
     "nav.lang.en": "English",
 
@@ -785,6 +788,11 @@ const dict = {
     "vars.graph.focus.count": "{n} related",
     "vars.graph.focus.clear": "Show all",
     "vars.graph.focus.empty": "This variable has no extracted relationships in the papers yet.",
+    "papers.toast.extractOneFailed": "Extraction failed: {title}",
+    "models.guard.noVars.title": "Extract variables first",
+    "models.guard.noVars.body": "The AI needs to see variables from your papers before it can combine them into models. Go back to the Papers page and click \"Extract variables\" on each paper.",
+    "models.guard.noVars.cta": "Go extract variables",
+    "models.confirm.overwriteTitle": "This will overwrite the {n} edge(s) you manually added in \"My Research Model\". Continue?",
     "vars.graph.rel.positive": "Positive (+)",
     "vars.graph.rel.negative": "Negative (−)",
     "vars.graph.rel.moderates": "Moderates (M)",

@@ -64,6 +64,14 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
 
   const handleSearch = () => {
     if (!searchQuery.trim()) return;
+    // Persist the query in the URL so browser back/refresh keeps the search context.
+    if (typeof window !== "undefined") {
+      try {
+        const url = new URL(window.location.href);
+        url.searchParams.set("q", searchQuery);
+        window.history.replaceState(null, "", url.toString());
+      } catch { /* ignore */ }
+    }
     searchPapers.mutate(
       { data: { query: searchQuery, limit: 15 } },
       {

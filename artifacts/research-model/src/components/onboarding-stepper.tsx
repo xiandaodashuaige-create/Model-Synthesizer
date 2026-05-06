@@ -52,7 +52,7 @@ export function OnboardingStepper({
       key: "variables",
       titleKey: "step.variables.title" as const,
       descKey: "step.variables.desc" as const,
-      href: `/sessions/${sessionId}/papers`,
+      href: varsDone ? `/sessions/${sessionId}/variables` : `/sessions/${sessionId}/papers`,
       icon: Database,
       status: stat(varsDone, currentIdx === 1),
     },

@@ -8,6 +8,7 @@ import {
   useGetSessionLearningStats,
   useListSessionVariables,
   useImportLiveModelFromModel,
+  useGetLiveModel,
   getListSessionModelsQueryKey,
   getGetSessionSummaryQueryKey,
   getGetSessionQueryKey,
@@ -16,6 +17,7 @@ import {
   getGetLiveModelQueryKey,
 } from "@workspace/api-client-react";
 import { ModelAssistantChat } from "@/components/model-assistant-chat";
+import { NextStepHint } from "@/components/onboarding-stepper";
 import { useQueryClient } from "@tanstack/react-query";
 import { Loader2, Share2, Sparkles, CheckCircle, ArrowRight, BookOpen, Wand2, GitBranch } from "lucide-react";
 import { useLocation } from "wouter";
@@ -82,6 +84,11 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
   const { data: variables } = useListSessionVariables(sessionId, {
     query: { enabled: !!sessionId, queryKey: getListSessionVariablesQueryKey(sessionId) },
   });
+  const { data: liveModel } = useGetLiveModel(sessionId, {
+    query: { enabled: !!sessionId, queryKey: getGetLiveModelQueryKey(sessionId) },
+  });
+  const manualEdgeCount = (liveModel?.edges ?? []).filter((e) => e.userAdded).length;
+  const hasNoVariables = variables !== undefined && variables.length === 0;
 
   const [userPrompt, setUserPrompt] = useState("");
   const [numModels, setNumModels] = useState(3);
@@ -180,6 +187,12 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
   };
 
   const handleSelect = (modelId: number, name: string) => {
+    if (manualEdgeCount > 0) {
+      const ok = window.confirm(
+        t("models.confirm.overwriteTitle" as any, { n: manualEdgeCount }),
+      );
+      if (!ok) return;
+    }
     selectModel.mutate({ id: modelId }, {
       onSuccess: () => {
         queryClient.invalidateQueries({ queryKey: getListSessionModelsQueryKey(sessionId) });
@@ -233,6 +246,15 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
       </div>
 
       {/* AI assistant chat */}
+      {hasNoVariables && (
+        <NextStepHint
+          title={t("models.guard.noVars.title" as any)}
+          body={t("models.guard.noVars.body" as any)}
+          href={`/sessions/${sessionId}/papers`}
+          cta={t("models.guard.noVars.cta" as any)}
+        />
+      )}
+
       <ModelAssistantChat
         sessionId={sessionId}
         variableNameById={variableNameById}
@@ -280,7 +302,8 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
           <button
             data-testid="button-generate-models"
             onClick={handleGenerate}
-            disabled={generateModels.isPending}
+            disabled={generateModels.isPending || hasNoVariables}
+            title={hasNoVariables ? t("models.guard.noVars.body" as any) : undefined}
             className="inline-flex items-center gap-2 rounded-md text-sm font-semibold bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-5 disabled:opacity-50 disabled:pointer-events-none transition-colors"
           >
             {generateModels.isPending ? (
