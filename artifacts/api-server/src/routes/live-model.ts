@@ -310,46 +310,69 @@ router.post("/sessions/:id/live-model/edges", async (req, res) => {
     }
   }
 
-  await db.transaction(async (tx) => {
-    await tx.insert(liveModelsTable).values({ sessionId }).onConflictDoNothing({ target: liveModelsTable.sessionId });
-    const [liveModel] = await tx.select().from(liveModelsTable).where(eq(liveModelsTable.sessionId, sessionId)).limit(1);
+  // Pre-check duplicates outside the transaction so we can return 409 instead of
+  // raising a unique-constraint error. The DB unique index is still the ultimate
+  // guard against races, but this gives a friendlier message in the common case.
+  const liveModel = await getOrCreateLiveModel(sessionId);
+  const existing = await db.select({ id: liveModelEdgesTable.id })
+    .from(liveModelEdgesTable)
+    .where(and(
+      eq(liveModelEdgesTable.liveModelId, liveModel.id),
+      eq(liveModelEdgesTable.fromVariableId, fromVariableId),
+      eq(liveModelEdgesTable.toVariableId, toVariableId),
+      eq(liveModelEdgesTable.relationship, relationship),
+    ))
+    .limit(1);
+  if (existing[0]) {
+    return res.status(409).json({ error: "duplicate edge: this relationship already exists in the live model", existingEdgeId: existing[0].id });
+  }
 
-    // Auto-add nodes if not present (UX: user can add an edge without first adding nodes)
-    for (const vid of [fromVariableId, toVariableId]) {
-      await tx.insert(liveModelNodesTable).values({
-        liveModelId: liveModel.id, variableId: vid, userAdded,
-      }).onConflictDoNothing();
-    }
+  try {
+    await db.transaction(async (tx) => {
+      // Auto-add nodes if not present (UX: user can add an edge without first adding nodes)
+      for (const vid of [fromVariableId, toVariableId]) {
+        await tx.insert(liveModelNodesTable).values({
+          liveModelId: liveModel.id, variableId: vid, userAdded,
+        }).onConflictDoNothing();
+      }
 
-    // Validate moderated edge belongs to this live model.
-    let validModeratesEdgeId: number | null = null;
-    if (moderatesEdgeId != null) {
-      const target = await tx.select({ id: liveModelEdgesTable.id })
-        .from(liveModelEdgesTable)
-        .where(and(eq(liveModelEdgesTable.id, moderatesEdgeId), eq(liveModelEdgesTable.liveModelId, liveModel.id)))
-        .limit(1);
-      if (target[0]) validModeratesEdgeId = target[0].id;
-    }
+      // Validate moderated edge belongs to this live model.
+      let validModeratesEdgeId: number | null = null;
+      if (moderatesEdgeId != null) {
+        const target = await tx.select({ id: liveModelEdgesTable.id })
+          .from(liveModelEdgesTable)
+          .where(and(eq(liveModelEdgesTable.id, moderatesEdgeId), eq(liveModelEdgesTable.liveModelId, liveModel.id)))
+          .limit(1);
+        if (target[0]) validModeratesEdgeId = target[0].id;
+      }
 
-    await tx.insert(liveModelEdgesTable).values({
-      liveModelId: liveModel.id,
-      fromVariableId,
-      toVariableId,
-      relationship,
-      provenancePaperId,
-      provenanceCitationText,
-      provenanceFigureThumbnailUrl: req.body?.provenanceFigureThumbnailUrl ?? null,
-      provenanceFigureSourceUrl: req.body?.provenanceFigureSourceUrl ?? null,
-      provenanceFigureSourceDomain: req.body?.provenanceFigureSourceDomain ?? null,
-      confidence: ["high", "medium", "low"].includes(req.body?.confidence) ? req.body.confidence : "medium",
-      sourceModelId,
-      userAdded,
-      moderatesEdgeId: validModeratesEdgeId,
+      await tx.insert(liveModelEdgesTable).values({
+        liveModelId: liveModel.id,
+        fromVariableId,
+        toVariableId,
+        relationship,
+        provenancePaperId,
+        provenanceCitationText,
+        provenanceFigureThumbnailUrl: req.body?.provenanceFigureThumbnailUrl ?? null,
+        provenanceFigureSourceUrl: req.body?.provenanceFigureSourceUrl ?? null,
+        provenanceFigureSourceDomain: req.body?.provenanceFigureSourceDomain ?? null,
+        confidence: ["high", "medium", "low"].includes(req.body?.confidence) ? req.body.confidence : "medium",
+        sourceModelId,
+        userAdded,
+        moderatesEdgeId: validModeratesEdgeId,
+      });
+      await tx.update(liveModelsTable)
+        .set({ version: sql`${liveModelsTable.version} + 1`, updatedAt: new Date() })
+        .where(eq(liveModelsTable.id, liveModel.id));
     });
-    await tx.update(liveModelsTable)
-      .set({ version: sql`${liveModelsTable.version} + 1`, updatedAt: new Date() })
-      .where(eq(liveModelsTable.id, liveModel.id));
-  });
+  } catch (err) {
+    // Race: another concurrent insert beat us to it. Map the unique-violation to
+    // the same 409 we'd have returned in the pre-check.
+    if (isUniqueViolation(err)) {
+      return res.status(409).json({ error: "duplicate edge: this relationship already exists in the live model" });
+    }
+    throw err;
+  }
 
   const detail = await loadLiveModelDetail(sessionId);
   return res.json(detail);
@@ -437,22 +460,29 @@ router.post("/sessions/:id/live-model/import-from-model", async (req, res) => {
       }).onConflictDoNothing();
     }
 
-    // Skip pure duplicates against existing edges already imported from the same source model.
+    // Dedup against ALL existing edges in this live model, regardless of source model.
+    // Previously this filtered by `sourceModelId`, which meant user-added edges
+    // (sourceModelId=null) and edges imported from a different source model would
+    // never match — so calling "作为我的研究模型基础" (replace=false) repeatedly, or
+    // mixing manual edits with imports, silently created duplicates. The DB-level
+    // unique index on (liveModelId, from, to, rel) is the ultimate guard, but we
+    // also skip in app code to avoid burning sequence ids and to keep the
+    // skippedEdges count meaningful.
     const existingEdges = await tx.select({
       fromVariableId: liveModelEdgesTable.fromVariableId,
       toVariableId: liveModelEdgesTable.toVariableId,
       relationship: liveModelEdgesTable.relationship,
-      sourceModelId: liveModelEdgesTable.sourceModelId,
     }).from(liveModelEdgesTable).where(eq(liveModelEdgesTable.liveModelId, liveModel.id));
     const existingKey = new Set(existingEdges.map((e) =>
-      `${e.fromVariableId}->${e.toVariableId}:${e.relationship}:${e.sourceModelId ?? ""}`));
+      `${e.fromVariableId}->${e.toVariableId}:${e.relationship}`));
 
     for (const e of sourceEdges) {
       const fromId = resolve(e.fromVariableId, e.fromVariableName);
       const toId = resolve(e.toVariableId, e.toVariableName);
       if (fromId == null || toId == null) { skippedEdges++; continue; }
-      const key = `${fromId}->${toId}:${e.relationship}:${modelId}`;
-      if (existingKey.has(key)) continue;
+      const key = `${fromId}->${toId}:${e.relationship}`;
+      if (existingKey.has(key)) { skippedEdges++; continue; }
+      existingKey.add(key); // guard against duplicates within sourceEdges itself
       await tx.insert(liveModelEdgesTable).values({
         liveModelId: liveModel.id,
         fromVariableId: fromId,
@@ -463,6 +493,8 @@ router.post("/sessions/:id/live-model/import-from-model", async (req, res) => {
         sourceModelId: modelId,
         userAdded: false,
         confidence: "medium",
+      }).onConflictDoNothing({
+        target: [liveModelEdgesTable.liveModelId, liveModelEdgesTable.fromVariableId, liveModelEdgesTable.toVariableId, liveModelEdgesTable.relationship],
       });
     }
 

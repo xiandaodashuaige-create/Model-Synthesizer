@@ -142,7 +142,17 @@ export default function LiveModelPage({ params }: { params?: { id: string } }) {
           setIsAddingEdge(false);
           setEdgeFrom(""); setEdgeTo(""); setEdgeRel("positive");
         },
-        onError: () => toast({ title: t("live.toast.failed" as any), variant: "destructive" }),
+        // 409 = duplicate (server enforces unique (from,to,rel) per live model). Surface
+        // a friendly "already exists" toast instead of the generic failure message so the
+        // user understands why nothing changed.
+        onError: (err: any) => {
+          const status = err?.response?.status ?? err?.status;
+          if (status === 409) {
+            toast({ title: t("live.toast.edgeExists" as any) });
+          } else {
+            toast({ title: t("live.toast.failed" as any), variant: "destructive" });
+          }
+        },
       },
     );
   };
@@ -220,7 +230,17 @@ export default function LiveModelPage({ params }: { params?: { id: string } }) {
           toast({ title: t("canvas.toast.edgeAdded" as any) });
           setPendingEdge(null);
         },
-        onError: () => toast({ title: t("canvas.toast.edgeFailed" as any), variant: "destructive" }),
+        onError: (err: any) => {
+          const status = err?.response?.status ?? err?.status;
+          if (status === 409) {
+            // Drag-to-create on the canvas: the same (from,to,rel) already exists.
+            // Close the picker and tell the user, rather than implying a generic failure.
+            toast({ title: t("canvas.toast.edgeExists" as any) });
+            setPendingEdge(null);
+          } else {
+            toast({ title: t("canvas.toast.edgeFailed" as any), variant: "destructive" });
+          }
+        },
       },
     );
   };
