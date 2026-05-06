@@ -370,7 +370,7 @@ router.post("/sessions/:id/models/generate", async (req, res): Promise<void> => 
   // Synthesis prompt: explicit STRUCTURAL OPERATORS + theory backbones.
   const prompt = `You are a senior researcher in academic methodology and structural equation modeling.
 
-Your task: produce ${numModels} *novel* and theoretically coherent research model proposals by RECOMBINING the source papers' own research models below using EXPLICIT STRUCTURAL OPERATORS. Each output model MUST be the result of applying TWO chained operators (a primary then a different secondary) to AT LEAST THREE of the original models.
+Your task: produce ${numModels} *novel* and theoretically coherent research model proposals by RECOMBINING the source papers' own research models below using EXPLICIT STRUCTURAL OPERATORS. Each output model MUST be the result of applying TWO chained operators (a primary then a different secondary) to AT LEAST ${userPrompt ? "TWO" : "THREE"} of the original models.
 
 ================================================================
 PAPER REFERENCES (use exact tags when citing):
@@ -405,7 +405,7 @@ HARD RULES (violations = invalid output):
 1. **Operator-driven**: each model MUST start its rationale with "[OPERATOR: <PRIMARY>+<SECONDARY>] [BASE: <Pn>+<Pm>(+<Pk>...)] [BACKBONE: <id or NONE>]" so the recombination logic is auditable.
 2. **Chained operators (CRITICAL)**: each model MUST apply TWO operators in sequence — a PRIMARY operator that defines the spine of the model, then a SECONDARY operator (must be different from the primary) that enriches it (e.g. INSERT_MODERATOR after EXTEND, PARALLEL_MEDIATORS after THEORY_GRAFT). Single-operator models are too weak and will be rejected.
 3. **Distinct operator pairs**: across the ${numModels} models, no two models may use the same (primary, secondary) operator pair OR the same base paper set.
-4. **Cross-paper synthesis (CRITICAL)**: each model MUST include nodes from ≥ 3 DIFFERENT source papers (not 2). The whole point is multi-paper recombination — a model that only fuses 2 papers is a weak combination and will be rejected.
+4. **Cross-paper synthesis**: ${userPrompt ? "The user has provided a custom prompt — honor its scope strictly. Multi-paper synthesis is still preferred when compatible with the user's intent, but a focused single-paper model that faithfully matches the user's request is acceptable." : "each model MUST include nodes from ≥ 3 DIFFERENT source papers (not 2). The whole point is multi-paper recombination — a model that only fuses 2 papers is a weak combination and will be rejected."}
 5. **Respect original directions**: when an edge connects two variables that already appeared together in a paper's hypothesis, use the SAME direction and sign that paper proposed. Do not flip causality unless explicitly justified in the rationale.
 6. **Citation grounding**: every "evidenceCitationText" MUST be a verbatim sentence either from the variable's "Citation" field or from the paper graph's "evidence" field above. If you cannot find such a sentence, omit that edge.
 7. **Layout discipline**: order nodes Independent → Mediator → Moderator → Dependent. Never put a dependent left of an independent.
@@ -513,8 +513,16 @@ OUTPUT FORMAT — return ONLY a JSON array, no markdown:
     const validVarIds = new Set(variables.map((v) => v.id));
     const validPaperIds = new Set(papers.map((p) => p.id));
 
-    const minDistinctPapers = Math.min(3, papers.length);
-    const minNodes = papers.length >= 3 ? 5 : 4;
+    // When the user provides a custom prompt, they may explicitly want a focused/narrow model
+    // (e.g. a clean S-O-R chain on one IV). Forcing ≥3 source papers in that case rejects every
+    // candidate and shows the user a generic "generation failed" with no recoverable signal.
+    // Soften the cross-paper requirement (and the node-count floor) when a custom prompt is set.
+    const hasCustomPrompt = userPrompt.length > 0;
+    // With a custom prompt the user may legitimately want a single-paper focused replication
+    // (e.g. "rebuild paper P3's S-O-R chain with one IV"). Drop the cross-paper requirement to 1
+    // in that case so the user's explicit intent isn't silently overridden.
+    const minDistinctPapers = hasCustomPrompt ? 1 : Math.min(3, papers.length);
+    const minNodes = hasCustomPrompt ? 4 : (papers.length >= 3 ? 5 : 4);
 
     function validate(m: typeof generated[number] & { secondaryOperator?: string }): { ok: true } | { ok: false; reason: string } {
       if (!m || typeof m.name !== "string" || !Array.isArray(m.nodes) || !Array.isArray(m.edges)) return { ok: false, reason: "missing required fields" };

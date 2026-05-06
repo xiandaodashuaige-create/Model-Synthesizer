@@ -110,8 +110,17 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
           description: t("models.toast.generatedDesc" as any, { count: result.length }),
         });
       },
-      onError: () => {
-        toast({ title: t("models.toast.failed" as any), description: t("models.toast.failedDesc" as any), variant: "destructive" });
+      onError: (err: any) => {
+        const apiMsg = err?.data?.error ?? err?.response?.data?.error;
+        const rejected = err?.data?.rejected ?? err?.response?.data?.rejected;
+        const rejectedSummary = Array.isArray(rejected) && rejected.length > 0
+          ? "\n" + rejected.map((r: { name?: string; reason?: string }) => `• ${r.name ?? "?"}: ${r.reason ?? ""}`).join("\n")
+          : "";
+        toast({
+          title: t("models.toast.failed" as any),
+          description: (apiMsg ? String(apiMsg) : t("models.toast.failedDesc" as any)) + rejectedSummary,
+          variant: "destructive",
+        });
       },
     });
   };
@@ -134,10 +143,15 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
           description: t("models.toast.generatedDesc" as any, { count: result.length }),
         });
       },
-      onError: () => {
+      onError: (err: any) => {
+        const apiMsg = err?.data?.error ?? err?.response?.data?.error;
+        const rejected = err?.data?.rejected ?? err?.response?.data?.rejected;
+        const rejectedSummary = Array.isArray(rejected) && rejected.length > 0
+          ? "\n" + rejected.map((r: { name?: string; reason?: string }) => `• ${r.name ?? "?"}: ${r.reason ?? ""}`).join("\n")
+          : "";
         toast({
           title: t("models.toast.failed" as any),
-          description: t("models.toast.failedDesc" as any),
+          description: (apiMsg ? String(apiMsg) : t("models.toast.failedDesc" as any)) + rejectedSummary,
           variant: "destructive",
         });
       },
