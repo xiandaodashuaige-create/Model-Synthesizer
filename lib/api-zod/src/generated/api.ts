@@ -654,6 +654,12 @@ export const GenerateModelsBody = zod.object({
     .array(zod.number())
     .optional()
     .describe("Variable IDs the user wants the AI to prioritize including"),
+  allowPartial: zod
+    .boolean()
+    .optional()
+    .describe(
+      "When true, allow generation even if some papers in the session have\nnot had their variables extracted yet. The server will record which\npapers were skipped on each generated model's `partialPassMeta`.\nWhen false (default), the server returns 422 if any paper is missing\nextracted variables.\n",
+    ),
 });
 
 export const GenerateModelsResponseItem = zod.object({
@@ -741,6 +747,22 @@ export const GenerateModelsResponseItem = zod.object({
         ),
     }),
   ),
+  partialPassMeta: zod
+    .object({
+      allowPartial: zod.boolean(),
+      basedOnPaperIds: zod.array(zod.number()),
+      missingPaperIds: zod.array(zod.number()),
+      missingPapers: zod.array(
+        zod.object({
+          id: zod.number(),
+          title: zod.string(),
+        }),
+      ),
+    })
+    .nullish()
+    .describe(
+      "Present only when this model was generated through the partial-pass flow\n(some session papers had not been extracted at generation time).\n",
+    ),
   createdAt: zod.string(),
 });
 export const GenerateModelsResponse = zod.array(GenerateModelsResponseItem);
@@ -837,6 +859,22 @@ export const ListSessionModelsResponseItem = zod.object({
         ),
     }),
   ),
+  partialPassMeta: zod
+    .object({
+      allowPartial: zod.boolean(),
+      basedOnPaperIds: zod.array(zod.number()),
+      missingPaperIds: zod.array(zod.number()),
+      missingPapers: zod.array(
+        zod.object({
+          id: zod.number(),
+          title: zod.string(),
+        }),
+      ),
+    })
+    .nullish()
+    .describe(
+      "Present only when this model was generated through the partial-pass flow\n(some session papers had not been extracted at generation time).\n",
+    ),
   createdAt: zod.string(),
 });
 export const ListSessionModelsResponse = zod.array(
@@ -956,6 +994,22 @@ export const UpdateModelResponse = zod.object({
         ),
     }),
   ),
+  partialPassMeta: zod
+    .object({
+      allowPartial: zod.boolean(),
+      basedOnPaperIds: zod.array(zod.number()),
+      missingPaperIds: zod.array(zod.number()),
+      missingPapers: zod.array(
+        zod.object({
+          id: zod.number(),
+          title: zod.string(),
+        }),
+      ),
+    })
+    .nullish()
+    .describe(
+      "Present only when this model was generated through the partial-pass flow\n(some session papers had not been extracted at generation time).\n",
+    ),
   createdAt: zod.string(),
 });
 
@@ -1051,6 +1105,22 @@ export const GetModelResponse = zod.object({
         ),
     }),
   ),
+  partialPassMeta: zod
+    .object({
+      allowPartial: zod.boolean(),
+      basedOnPaperIds: zod.array(zod.number()),
+      missingPaperIds: zod.array(zod.number()),
+      missingPapers: zod.array(
+        zod.object({
+          id: zod.number(),
+          title: zod.string(),
+        }),
+      ),
+    })
+    .nullish()
+    .describe(
+      "Present only when this model was generated through the partial-pass flow\n(some session papers had not been extracted at generation time).\n",
+    ),
   createdAt: zod.string(),
 });
 
@@ -1219,6 +1289,22 @@ export const SelectModelResponse = zod.object({
         ),
     }),
   ),
+  partialPassMeta: zod
+    .object({
+      allowPartial: zod.boolean(),
+      basedOnPaperIds: zod.array(zod.number()),
+      missingPaperIds: zod.array(zod.number()),
+      missingPapers: zod.array(
+        zod.object({
+          id: zod.number(),
+          title: zod.string(),
+        }),
+      ),
+    })
+    .nullish()
+    .describe(
+      "Present only when this model was generated through the partial-pass flow\n(some session papers had not been extracted at generation time).\n",
+    ),
   createdAt: zod.string(),
 });
 
@@ -2033,6 +2119,22 @@ export const ApplyModelEvidenceResponse = zod.object({
         ),
     }),
   ),
+  partialPassMeta: zod
+    .object({
+      allowPartial: zod.boolean(),
+      basedOnPaperIds: zod.array(zod.number()),
+      missingPaperIds: zod.array(zod.number()),
+      missingPapers: zod.array(
+        zod.object({
+          id: zod.number(),
+          title: zod.string(),
+        }),
+      ),
+    })
+    .nullish()
+    .describe(
+      "Present only when this model was generated through the partial-pass flow\n(some session papers had not been extracted at generation time).\n",
+    ),
   createdAt: zod.string(),
 });
 
@@ -2151,6 +2253,22 @@ export const RevertModelToVersionResponse = zod.object({
         ),
     }),
   ),
+  partialPassMeta: zod
+    .object({
+      allowPartial: zod.boolean(),
+      basedOnPaperIds: zod.array(zod.number()),
+      missingPaperIds: zod.array(zod.number()),
+      missingPapers: zod.array(
+        zod.object({
+          id: zod.number(),
+          title: zod.string(),
+        }),
+      ),
+    })
+    .nullish()
+    .describe(
+      "Present only when this model was generated through the partial-pass flow\n(some session papers had not been extracted at generation time).\n",
+    ),
   createdAt: zod.string(),
 });
 

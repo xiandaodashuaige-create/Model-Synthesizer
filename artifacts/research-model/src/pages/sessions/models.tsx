@@ -32,7 +32,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { useQueryClient } from "@tanstack/react-query";
-import { Loader2, Share2, Sparkles, CheckCircle, ArrowRight, BookOpen, Wand2, GitBranch } from "lucide-react";
+import { Loader2, Share2, Sparkles, CheckCircle, ArrowRight, BookOpen, Wand2, GitBranch, AlertTriangle, Columns2 } from "lucide-react";
 import { useLocation } from "wouter";
 import { useToast } from "@/hooks/use-toast";
 import { useT } from "@/lib/i18n";
@@ -121,6 +121,19 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
   const [numModels, setNumModels] = useState(3);
   const [focusVariableIds, setFocusVariableIds] = useState<number[]>([]);
   const [pendingSelect, setPendingSelect] = useState<{ modelId: number; name: string } | null>(null);
+  // Partial-pass: opt-in flow that lets the user generate models even when
+  // some papers haven't been extracted yet. We surface a confirm dialog with
+  // the missing-paper titles before sending allowPartial=true to the server.
+  const [confirmPartialOpen, setConfirmPartialOpen] = useState(false);
+  // A/B compare mode: when on, each card gets a checkbox; the user picks
+  // exactly two and clicks the sticky CTA to navigate to the compare page.
+  const [compareMode, setCompareMode] = useState(false);
+  const [compareSelected, setCompareSelected] = useState<number[]>([]);
+  const missingPapersList = useMemo(
+    () => (papersForGuard ?? []).filter((p) => !p.extracted),
+    [papersForGuard],
+  );
+  const extractedPapersCount = (papersForGuard ?? []).length - missingPapersList.length;
 
   const variableNameById = useMemo(() => {
     const m = new Map<number, string>();
@@ -174,25 +187,33 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
     });
   };
 
-  const handleGenerate = () => {
+  const handleGenerate = (opts: { allowPartial?: boolean } = {}) => {
+    const allowPartial = opts.allowPartial === true;
     // Defense-in-depth: the button is also disabled, but guard the action
-    // itself in case of programmatic invocation or stale state.
-    if (generationBlocked) return;
+    // itself in case of programmatic invocation or stale state. The
+    // pending-papers branch of the guard is intentionally bypassed when
+    // `allowPartial` is true (the user has just confirmed the warning dialog).
+    if (guardLoading || isExtracting) return;
+    if (!allowPartial && hasPendingPapers) return;
     generateModels.mutate({
       id: sessionId,
       data: {
         userPrompt: userPrompt.trim() || undefined,
         numModels,
         focusVariableIds: focusVariableIds.length ? focusVariableIds : undefined,
+        ...(allowPartial ? { allowPartial: true } : {}),
       },
     }, {
       onSuccess: (result) => {
         queryClient.invalidateQueries({ queryKey: getListSessionModelsQueryKey(sessionId) });
         queryClient.invalidateQueries({ queryKey: getGetSessionSummaryQueryKey(sessionId) });
         queryClient.invalidateQueries({ queryKey: getGetSessionQueryKey(sessionId) });
+        const skipped = result.find((m) => m.partialPassMeta?.allowPartial)?.partialPassMeta?.missingPapers?.length ?? 0;
         toast({
           title: t("models.toast.generated" as any),
-          description: t("models.toast.generatedDesc" as any, { count: result.length }),
+          description:
+            t("models.toast.generatedDesc" as any, { count: result.length }) +
+            (skipped > 0 ? " " + t("models.toast.partialDesc" as any, { n: skipped }) : ""),
         });
       },
       onError: (err: any) => {
@@ -209,6 +230,16 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
       },
     });
   };
+
+  const toggleCompareSelected = (modelId: number) => {
+    setCompareSelected((prev) => {
+      if (prev.includes(modelId)) return prev.filter((x) => x !== modelId);
+      // Cap at 2; the sticky CTA only fires when exactly 2 are selected.
+      if (prev.length >= 2) return [prev[1], modelId];
+      return [...prev, modelId];
+    });
+  };
+  const exitCompareMode = () => { setCompareMode(false); setCompareSelected([]); };
 
   const handleUseAsBase = (modelId: number, name: string) => {
     importLiveModel.mutate(
@@ -280,16 +311,34 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
     <div className="space-y-6">
       <div className="flex items-start justify-between flex-wrap gap-3">
         <p className="text-sm text-muted-foreground max-w-2xl">{t("models.intro" as any)}</p>
-        {learnedRounds > 0 && (
-          <span
-            data-testid="badge-learning"
-            title={t("models.learning.tip" as any)}
-            className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full"
-          >
-            <Sparkles className="w-3 h-3" />
-            {t("models.learning.badge" as any, { n: learnedRounds })}
-          </span>
-        )}
+        <div className="flex items-center gap-2 flex-wrap">
+          {learnedRounds > 0 && (
+            <span
+              data-testid="badge-learning"
+              title={t("models.learning.tip" as any)}
+              className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full"
+            >
+              <Sparkles className="w-3 h-3" />
+              {t("models.learning.badge" as any, { n: learnedRounds })}
+            </span>
+          )}
+          {(models?.length ?? 0) >= 2 && (
+            <button
+              type="button"
+              data-testid="button-toggle-compare"
+              onClick={() => (compareMode ? exitCompareMode() : setCompareMode(true))}
+              title={t("models.compare.hint" as any) as string}
+              className={`inline-flex items-center gap-1.5 rounded-md text-xs font-medium h-8 px-3 transition-colors border ${
+                compareMode
+                  ? "bg-primary text-primary-foreground border-primary hover:bg-primary/90"
+                  : "bg-secondary text-secondary-foreground border-border hover:bg-accent"
+              }`}
+            >
+              <Columns2 className="w-3.5 h-3.5" />
+              {compareMode ? t("models.compare.toggleOff" as any) : t("models.compare.toggle" as any)}
+            </button>
+          )}
+        </div>
       </div>
 
       {/* AI assistant chat */}
@@ -314,12 +363,28 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
         />
       )}
       {!hasNoVariables && !isExtracting && hasPendingPapers && (
-        <NextStepHint
-          title={t("models.guard.pending.title" as any, { count: pendingPapersCount })}
-          body={t("models.guard.pending.body" as any)}
-          href={`/sessions/${sessionId}/papers`}
-          cta={t("models.guard.pending.cta" as any)}
-        />
+        <div className="space-y-2">
+          <NextStepHint
+            title={t("models.guard.pending.title" as any, { count: pendingPapersCount })}
+            body={t("models.guard.pending.body" as any)}
+            href={`/sessions/${sessionId}/papers`}
+            cta={t("models.guard.pending.cta" as any)}
+          />
+          {extractedPapersCount >= 2 && (
+            <div className="flex justify-end">
+              <button
+                type="button"
+                data-testid="button-generate-partial"
+                onClick={() => setConfirmPartialOpen(true)}
+                disabled={generateModels.isPending}
+                className="inline-flex items-center gap-1.5 rounded-md text-xs font-medium border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800 h-8 px-3 transition-colors disabled:opacity-50"
+              >
+                <AlertTriangle className="w-3.5 h-3.5" />
+                {t("models.guard.partial.cta" as any, { n: extractedPapersCount })}
+              </button>
+            </div>
+          )}
+        </div>
       )}
 
       <ModelAssistantChat
@@ -368,7 +433,7 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
           </div>
           <button
             data-testid="button-generate-models"
-            onClick={handleGenerate}
+            onClick={() => handleGenerate()}
             disabled={generateModels.isPending || hasNoVariables || generationBlocked}
             title={
               hasNoVariables
@@ -400,13 +465,46 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-6">
-          {models.map((model) => (
-            <div key={model.id} data-testid={`card-model-${model.id}`} className={`bg-card border rounded-xl p-6 transition-all ${model.selected ? "border-primary shadow-md" : "border-border hover:border-primary/40"}`}>
+          {models.map((model) => {
+            const isCompareSelected = compareSelected.includes(model.id);
+            return (
+            <div
+              key={model.id}
+              data-testid={`card-model-${model.id}`}
+              className={`bg-card border rounded-xl p-6 transition-all ${
+                isCompareSelected
+                  ? "border-primary ring-2 ring-primary/40 shadow-md"
+                  : model.selected
+                    ? "border-primary shadow-md"
+                    : "border-border hover:border-primary/40"
+              }`}
+            >
               <div className="flex items-start justify-between gap-4 mb-4">
+                {compareMode && (
+                  <label className="shrink-0 inline-flex items-center gap-2 cursor-pointer pt-1" title={t("models.compare.checkbox" as any) as string}>
+                    <input
+                      type="checkbox"
+                      data-testid={`checkbox-compare-${model.id}`}
+                      checked={isCompareSelected}
+                      onChange={() => toggleCompareSelected(model.id)}
+                      className="w-4 h-4 accent-primary"
+                    />
+                  </label>
+                )}
                 <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-1">
+                  <div className="flex items-center gap-2 mb-1 flex-wrap">
                     {model.selected && <CheckCircle className="w-4 h-4 text-primary shrink-0" />}
                     <h3 className="text-base font-semibold text-foreground">{model.name}</h3>
+                    {model.partialPassMeta?.allowPartial && (
+                      <span
+                        data-testid={`badge-partial-${model.id}`}
+                        title={t("models.partial.badgeTip" as any, { n: model.partialPassMeta.missingPapers.length }) as string}
+                        className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-800 bg-amber-50 border border-amber-300 px-1.5 py-0.5 rounded"
+                      >
+                        <AlertTriangle className="w-3 h-3" />
+                        {t("models.partial.badge" as any)}
+                      </span>
+                    )}
                   </div>
                   <p className="text-sm text-muted-foreground leading-relaxed">{model.description}</p>
                 </div>
@@ -512,9 +610,72 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
                 </div>
               )}
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
+
+      {compareMode && (
+        <div
+          data-testid="compare-footer"
+          className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 bg-card border border-primary shadow-xl rounded-full px-4 py-2 flex items-center gap-3"
+        >
+          <span className="text-xs text-muted-foreground">
+            {t("models.compare.selectN" as any, { n: compareSelected.length })}
+          </span>
+          <button
+            type="button"
+            data-testid="button-go-compare"
+            disabled={compareSelected.length !== 2}
+            onClick={() => navigate(`/sessions/${sessionId}/models/compare?a=${compareSelected[0]}&b=${compareSelected[1]}`)}
+            className="inline-flex items-center gap-1.5 rounded-full text-xs font-semibold h-8 px-4 bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-40 disabled:pointer-events-none"
+          >
+            <Columns2 className="w-3.5 h-3.5" />
+            {t("models.compare.cta" as any)}
+          </button>
+          <button
+            type="button"
+            onClick={exitCompareMode}
+            className="text-xs text-muted-foreground hover:text-foreground px-2"
+          >
+            {t("common.cancel" as any)}
+          </button>
+        </div>
+      )}
+
+      <AlertDialog open={confirmPartialOpen} onOpenChange={setConfirmPartialOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("models.partial.confirm.title" as any)}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("models.partial.confirm.body" as any, { count: missingPapersList.length })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {missingPapersList.length > 0 && (
+            <div className="text-xs text-muted-foreground border border-border rounded-md bg-muted/30 p-3 max-h-40 overflow-y-auto">
+              <p className="font-medium mb-1.5 text-foreground">{t("models.partial.confirm.list" as any)}</p>
+              <ul className="list-disc list-inside space-y-0.5">
+                {missingPapersList.slice(0, 12).map((p) => (
+                  <li key={p.id} className="truncate" title={p.title}>{p.title}</li>
+                ))}
+                {missingPapersList.length > 12 && (
+                  <li className="text-muted-foreground/70">… +{missingPapersList.length - 12}</li>
+                )}
+              </ul>
+            </div>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common.cancel" as any)}</AlertDialogCancel>
+            <AlertDialogAction
+              data-testid="button-confirm-partial"
+              onClick={() => { setConfirmPartialOpen(false); handleGenerate({ allowPartial: true }); }}
+              className="bg-amber-600 hover:bg-amber-700 text-white"
+            >
+              {t("models.partial.confirm.ok" as any)}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={!!pendingSelect} onOpenChange={(open) => { if (!open) setPendingSelect(null); }}>
         <AlertDialogContent>

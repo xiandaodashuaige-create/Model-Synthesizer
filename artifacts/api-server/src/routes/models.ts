@@ -81,6 +81,13 @@ interface PaperResearchModel {
   hypotheses?: string[];
 }
 
+interface PartialPassMeta {
+  allowPartial: boolean;
+  basedOnPaperIds: number[];
+  missingPaperIds: number[];
+  missingPapers: Array<{ id: number; title: string }>;
+}
+
 function formatModel(model: typeof researchModelsTable.$inferSelect) {
   return {
     id: model.id,
@@ -91,6 +98,7 @@ function formatModel(model: typeof researchModelsTable.$inferSelect) {
     selected: model.selected === "true",
     nodes: model.nodes as ModelNode[],
     edges: model.edges as ModelEdge[],
+    partialPassMeta: (model.partialPassMeta as PartialPassMeta | null) ?? null,
     createdAt: model.createdAt.toISOString(),
   };
 }
@@ -218,6 +226,7 @@ router.post("/sessions/:id/models/generate", async (req, res): Promise<void> => 
   const userPrompt = bodyParse.success ? (bodyParse.data.userPrompt ?? "").trim() : "";
   const numModels = bodyParse.success && bodyParse.data.numModels ? bodyParse.data.numModels : 3;
   const focusVariableIds = bodyParse.success && bodyParse.data.focusVariableIds ? bodyParse.data.focusVariableIds : [];
+  const allowPartial = bodyParse.success && bodyParse.data.allowPartial === true;
 
   const sessionId = params.data.id;
 
@@ -234,6 +243,29 @@ router.post("/sessions/:id/models/generate", async (req, res): Promise<void> => 
   const papers = await db.select().from(papersTable).where(eq(papersTable.sessionId, sessionId));
   const paperMap = new Map(papers.map((p) => [p.id, p]));
   const papersWithVars = papers.filter((p) => variables.some((v) => v.paperId === p.id));
+
+  // Server-side defense-in-depth for the pending-papers guard. The client
+  // already disables the Generate button when papers are unextracted, but a
+  // direct API call (or stale UI) could bypass it. When `allowPartial` is
+  // true the user has explicitly acknowledged the limitation in a confirm
+  // dialog, so we proceed and persist the missing-paper list onto each
+  // generated model row.
+  const missingPapers = papers.filter((p) => !p.extracted);
+  if (missingPapers.length > 0 && !allowPartial) {
+    res.status(422).json({
+      error: `还有 ${missingPapers.length} 篇论文未提取变量，生成模型会遗漏它们的证据。请先把所有论文都提取完再生成，或者在前端确认"基于部分论文生成"。`,
+      missingPaperIds: missingPapers.map((p) => p.id),
+    });
+    return;
+  }
+  const partialPassMeta: PartialPassMeta | null = allowPartial && missingPapers.length > 0
+    ? {
+        allowPartial: true,
+        basedOnPaperIds: papersWithVars.map((p) => p.id),
+        missingPaperIds: missingPapers.map((p) => p.id),
+        missingPapers: missingPapers.map((p) => ({ id: p.id, title: p.title })),
+      }
+    : null;
 
   // Stage 1: extract each paper's OWN research model as a typed causal graph (cached).
   const perPaperModels = await Promise.all(
@@ -674,6 +706,7 @@ OUTPUT FORMAT — return ONLY a JSON array, no markdown:
           selected: "false",
           nodes: m.nodes,
           edges: m.edges,
+          partialPassMeta,
         }).returning();
       })
     );

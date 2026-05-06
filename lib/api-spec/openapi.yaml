@@ -843,6 +843,14 @@ paths:
                   items:
                     type: integer
                   description: Variable IDs the user wants the AI to prioritize including
+                allowPartial:
+                  type: boolean
+                  description: |
+                    When true, allow generation even if some papers in the session have
+                    not had their variables extracted yet. The server will record which
+                    papers were skipped on each generated model's `partialPassMeta`.
+                    When false (default), the server returns 422 if any paper is missing
+                    extracted variables.
       responses:
         "200":
           description: Generated model combinations
@@ -1897,6 +1905,34 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ModelEdge"
+        partialPassMeta:
+          nullable: true
+          description: |
+            Present only when this model was generated through the partial-pass flow
+            (some session papers had not been extracted at generation time).
+          type: object
+          properties:
+            allowPartial:
+              type: boolean
+            basedOnPaperIds:
+              type: array
+              items:
+                type: integer
+            missingPaperIds:
+              type: array
+              items:
+                type: integer
+            missingPapers:
+              type: array
+              items:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                  title:
+                    type: string
+                required: [id, title]
+          required: [allowPartial, basedOnPaperIds, missingPaperIds, missingPapers]
         createdAt:
           type: string
       required:

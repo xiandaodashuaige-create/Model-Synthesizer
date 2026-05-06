@@ -10,6 +10,7 @@ import SessionLayout from "./pages/sessions/layout";
 import SessionPapers from "./pages/sessions/papers";
 import SessionVariables from "./pages/sessions/variables";
 import SessionModels from "./pages/sessions/models";
+import SessionModelsCompare from "./pages/sessions/models-compare";
 import SessionModelDetail from "./pages/sessions/model-detail";
 import SessionLiveModel from "./pages/sessions/live-model";
 import { Layout } from "./components/layout";
@@ -26,6 +27,9 @@ function Router() {
         <Route path="/sessions/:id/papers" component={(props) => <SessionLayout><SessionPapers params={props.params} /></SessionLayout>} />
         <Route path="/sessions/:id/variables" component={(props) => <SessionLayout><SessionVariables params={props.params} /></SessionLayout>} />
         <Route path="/sessions/:id/models" component={(props) => <SessionLayout><SessionModels params={props.params} /></SessionLayout>} />
+        {/* `compare` route must be declared BEFORE `:modelId` so wouter doesn't
+            capture the literal "compare" segment as a modelId. */}
+        <Route path="/sessions/:id/models/compare" component={(props) => <SessionLayout><SessionModelsCompare params={props.params} /></SessionLayout>} />
         <Route path="/sessions/:id/models/:modelId" component={(props) => <SessionLayout><SessionModelDetail params={props.params} /></SessionLayout>} />
         <Route path="/sessions/:id/live-model" component={(props) => <SessionLayout><SessionLiveModel params={props.params} /></SessionLayout>} />
         <Route component={NotFound} />

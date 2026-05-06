@@ -76,6 +76,7 @@
   },
   "dependencies": {
     "@dagrejs/dagre": "^3.0.0",
-    "@xyflow/react": "^12.10.2"
+    "@xyflow/react": "^12.10.2",
+    "docx": "^9.6.1"
   }
 }

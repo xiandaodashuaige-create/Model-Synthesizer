@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "wouter";
 import {
   useGetLiveModel,
+  useGetSession,
   useAddLiveModelNode,
   useRemoveLiveModelNode,
   useUpdateLiveModelNodePosition,
@@ -9,10 +10,12 @@ import {
   useRemoveLiveModelEdge,
   useListSessionVariables,
   getGetLiveModelQueryKey,
+  getGetSessionQueryKey,
   getListSessionVariablesQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Loader2, Plus, X, AlertTriangle, BookOpen, ArrowRight, Sparkles, GitBranch, Search } from "lucide-react";
+import { Loader2, Plus, X, AlertTriangle, BookOpen, ArrowRight, Sparkles, GitBranch, Search, FileDown, FileText } from "lucide-react";
+import { exportMarkdown, exportDocx } from "@/lib/export-live-model";
 import { useToast } from "@/hooks/use-toast";
 import { useT } from "@/lib/i18n";
 import { EditableModelGraph, type CanvasNode, type CanvasEdge, type VariablePoolEntry } from "@/components/editable-model-graph";
@@ -45,6 +48,33 @@ export default function LiveModelPage({ params }: { params?: { id: string } }) {
   const { data: variables } = useListSessionVariables(sessionId, {
     query: { enabled: !!sessionId, queryKey: getListSessionVariablesQueryKey(sessionId) },
   });
+  // For export filenames + document title — Research Model Builder treats the
+  // session's display name as the title of the exported model document.
+  const { data: sessionData } = useGetSession(sessionId, {
+    query: { enabled: !!sessionId, queryKey: getGetSessionQueryKey(sessionId) },
+  });
+  const [isExportingDocx, setIsExportingDocx] = useState(false);
+  const handleExportMd = () => {
+    if (!detail) return;
+    try {
+      const filename = exportMarkdown(detail, sessionData?.name ?? "research-model");
+      toast({ title: t("live.export.toastDone" as any, { filename }) });
+    } catch {
+      toast({ title: t("live.export.toastFailed" as any), variant: "destructive" });
+    }
+  };
+  const handleExportDocx = async () => {
+    if (!detail || isExportingDocx) return;
+    setIsExportingDocx(true);
+    try {
+      const filename = await exportDocx(detail, sessionData?.name ?? "research-model");
+      toast({ title: t("live.export.toastDone" as any, { filename }) });
+    } catch {
+      toast({ title: t("live.export.toastFailed" as any), variant: "destructive" });
+    } finally {
+      setIsExportingDocx(false);
+    }
+  };
 
   const [evidenceOpen, setEvidenceOpen] = useState(false);
   // When the user clicks "Find sources" on a specific edge row we pass these
@@ -309,6 +339,27 @@ export default function LiveModelPage({ params }: { params?: { id: string } }) {
             className="inline-flex items-center gap-1.5 rounded-md text-xs font-medium border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 h-8 px-3 transition-colors disabled:opacity-50"
           >
             <Sparkles className="w-3.5 h-3.5" /> {t("evidence.btn" as any)}
+          </button>
+          <button
+            type="button"
+            data-testid="button-export-md"
+            onClick={handleExportMd}
+            disabled={isEmpty}
+            title={isEmpty ? (t("live.export.empty" as any) as string) : (t("live.export.md" as any) as string)}
+            className="inline-flex items-center gap-1.5 rounded-md text-xs font-medium border border-border bg-secondary text-secondary-foreground hover:bg-accent h-8 px-3 transition-colors disabled:opacity-50"
+          >
+            <FileText className="w-3.5 h-3.5" /> {t("live.export.md" as any)}
+          </button>
+          <button
+            type="button"
+            data-testid="button-export-docx"
+            onClick={handleExportDocx}
+            disabled={isEmpty || isExportingDocx}
+            title={isEmpty ? (t("live.export.empty" as any) as string) : (t("live.export.docx" as any) as string)}
+            className="inline-flex items-center gap-1.5 rounded-md text-xs font-medium border border-border bg-secondary text-secondary-foreground hover:bg-accent h-8 px-3 transition-colors disabled:opacity-50"
+          >
+            {isExportingDocx ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileDown className="w-3.5 h-3.5" />}
+            {t("live.export.docx" as any)}
           </button>
           <span className="inline-flex items-center gap-1.5 text-xs font-medium text-foreground bg-secondary px-2.5 py-1 rounded-full">
             {t("live.stats" as any, { vars: nodes.length, edges: edges.length })}

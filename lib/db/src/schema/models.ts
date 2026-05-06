@@ -12,6 +12,11 @@ export const researchModelsTable = pgTable("research_models", {
   selected: text("selected").notNull().default("false"),
   nodes: jsonb("nodes").notNull().default([]),
   edges: jsonb("edges").notNull().default([]),
+  // Set when the user explicitly opted into the "partial-pass" flow (generating
+  // models even though some papers in the session had not been extracted yet).
+  // Records which papers were used and which were skipped so the UI can warn
+  // the reader and the literature review/export can disclose the limitation.
+  partialPassMeta: jsonb("partial_pass_meta"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

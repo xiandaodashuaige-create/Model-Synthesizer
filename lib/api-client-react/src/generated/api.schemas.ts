@@ -239,6 +239,23 @@ export interface VariableGraph {
   edges: GraphEdge[];
 }
 
+export type ResearchModelPartialPassMetaMissingPapersItem = {
+  id: number;
+  title: string;
+};
+
+/**
+ * Present only when this model was generated through the partial-pass flow
+(some session papers had not been extracted at generation time).
+
+ */
+export type ResearchModelPartialPassMeta = {
+  allowPartial: boolean;
+  basedOnPaperIds: number[];
+  missingPaperIds: number[];
+  missingPapers: ResearchModelPartialPassMetaMissingPapersItem[];
+} | null;
+
 export interface ModelNode {
   variableId: number;
   variableName: string;
@@ -326,6 +343,10 @@ export interface ResearchModel {
   selected: boolean;
   nodes: ModelNode[];
   edges: ModelEdge[];
+  /** Present only when this model was generated through the partial-pass flow
+(some session papers had not been extracted at generation time).
+ */
+  partialPassMeta?: ResearchModelPartialPassMeta;
   createdAt: string;
 }
 
@@ -784,6 +805,13 @@ export type GenerateModelsBody = {
   numModels?: number;
   /** Variable IDs the user wants the AI to prioritize including */
   focusVariableIds?: number[];
+  /** When true, allow generation even if some papers in the session have
+not had their variables extracted yet. The server will record which
+papers were skipped on each generated model's `partialPassMeta`.
+When false (default), the server returns 422 if any paper is missing
+extracted variables.
+ */
+  allowPartial?: boolean;
 };
 
 export type GetSessionLearningStats200 = {
