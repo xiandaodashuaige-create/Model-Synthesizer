@@ -1,4 +1,4 @@
-import { pgTable, text, serial, timestamp, integer, boolean, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, timestamp, integer, boolean, uniqueIndex, doublePrecision } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { sessionsTable, papersTable } from "./sessions";
@@ -25,6 +25,10 @@ export const liveModelNodesTable = pgTable(
     // Origin tracking
     sourceModelId: integer("source_model_id").references(() => researchModelsTable.id, { onDelete: "set null" }),
     userAdded: boolean("user_added").notNull().default(false),
+    // Canvas position persisted per node so user-arranged layouts survive reloads.
+    // Null means "no manual layout yet — fall back to dagre auto-layout on the client".
+    positionX: doublePrecision("position_x"),
+    positionY: doublePrecision("position_y"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({

@@ -36,6 +36,7 @@ pnpm --filter @workspace/db run push
 - **Client Code Generation**: OpenAPI specification is used to generate Zod validators and React Query hooks, ensuring type safety and consistency between frontend and backend.
 - **Monorepo Structure**: Utilizes pnpm workspaces to manage multiple packages, facilitating shared code and streamlined development.
 - **Image Search Pipeline**: Employs a multi-stage pipeline for finding research model figures, including AI-powered query expansion, parallel search lanes, and relevance filtering, to ensure high-quality, relevant results.
+- **Editable Canvas**: Both the candidate model detail page (in editing mode) and the LiveModel "我的模型" page render the model graph via `components/editable-model-graph.tsx` (built on `@xyflow/react`). Supports node drag-to-reposition, drag-to-create edges, hover-delete on nodes/edges, and an "+ Add variable" pool. LiveModel persists positions via debounced (400ms) PATCH `/sessions/{id}/live-model/nodes/{nodeId}`. Candidate-model edits stay in-memory on draft state until "Save". Layout falls back to dagre when no positions are set.
 
 ## Product
 - **Session Management**: Users can create sessions, defining a name and research topic.

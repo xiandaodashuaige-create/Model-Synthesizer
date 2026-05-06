@@ -19,6 +19,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { Loader2, ArrowLeft, CheckCircle, BookOpen, Quote, Share2, Pencil, Save, X, Trash2, Plus, Download, Hash, BarChart3, MapPin, Info, FileText, AlertTriangle, Copy as CopyIcon, GitBranch, Image as ImageIcon, ChevronDown, ChevronUp, ExternalLink } from "lucide-react";
 import { ModelGraph, buildEdgeHTagMap, buildPaperTagMap } from "@/components/model-graph";
+import { EditableModelGraph } from "@/components/editable-model-graph";
 import { useToast } from "@/hooks/use-toast";
 import { useT } from "@/lib/i18n";
 
@@ -177,6 +178,8 @@ export default function SessionModelDetail({ params: routeParams }: { params?: {
   const [newEdgeTo, setNewEdgeTo] = useState<string>("");
   const [newEdgeRel, setNewEdgeRel] = useState<string>("positive");
   const [newEdgeEvidence, setNewEdgeEvidence] = useState("");
+  // Canvas drag-to-connect → opens a small modal to capture the required evidence quote.
+  const [pendingCanvasEdge, setPendingCanvasEdge] = useState<{ from: number; to: number } | null>(null);
 
   // Lit review dialog state
   const [litOpen, setLitOpen] = useState(false);
@@ -201,6 +204,7 @@ export default function SessionModelDetail({ params: routeParams }: { params?: {
 
   const cancelEdit = () => {
     setEditing(false);
+    setPendingCanvasEdge(null);
     setNewEdgeFrom(""); setNewEdgeTo(""); setNewEdgeRel("positive"); setNewEdgeEvidence("");
   };
 
@@ -280,6 +284,7 @@ export default function SessionModelDetail({ params: routeParams }: { params?: {
       evidenceCitationText: newEdgeEvidence.trim(),
     }]);
     setNewEdgeFrom(""); setNewEdgeTo(""); setNewEdgeRel("positive"); setNewEdgeEvidence("");
+    setPendingCanvasEdge(null);
   };
 
   if (isLoading) return <div className="flex justify-center py-16"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
@@ -565,7 +570,60 @@ export default function SessionModelDetail({ params: routeParams }: { params?: {
                   <span>{t("md.graph.title" as any)}</span>
                   <span className="font-normal normal-case tracking-normal text-[11px] text-muted-foreground/80">{t("md.graph.tip" as any)}</span>
                 </div>
-                <ModelGraph nodes={displayNodes} edges={displayEdges} paperTagById={paperTagById} edgeHTagByKey={edgeHTagByKey} />
+                {editing ? (
+                  <EditableModelGraph
+                    nodes={displayNodes.map((n) => ({
+                      id: `var-${n.variableId}`,
+                      variableId: n.variableId,
+                      variableName: n.variableName,
+                      type: n.type,
+                      paperTag: paperTagById.get(n.paperId),
+                      positionX: (n as NodeT & { positionX?: number | null }).positionX ?? null,
+                      positionY: (n as NodeT & { positionY?: number | null }).positionY ?? null,
+                    }))}
+                    edges={displayEdges.map((e, i) => ({
+                      id: `edge-${i}`,
+                      fromVariableId: e.fromVariableId,
+                      toVariableId: e.toVariableId,
+                      relationship: e.relationship,
+                      hTag: edgeHTagByKey.get(`${e.fromVariableId}->${e.toVariableId}`),
+                    }))}
+                    variablePool={(sessionVars ?? []).map((v) => ({ variableId: v.id, name: v.name, type: v.type }))}
+                    height={480}
+                    onNodeMove={(_id, variableId, x, y) =>
+                      setDraftNodes((cur) =>
+                        cur.map((n) => n.variableId === variableId ? ({ ...n, positionX: x, positionY: y } as NodeT) : n),
+                      )
+                    }
+                    onNodeDelete={(_id, variableId) => deleteNode(variableId)}
+                    onEdgeDelete={(edgeId) => {
+                      const idx = parseInt(edgeId.replace(/^edge-/, ""), 10);
+                      if (Number.isFinite(idx)) deleteEdge(idx);
+                    }}
+                    onEdgeCreate={(from, to) => {
+                      setNewEdgeFrom(String(from));
+                      setNewEdgeTo(String(to));
+                      setNewEdgeRel("positive");
+                      setNewEdgeEvidence("");
+                      setPendingCanvasEdge({ from, to });
+                    }}
+                    onAddVariable={(variableId) => {
+                      const v = (sessionVars ?? []).find((x) => x.id === variableId);
+                      if (!v) return;
+                      setDraftNodes((cur) => [...cur, {
+                        variableId: v.id,
+                        variableName: v.name,
+                        type: v.type,
+                        paperId: v.paperId,
+                        paperTitle: v.paperTitle,
+                        paperAuthors: v.paperAuthors,
+                        paperYear: v.paperYear ?? null,
+                      } as NodeT]);
+                    }}
+                  />
+                ) : (
+                  <ModelGraph nodes={displayNodes} edges={displayEdges} paperTagById={paperTagById} edgeHTagByKey={edgeHTagByKey} />
+                )}
               </div>
             );
           })()}
@@ -739,6 +797,74 @@ export default function SessionModelDetail({ params: routeParams }: { params?: {
           </div>
         </div>
       )}
+
+      {/* Canvas drag-to-create → small modal asking for relationship + evidence quote */}
+      {pendingCanvasEdge && editing && (() => {
+        const fromN = draftNodes.find((n) => n.variableId === pendingCanvasEdge.from);
+        const toN = draftNodes.find((n) => n.variableId === pendingCanvasEdge.to);
+        if (!fromN || !toN) return null;
+        return (
+          <div
+            data-testid="dialog-canvas-edge"
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+            onClick={() => setPendingCanvasEdge(null)}
+          >
+            <div
+              className="bg-card border border-border rounded-lg shadow-xl w-full max-w-md p-5 space-y-4"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 className="font-semibold text-foreground">{t("canvas.newEdge.title" as any)}</h3>
+              <div className="text-sm text-foreground">
+                <span className="font-medium">{fromN.variableName}</span>
+                <span className="mx-2 text-muted-foreground">→</span>
+                <span className="font-medium">{toN.variableName}</span>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-muted-foreground mb-1">{t("canvas.newEdge.relLabel" as any)}</label>
+                <select
+                  data-testid="canvas-edge-rel"
+                  value={newEdgeRel}
+                  onChange={(e) => setNewEdgeRel(e.target.value)}
+                  className="w-full text-sm rounded-md border border-input bg-background px-3 py-2"
+                >
+                  <option value="positive">+ positive</option>
+                  <option value="negative">− negative</option>
+                  <option value="mediates">→ mediates</option>
+                  <option value="moderates">M moderates</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-muted-foreground mb-1">{t("canvas.newEdge.evidenceLabel" as any)}</label>
+                <textarea
+                  data-testid="canvas-edge-evidence"
+                  value={newEdgeEvidence}
+                  onChange={(e) => setNewEdgeEvidence(e.target.value)}
+                  placeholder={t("canvas.newEdge.evidencePh" as any) as string}
+                  rows={3}
+                  className="w-full text-sm rounded-md border border-input bg-background px-3 py-2 resize-y"
+                />
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setPendingCanvasEdge(null)}
+                  className="text-xs text-muted-foreground hover:text-foreground px-3 py-1.5"
+                >
+                  {t("canvas.newEdge.cancel" as any)}
+                </button>
+                <button
+                  type="button"
+                  data-testid="canvas-edge-confirm"
+                  onClick={addEdge}
+                  className="inline-flex items-center gap-1.5 rounded-md text-xs font-semibold h-8 px-4 bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+                >
+                  {t("canvas.newEdge.confirm" as any)}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {litOpen && (
         <div

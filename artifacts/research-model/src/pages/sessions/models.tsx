@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import { useParams, Link } from "wouter";
 import { ModelGraph, buildEdgeHTagMap, buildPaperTagMap } from "@/components/model-graph";
 import {

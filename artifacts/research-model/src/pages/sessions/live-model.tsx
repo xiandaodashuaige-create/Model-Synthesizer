@@ -1,23 +1,21 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "wouter";
-import dagre from "@dagrejs/dagre";
 import {
   useGetLiveModel,
   useAddLiveModelNode,
   useRemoveLiveModelNode,
+  useUpdateLiveModelNodePosition,
   useAddLiveModelEdge,
   useRemoveLiveModelEdge,
   useListSessionVariables,
   getGetLiveModelQueryKey,
   getListSessionVariablesQueryKey,
-  type LiveModelDetail,
-  type LiveModelNodeOut,
-  type LiveModelEdgeOut,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Loader2, Plus, X, AlertTriangle, BookOpen, ArrowRight, Sparkles, GitBranch } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useT } from "@/lib/i18n";
+import { EditableModelGraph, type CanvasNode, type CanvasEdge, type VariablePoolEntry } from "@/components/editable-model-graph";
 
 const TYPE_COLORS: Record<string, string> = {
   independent: "#2563eb",
@@ -32,90 +30,6 @@ const REL_STYLE: Record<string, { dash?: string; color?: string; label: string }
   moderates: { dash: "5 4", color: "#7c3aed", label: "M" },
   mediates: { label: "→" },
 };
-
-function LiveGraph({ nodes, edges }: { nodes: LiveModelNodeOut[]; edges: LiveModelEdgeOut[] }) {
-  const layout = useMemo(() => {
-    if (!nodes.length) return null;
-    const NODE_W = 160;
-    const NODE_H = 56;
-    const PAD = 24;
-
-    const edgeGroups = new Map<string, LiveModelEdgeOut[]>();
-    edges.forEach((e) => {
-      const k = `${e.fromVariableId}->${e.toVariableId}`;
-      if (!edgeGroups.has(k)) edgeGroups.set(k, []);
-      edgeGroups.get(k)!.push(e);
-    });
-
-    const typeRank: Record<string, number> = { independent: 0, mediator: 1, moderator: 2, dependent: 3 };
-    const g = new dagre.graphlib.Graph();
-    g.setGraph({ rankdir: "LR", nodesep: 36, ranksep: 90, marginx: PAD, marginy: PAD, ranker: "network-simplex" });
-    g.setDefaultEdgeLabel(() => ({}));
-
-    for (const n of nodes) {
-      g.setNode(String(n.variableId), { width: NODE_W, height: NODE_H, _node: n, rank: typeRank[n.variableType] ?? 0 });
-    }
-    for (const [k, group] of edgeGroups) {
-      const [from, to] = k.split("->");
-      g.setEdge(from, to, { _group: group, weight: group[0].relationship === "moderates" ? 1 : 3 });
-    }
-
-    dagre.layout(g);
-
-    const { width, height } = g.graph() as { width: number; height: number };
-    const positionedNodes = nodes.map((n) => {
-      const dn = g.node(String(n.variableId)) as { x: number; y: number } | undefined;
-      return dn ? { ...n, x: dn.x, y: dn.y, w: NODE_W, h: NODE_H } : null;
-    }).filter((x): x is NonNullable<typeof x> => !!x);
-
-    const positionedEdges = [...edgeGroups.entries()].map(([k, group]) => {
-      const [from, to] = k.split("->");
-      const de = g.edge(from, to) as { points: Array<{ x: number; y: number }> } | undefined;
-      if (!de || !de.points || de.points.length < 2) return null;
-      return { key: k, group, points: de.points };
-    }).filter((x): x is NonNullable<typeof x> => !!x);
-
-    return { width: width || 600, height: height || 200, positionedNodes, positionedEdges };
-  }, [nodes, edges]);
-
-  if (!layout) return null;
-
-  return (
-    <svg viewBox={`0 0 ${layout.width} ${layout.height}`} className="w-full h-auto" style={{ maxHeight: 480 }}>
-      <defs>
-        <marker id="lm-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-          <path d="M0,0 L10,5 L0,10 z" fill="#475569" />
-        </marker>
-        <marker id="lm-arrow-warn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-          <path d="M0,0 L10,5 L0,10 z" fill="#f59e0b" />
-        </marker>
-      </defs>
-      {layout.positionedEdges.map(({ key, group, points }) => {
-        const path = points.map((p, i) => `${i === 0 ? "M" : "L"}${p.x},${p.y}`).join(" ");
-        return group.map((e, i) => {
-          const style = REL_STYLE[e.relationship] ?? { label: "?" };
-          const color = e.hasProvenance ? (style.color ?? "#475569") : "#f59e0b";
-          const offset = (i - (group.length - 1) / 2) * 4;
-          return (
-            <g key={`${key}-${e.id}`}>
-              <path d={path} fill="none" stroke={color} strokeWidth={2} strokeDasharray={style.dash}
-                markerEnd={`url(#${e.hasProvenance ? "lm-arrow" : "lm-arrow-warn"})`}
-                transform={`translate(0,${offset})`} opacity={0.85} />
-            </g>
-          );
-        });
-      })}
-      {layout.positionedNodes.map((n) => (
-        <g key={n.variableId} transform={`translate(${n.x - n.w / 2},${n.y - n.h / 2})`}>
-          <rect width={n.w} height={n.h} rx={8} fill="white" stroke={TYPE_COLORS[n.variableType] ?? "#64748b"} strokeWidth={2} />
-          <text x={n.w / 2} y={n.h / 2 + 4} textAnchor="middle" fontSize={12} fontWeight={600} fill="#0f172a">
-            {n.variableName.length > 20 ? `${n.variableName.slice(0, 18)}…` : n.variableName}
-          </text>
-        </g>
-      ))}
-    </svg>
-  );
-}
 
 export default function LiveModelPage({ params }: { params?: { id: string } }) {
   const { t } = useT();
@@ -135,6 +49,15 @@ export default function LiveModelPage({ params }: { params?: { id: string } }) {
   const removeNode = useRemoveLiveModelNode();
   const addEdge = useAddLiveModelEdge();
   const removeEdge = useRemoveLiveModelEdge();
+  const updateNodePosition = useUpdateLiveModelNodePosition();
+
+  // Debounce per-node position saves so a fast drag fires exactly one PATCH per node.
+  const posTimers = useRef(new Map<number, ReturnType<typeof setTimeout>>());
+  useEffect(() => () => { posTimers.current.forEach((t) => clearTimeout(t)); }, []);
+
+  // Pending edge from canvas drag-to-connect: shows a tiny relationship picker
+  // before persisting (LiveModel edges must declare a relationship).
+  const [pendingEdge, setPendingEdge] = useState<{ from: number; to: number; rel: "positive" | "negative" | "mediates" | "moderates" } | null>(null);
 
   const [isAddingEdge, setIsAddingEdge] = useState(false);
   const [edgeFrom, setEdgeFrom] = useState<number | "">("");
@@ -211,6 +134,65 @@ export default function LiveModelPage({ params }: { params?: { id: string } }) {
     );
   };
 
+  // Canvas → server: drag-to-reposition node. Debounced so we only fire one
+  // PATCH per node after the cursor settles (~400ms).
+  const handleCanvasNodeMove = (canvasNodeId: string, _variableId: number, x: number, y: number) => {
+    const nodeId = parseInt(canvasNodeId, 10);
+    if (!Number.isFinite(nodeId)) return;
+    const existing = posTimers.current.get(nodeId);
+    if (existing) clearTimeout(existing);
+    posTimers.current.set(
+      nodeId,
+      setTimeout(() => {
+        posTimers.current.delete(nodeId);
+        updateNodePosition.mutate(
+          { id: sessionId, nodeId, data: { positionX: x, positionY: y } },
+          {
+            onSuccess: () => invalidate(),
+            onError: () => toast({ title: t("canvas.toast.posSaveFailed" as any), variant: "destructive" }),
+          },
+        );
+      }, 400),
+    );
+  };
+
+  const handleCanvasNodeDelete = (canvasNodeId: string, variableId: number) => {
+    const nodeId = parseInt(canvasNodeId, 10);
+    const v = (variables ?? []).find((x) => x.id === variableId);
+    handleRemoveNode(nodeId, v?.name ?? "");
+  };
+
+  // Drag-to-create on the canvas → open a small picker for the relationship.
+  // We default to "positive" + userAdded:true (will show the amber "未引用" badge
+  // until the user attaches provenance via the form below).
+  const handleCanvasEdgeCreate = (fromVariableId: number, toVariableId: number) => {
+    if (fromVariableId === toVariableId) return;
+    setPendingEdge({ from: fromVariableId, to: toVariableId, rel: "positive" });
+  };
+
+  const confirmPendingEdge = () => {
+    if (!pendingEdge) return;
+    addEdge.mutate(
+      {
+        id: sessionId,
+        data: {
+          fromVariableId: pendingEdge.from,
+          toVariableId: pendingEdge.to,
+          relationship: pendingEdge.rel,
+          userAdded: true,
+        },
+      },
+      {
+        onSuccess: () => {
+          invalidate();
+          toast({ title: t("canvas.toast.edgeAdded" as any) });
+          setPendingEdge(null);
+        },
+        onError: () => toast({ title: t("canvas.toast.edgeFailed" as any), variant: "destructive" }),
+      },
+    );
+  };
+
   if (isError) {
     return (
       <div className="bg-destructive/10 text-destructive p-6 rounded-md border border-destructive/20 text-center py-12">
@@ -229,6 +211,24 @@ export default function LiveModelPage({ params }: { params?: { id: string } }) {
   const nodes = detail.nodes;
   const edges = detail.edges;
   const isEmpty = nodes.length === 0 && edges.length === 0;
+
+  // Adapter: live-model nodes/edges → canvas shapes.
+  const canvasNodes: CanvasNode[] = nodes.map((n) => ({
+    id: String(n.id),
+    variableId: n.variableId,
+    variableName: n.variableName,
+    type: n.variableType,
+    positionX: n.positionX ?? null,
+    positionY: n.positionY ?? null,
+  }));
+  const canvasEdges: CanvasEdge[] = edges.map((e) => ({
+    id: String(e.id),
+    fromVariableId: e.fromVariableId,
+    toVariableId: e.toVariableId,
+    relationship: e.relationship,
+    warning: !e.hasProvenance,
+  }));
+  const variablePool: VariablePoolEntry[] = (variables ?? []).map((v) => ({ variableId: v.id, name: v.name, type: v.type }));
 
   return (
     <div className="space-y-6">
@@ -278,9 +278,68 @@ export default function LiveModelPage({ params }: { params?: { id: string } }) {
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-6">
           {/* Graph + edges */}
           <div className="space-y-4 min-w-0">
-            <div className="bg-card border border-border rounded-lg p-4">
-              <LiveGraph nodes={nodes} edges={edges} />
-            </div>
+            <EditableModelGraph
+              nodes={canvasNodes}
+              edges={canvasEdges}
+              variablePool={variablePool}
+              height={520}
+              onNodeMove={handleCanvasNodeMove}
+              onNodeDelete={handleCanvasNodeDelete}
+              onEdgeDelete={(edgeId) => handleRemoveEdge(parseInt(edgeId, 10))}
+              onEdgeCreate={handleCanvasEdgeCreate}
+              onAddVariable={handleAddVar}
+            />
+
+            {/* Pending edge picker — choose relationship before persisting */}
+            {pendingEdge && (
+              <div data-testid="pending-edge-dialog" className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+                <div className="bg-card border border-border rounded-lg shadow-xl w-full max-w-sm p-5 space-y-4">
+                  <h3 className="font-semibold text-foreground">{t("canvas.newEdge.title" as any)}</h3>
+                  <div className="text-sm text-foreground">
+                    <span className="font-medium">{nodes.find((n) => n.variableId === pendingEdge.from)?.variableName}</span>
+                    <span className="mx-2 text-muted-foreground">→</span>
+                    <span className="font-medium">{nodes.find((n) => n.variableId === pendingEdge.to)?.variableName}</span>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-muted-foreground mb-1">{t("canvas.newEdge.relLabel" as any)}</label>
+                    <select
+                      data-testid="pending-edge-rel"
+                      value={pendingEdge.rel}
+                      onChange={(e) => setPendingEdge((p) => p ? { ...p, rel: e.target.value as typeof p.rel } : p)}
+                      className="w-full text-sm rounded-md border border-input bg-background px-3 py-2"
+                    >
+                      <option value="positive">+ positive</option>
+                      <option value="negative">− negative</option>
+                      <option value="mediates">→ mediates</option>
+                      <option value="moderates">M moderates</option>
+                    </select>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground flex items-start gap-1">
+                    <AlertTriangle className="w-3 h-3 shrink-0 mt-0.5 text-amber-600" />
+                    {t("live.edges.userAddedHint" as any)}
+                  </p>
+                  <div className="flex justify-end gap-2 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setPendingEdge(null)}
+                      className="text-xs text-muted-foreground hover:text-foreground px-3 py-1.5"
+                    >
+                      {t("canvas.newEdge.cancel" as any)}
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="pending-edge-confirm"
+                      onClick={confirmPendingEdge}
+                      disabled={addEdge.isPending}
+                      className="inline-flex items-center gap-1.5 rounded-md text-xs font-semibold h-8 px-4 bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
+                    >
+                      {addEdge.isPending && <Loader2 className="w-3 h-3 animate-spin" />}
+                      {t("canvas.newEdge.confirm" as any)}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Edge list */}
             <div className="bg-card border border-border rounded-lg">

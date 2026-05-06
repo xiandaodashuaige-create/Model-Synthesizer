@@ -51,6 +51,7 @@ import type {
   SearchPapersBody,
   Session,
   SessionSummary,
+  UpdateLiveModelNodePositionBody,
   UpdateModelBody,
   UpdateSessionBody,
   Variable,
@@ -3132,6 +3133,121 @@ export const useRemoveLiveModelNode = <
   TContext
 > => {
   return useMutation(getRemoveLiveModelNodeMutationOptions(options));
+};
+
+/**
+ * @summary Update the canvas position of a live-model node (drag-to-reposition).
+ */
+export const getUpdateLiveModelNodePositionUrl = (
+  id: number,
+  nodeId: number,
+) => {
+  return `/api/sessions/${id}/live-model/nodes/${nodeId}`;
+};
+
+export const updateLiveModelNodePosition = async (
+  id: number,
+  nodeId: number,
+  updateLiveModelNodePositionBody: UpdateLiveModelNodePositionBody,
+  options?: RequestInit,
+): Promise<LiveModelDetail> => {
+  return customFetch<LiveModelDetail>(
+    getUpdateLiveModelNodePositionUrl(id, nodeId),
+    {
+      ...options,
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(updateLiveModelNodePositionBody),
+    },
+  );
+};
+
+export const getUpdateLiveModelNodePositionMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateLiveModelNodePosition>>,
+    TError,
+    {
+      id: number;
+      nodeId: number;
+      data: BodyType<UpdateLiveModelNodePositionBody>;
+    },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateLiveModelNodePosition>>,
+  TError,
+  {
+    id: number;
+    nodeId: number;
+    data: BodyType<UpdateLiveModelNodePositionBody>;
+  },
+  TContext
+> => {
+  const mutationKey = ["updateLiveModelNodePosition"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateLiveModelNodePosition>>,
+    {
+      id: number;
+      nodeId: number;
+      data: BodyType<UpdateLiveModelNodePositionBody>;
+    }
+  > = (props) => {
+    const { id, nodeId, data } = props ?? {};
+
+    return updateLiveModelNodePosition(id, nodeId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateLiveModelNodePositionMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateLiveModelNodePosition>>
+>;
+export type UpdateLiveModelNodePositionMutationBody =
+  BodyType<UpdateLiveModelNodePositionBody>;
+export type UpdateLiveModelNodePositionMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Update the canvas position of a live-model node (drag-to-reposition).
+ */
+export const useUpdateLiveModelNodePosition = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateLiveModelNodePosition>>,
+    TError,
+    {
+      id: number;
+      nodeId: number;
+      data: BodyType<UpdateLiveModelNodePositionBody>;
+    },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateLiveModelNodePosition>>,
+  TError,
+  {
+    id: number;
+    nodeId: number;
+    data: BodyType<UpdateLiveModelNodePositionBody>;
+  },
+  TContext
+> => {
+  return useMutation(getUpdateLiveModelNodePositionMutationOptions(options));
 };
 
 /**

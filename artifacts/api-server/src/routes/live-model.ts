@@ -38,6 +38,8 @@ async function loadLiveModelDetail(sessionId: number) {
       variableId: liveModelNodesTable.variableId,
       sourceModelId: liveModelNodesTable.sourceModelId,
       userAdded: liveModelNodesTable.userAdded,
+      positionX: liveModelNodesTable.positionX,
+      positionY: liveModelNodesTable.positionY,
       createdAt: liveModelNodesTable.createdAt,
       variableName: variablesTable.name,
       variableType: variablesTable.type,
@@ -94,6 +96,8 @@ async function loadLiveModelDetail(sessionId: number) {
     paperId: n.paperId ?? 0,
     sourceModelId: n.sourceModelId,
     userAdded: n.userAdded,
+    positionX: n.positionX,
+    positionY: n.positionY,
     createdAt: n.createdAt.toISOString(),
   }));
 
@@ -210,6 +214,38 @@ router.delete("/sessions/:id/live-model/nodes/:nodeId", async (req, res) => {
       ),
     ));
     await tx.delete(liveModelNodesTable).where(eq(liveModelNodesTable.id, nodeId));
+    await tx.update(liveModelsTable)
+      .set({ version: sql`${liveModelsTable.version} + 1`, updatedAt: new Date() })
+      .where(eq(liveModelsTable.id, liveModel.id));
+  });
+
+  const detail = await loadLiveModelDetail(sessionId);
+  return res.json(detail);
+});
+
+// Drag-to-reposition: update the canvas (x,y) of a single live-model node.
+// Lightweight — debounced/throttled by the client. Bumps the live-model version
+// counter so other tabs notice the change on next refresh.
+router.patch("/sessions/:id/live-model/nodes/:nodeId", async (req, res) => {
+  const sessionId = parseInt(req.params.id, 10);
+  const nodeId = parseInt(req.params.nodeId, 10);
+  if (!Number.isFinite(sessionId) || !Number.isFinite(nodeId)) return res.status(400).json({ error: "invalid id" });
+
+  const positionX = Number(req.body?.positionX);
+  const positionY = Number(req.body?.positionY);
+  if (!Number.isFinite(positionX) || !Number.isFinite(positionY)) {
+    return res.status(400).json({ error: "positionX and positionY (numbers) required" });
+  }
+
+  const liveModel = await getOrCreateLiveModel(sessionId);
+  const [node] = await db.select().from(liveModelNodesTable)
+    .where(and(eq(liveModelNodesTable.id, nodeId), eq(liveModelNodesTable.liveModelId, liveModel.id))).limit(1);
+  if (!node) return res.status(404).json({ error: "node not found in this session's live model" });
+
+  await db.transaction(async (tx) => {
+    await tx.update(liveModelNodesTable)
+      .set({ positionX, positionY })
+      .where(eq(liveModelNodesTable.id, nodeId));
     await tx.update(liveModelsTable)
       .set({ version: sql`${liveModelsTable.version} + 1`, updatedAt: new Date() })
       .where(eq(liveModelsTable.id, liveModel.id));

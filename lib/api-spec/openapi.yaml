@@ -1176,6 +1176,40 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/LiveModelDetail"
+    patch:
+      operationId: updateLiveModelNodePosition
+      tags: [live-model]
+      summary: Update the canvas position of a live-model node (drag-to-reposition).
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: nodeId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [positionX, positionY]
+              properties:
+                positionX:
+                  type: number
+                positionY:
+                  type: number
+      responses:
+        "200":
+          description: Updated live model
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LiveModelDetail"
 
   /sessions/{id}/live-model/edges:
     post:
@@ -1775,6 +1809,12 @@ components:
             type: string
         paperYear:
           type: ["integer", "null"]
+        positionX:
+          type: ["number", "null"]
+          description: User-arranged X position on the editable canvas (null = use auto layout).
+        positionY:
+          type: ["number", "null"]
+          description: User-arranged Y position on the editable canvas (null = use auto layout).
       required:
         - variableId
         - variableName
@@ -1847,6 +1887,12 @@ components:
           type: ["integer", "null"]
         userAdded:
           type: boolean
+        positionX:
+          type: ["number", "null"]
+          description: User-arranged X position on the editable canvas (null = use auto layout).
+        positionY:
+          type: ["number", "null"]
+          description: User-arranged Y position on the editable canvas (null = use auto layout).
         createdAt:
           type: string
       required:

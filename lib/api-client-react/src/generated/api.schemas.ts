@@ -265,6 +265,16 @@ export interface ModelNode {
   paperAuthors: string[];
   /** @nullable */
   paperYear?: number | null;
+  /**
+   * User-arranged X position on the editable canvas (null = use auto layout).
+   * @nullable
+   */
+  positionX?: number | null;
+  /**
+   * User-arranged Y position on the editable canvas (null = use auto layout).
+   * @nullable
+   */
+  positionY?: number | null;
 }
 
 export interface ModelEdge {
@@ -322,6 +332,16 @@ export interface LiveModelNodeOut {
   /** @nullable */
   sourceModelId?: number | null;
   userAdded: boolean;
+  /**
+   * User-arranged X position on the editable canvas (null = use auto layout).
+   * @nullable
+   */
+  positionX?: number | null;
+  /**
+   * User-arranged Y position on the editable canvas (null = use auto layout).
+   * @nullable
+   */
+  positionY?: number | null;
   createdAt: string;
 }
 
@@ -689,6 +709,11 @@ export type AddLiveModelNodeBody = {
   /** AI candidate model this variable was picked from (for provenance) */
   sourceModelId?: number | null;
   userAdded?: boolean;
+};
+
+export type UpdateLiveModelNodePositionBody = {
+  positionX: number;
+  positionY: number;
 };
 
 export type AddLiveModelEdgeBodyRelationship =

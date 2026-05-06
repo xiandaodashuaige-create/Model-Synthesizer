@@ -693,6 +693,18 @@ export const GenerateModelsResponseItem = zod.object({
       paperTitle: zod.string(),
       paperAuthors: zod.array(zod.string()),
       paperYear: zod.number().nullish(),
+      positionX: zod
+        .number()
+        .nullish()
+        .describe(
+          "User-arranged X position on the editable canvas (null = use auto layout).",
+        ),
+      positionY: zod
+        .number()
+        .nullish()
+        .describe(
+          "User-arranged Y position on the editable canvas (null = use auto layout).",
+        ),
     }),
   ),
   edges: zod.array(
@@ -760,6 +772,18 @@ export const ListSessionModelsResponseItem = zod.object({
       paperTitle: zod.string(),
       paperAuthors: zod.array(zod.string()),
       paperYear: zod.number().nullish(),
+      positionX: zod
+        .number()
+        .nullish()
+        .describe(
+          "User-arranged X position on the editable canvas (null = use auto layout).",
+        ),
+      positionY: zod
+        .number()
+        .nullish()
+        .describe(
+          "User-arranged Y position on the editable canvas (null = use auto layout).",
+        ),
     }),
   ),
   edges: zod.array(
@@ -850,6 +874,18 @@ export const UpdateModelResponse = zod.object({
       paperTitle: zod.string(),
       paperAuthors: zod.array(zod.string()),
       paperYear: zod.number().nullish(),
+      positionX: zod
+        .number()
+        .nullish()
+        .describe(
+          "User-arranged X position on the editable canvas (null = use auto layout).",
+        ),
+      positionY: zod
+        .number()
+        .nullish()
+        .describe(
+          "User-arranged Y position on the editable canvas (null = use auto layout).",
+        ),
     }),
   ),
   edges: zod.array(
@@ -916,6 +952,18 @@ export const GetModelResponse = zod.object({
       paperTitle: zod.string(),
       paperAuthors: zod.array(zod.string()),
       paperYear: zod.number().nullish(),
+      positionX: zod
+        .number()
+        .nullish()
+        .describe(
+          "User-arranged X position on the editable canvas (null = use auto layout).",
+        ),
+      positionY: zod
+        .number()
+        .nullish()
+        .describe(
+          "User-arranged Y position on the editable canvas (null = use auto layout).",
+        ),
     }),
   ),
   edges: zod.array(
@@ -1055,6 +1103,18 @@ export const SelectModelResponse = zod.object({
       paperTitle: zod.string(),
       paperAuthors: zod.array(zod.string()),
       paperYear: zod.number().nullish(),
+      positionX: zod
+        .number()
+        .nullish()
+        .describe(
+          "User-arranged X position on the editable canvas (null = use auto layout).",
+        ),
+      positionY: zod
+        .number()
+        .nullish()
+        .describe(
+          "User-arranged Y position on the editable canvas (null = use auto layout).",
+        ),
     }),
   ),
   edges: zod.array(
@@ -1123,6 +1183,18 @@ export const GetLiveModelResponse = zod.object({
       paperId: zod.number(),
       sourceModelId: zod.number().nullish(),
       userAdded: zod.boolean(),
+      positionX: zod
+        .number()
+        .nullish()
+        .describe(
+          "User-arranged X position on the editable canvas (null = use auto layout).",
+        ),
+      positionY: zod
+        .number()
+        .nullish()
+        .describe(
+          "User-arranged Y position on the editable canvas (null = use auto layout).",
+        ),
       createdAt: zod.string(),
     }),
   ),
@@ -1194,6 +1266,18 @@ export const AddLiveModelNodeResponse = zod.object({
       paperId: zod.number(),
       sourceModelId: zod.number().nullish(),
       userAdded: zod.boolean(),
+      positionX: zod
+        .number()
+        .nullish()
+        .describe(
+          "User-arranged X position on the editable canvas (null = use auto layout).",
+        ),
+      positionY: zod
+        .number()
+        .nullish()
+        .describe(
+          "User-arranged Y position on the editable canvas (null = use auto layout).",
+        ),
       createdAt: zod.string(),
     }),
   ),
@@ -1253,6 +1337,94 @@ export const RemoveLiveModelNodeResponse = zod.object({
       paperId: zod.number(),
       sourceModelId: zod.number().nullish(),
       userAdded: zod.boolean(),
+      positionX: zod
+        .number()
+        .nullish()
+        .describe(
+          "User-arranged X position on the editable canvas (null = use auto layout).",
+        ),
+      positionY: zod
+        .number()
+        .nullish()
+        .describe(
+          "User-arranged Y position on the editable canvas (null = use auto layout).",
+        ),
+      createdAt: zod.string(),
+    }),
+  ),
+  edges: zod.array(
+    zod.object({
+      id: zod.number(),
+      fromVariableId: zod.number(),
+      toVariableId: zod.number(),
+      fromVariableName: zod.string(),
+      toVariableName: zod.string(),
+      relationship: zod.string(),
+      provenancePaperId: zod.number().nullish(),
+      provenancePaperTitle: zod.string().nullish(),
+      provenanceCitationText: zod.string().nullish(),
+      provenanceFigureThumbnailUrl: zod.string().nullish(),
+      provenanceFigureSourceUrl: zod.string().nullish(),
+      provenanceFigureSourceDomain: zod.string().nullish(),
+      confidence: zod.string(),
+      sourceModelId: zod.number().nullish(),
+      userAdded: zod.boolean(),
+      hasProvenance: zod
+        .boolean()
+        .describe("True if a paperId+citationText backs this edge."),
+      createdAt: zod.string(),
+    }),
+  ),
+  unsupportedEdgeCount: zod
+    .number()
+    .describe(
+      "Number of edges with no provenance (paper backing) — UI should warn.",
+    ),
+});
+
+/**
+ * @summary Update the canvas position of a live-model node (drag-to-reposition).
+ */
+export const UpdateLiveModelNodePositionParams = zod.object({
+  id: zod.coerce.number(),
+  nodeId: zod.coerce.number(),
+});
+
+export const UpdateLiveModelNodePositionBody = zod.object({
+  positionX: zod.number(),
+  positionY: zod.number(),
+});
+
+export const UpdateLiveModelNodePositionResponse = zod.object({
+  liveModel: zod.object({
+    id: zod.number(),
+    sessionId: zod.number(),
+    notes: zod.string(),
+    version: zod.number(),
+    createdAt: zod.string(),
+    updatedAt: zod.string(),
+  }),
+  nodes: zod.array(
+    zod.object({
+      id: zod.number(),
+      variableId: zod.number(),
+      variableName: zod.string(),
+      variableType: zod.string(),
+      paperId: zod.number(),
+      sourceModelId: zod.number().nullish(),
+      userAdded: zod.boolean(),
+      positionX: zod
+        .number()
+        .nullish()
+        .describe(
+          "User-arranged X position on the editable canvas (null = use auto layout).",
+        ),
+      positionY: zod
+        .number()
+        .nullish()
+        .describe(
+          "User-arranged Y position on the editable canvas (null = use auto layout).",
+        ),
       createdAt: zod.string(),
     }),
   ),
@@ -1330,6 +1502,18 @@ export const AddLiveModelEdgeResponse = zod.object({
       paperId: zod.number(),
       sourceModelId: zod.number().nullish(),
       userAdded: zod.boolean(),
+      positionX: zod
+        .number()
+        .nullish()
+        .describe(
+          "User-arranged X position on the editable canvas (null = use auto layout).",
+        ),
+      positionY: zod
+        .number()
+        .nullish()
+        .describe(
+          "User-arranged Y position on the editable canvas (null = use auto layout).",
+        ),
       createdAt: zod.string(),
     }),
   ),
@@ -1389,6 +1573,18 @@ export const RemoveLiveModelEdgeResponse = zod.object({
       paperId: zod.number(),
       sourceModelId: zod.number().nullish(),
       userAdded: zod.boolean(),
+      positionX: zod
+        .number()
+        .nullish()
+        .describe(
+          "User-arranged X position on the editable canvas (null = use auto layout).",
+        ),
+      positionY: zod
+        .number()
+        .nullish()
+        .describe(
+          "User-arranged Y position on the editable canvas (null = use auto layout).",
+        ),
       createdAt: zod.string(),
     }),
   ),
@@ -1457,6 +1653,18 @@ export const ImportLiveModelFromModelResponse = zod.object({
       paperId: zod.number(),
       sourceModelId: zod.number().nullish(),
       userAdded: zod.boolean(),
+      positionX: zod
+        .number()
+        .nullish()
+        .describe(
+          "User-arranged X position on the editable canvas (null = use auto layout).",
+        ),
+      positionY: zod
+        .number()
+        .nullish()
+        .describe(
+          "User-arranged Y position on the editable canvas (null = use auto layout).",
+        ),
       createdAt: zod.string(),
     }),
   ),
