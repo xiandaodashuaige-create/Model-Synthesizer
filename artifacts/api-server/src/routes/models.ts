@@ -238,6 +238,19 @@ router.post("/sessions/:id/models/generate", async (req, res): Promise<void> => 
   const focusVariableIds = bodyParse.success && bodyParse.data.focusVariableIds ? bodyParse.data.focusVariableIds : [];
   const allowPartial = bodyParse.success && bodyParse.data.allowPartial === true;
 
+  // Latency strategy: instead of one LLM call producing N models (input ~30k
+  // tokens + output ~12k tokens easily blows past the 55s OpenAI-call budget
+  // / 60s Replit autoscale request limit), fire N PARALLEL single-model
+  // calls. Each call has the same input but a much smaller output budget,
+  // finishing in ~15-25s. The slowest of N parallel calls is still well
+  // under 50s, and partial successes (e.g. 2/3) still ship to the user
+  // instead of nuking the whole regeneration on one slow call.
+  // Diversity is preserved by (a) seeding each call with a different
+  // suggested operator pair and (b) the existing post-hoc dedup of
+  // (operator pair, base paper set) across accepted models.
+  const PARALLEL_MODE = numModels >= 2;
+  const perCallNumModels = PARALLEL_MODE ? 1 : numModels;
+
   const sessionId = params.data.id;
 
   // Load session metadata + content in parallel. The session row carries
@@ -485,7 +498,7 @@ router.post("/sessions/:id/models/generate", async (req, res): Promise<void> => 
   const focusRules = focusPicks.length > 0
     ? `Mandatory focus rules (SERVER-ENFORCED — models that fail these are programmatically rejected, NOT just frowned upon):
 - EVERY generated model MUST include AT LEAST ${Math.min(focusPicks.length, 2)} of the picks above as STRUCTURAL nodes in the \`nodes\` array (IV, mediator, moderator, or DV — never as a passive label, and NEVER merely mentioned in the rationale text). The server will count node↔pick matches by variable id (${focusPicks.map((p) => p.id).join(", ")}), by canonical construct id, and by exact lower-cased name. A model that talks about a pick in the rationale but doesn't include it as an actual node WILL BE REJECTED.
-- AT LEAST ${Math.ceil(numModels / 2)} of the ${numModels} models MUST include AT LEAST ${Math.min(focusPicks.length, 3)} picks forming the structural spine.
+- AT LEAST ${Math.ceil(perCallNumModels / 2)} of the ${perCallNumModels} models MUST include AT LEAST ${Math.min(focusPicks.length, 3)} picks forming the structural spine.
 - Each model's \`description\` MUST name the picks it builds on (in the user's language, by the variable's natural-language name, NOT by id).
 - If a focus pick conflicts with the TOPIC's domain or outcome lock below, OMIT the entire model rather than (a) silently keeping the pick and drifting the topic, or (b) silently keeping the topic and dropping the pick. Returning fewer well-aligned models is acceptable; returning a full set that drops focus picks is NOT.
 `
@@ -493,7 +506,7 @@ router.post("/sessions/:id/models/generate", async (req, res): Promise<void> => 
   const hasAnyIntent = !!(sessionTopic || userPrompt || focusPicks.length > 0);
   const unifiedIntent = hasAnyIntent
     ? `\n\n================================================================
-UNIFIED USER INTENT — TREAT THE THREE SUB-BLOCKS BELOW AS ONE COHERENT RESEARCH GOAL, NOT THREE INDEPENDENT FILTERS. A model that satisfies one sub-block but drifts on another is INVALID and MUST be omitted (return fewer than ${numModels} models rather than emit a misaligned one). When in doubt, prefer FEWER topically-tight models over MORE drifted ones.
+UNIFIED USER INTENT — TREAT THE THREE SUB-BLOCKS BELOW AS ONE COHERENT RESEARCH GOAL, NOT THREE INDEPENDENT FILTERS. A model that satisfies one sub-block but drifts on another is INVALID and MUST be omitted (return fewer than ${perCallNumModels} models rather than emit a misaligned one). When in doubt, prefer FEWER topically-tight models over MORE drifted ones.
 
 [1] RESEARCH TOPIC — what the user is actually studying (THIS is the spine of the project; do not silently swap its domain or its outcome family):
 Project: "${sessionName || "(unnamed)"}"
@@ -519,10 +532,35 @@ After the OPERATOR/BASE/BACKBONE prefix required by Hard Rule #1, the \`rational
 A rationale missing any of these three lines, or whose [TOPIC FIT] line shows a domain/outcome swap, will be REJECTED.`
     : "";
 
-  // Synthesis prompt: explicit STRUCTURAL OPERATORS + theory backbones.
-  const prompt = `You are a senior researcher in academic methodology and structural equation modeling.
+  // When the user typed a custom directive into the form, mirror it at the
+  // very TOP of the prompt — outside the unified-intent block — so it's the
+  // first non-system text the model reads. With a 30k-token prompt the AI
+  // sometimes glosses over directives buried 70% of the way in. The block
+  // is also restated at the END of the prompt as a closing reminder.
+  const directiveBlock = userPrompt
+    ? `\n\n================================================================
+PRIMARY USER DIRECTIVE (READ THIS FIRST AND HONOR IT) — the human typed the following constraints into the regenerate form. They override the default style preferences (number of operators, breadth of paper coverage, novelty bias) BUT NOT the topic's domain/outcome lock or the focus-pick contract. If the directive is incompatible with those locks, prefer to honor the directive AND OMIT papers/picks that conflict, rather than silently ignore the directive:
+"""
+${userPrompt}
+"""
+\n`
+    : "";
+  const directiveReminder = userPrompt
+    ? `\n\n================================================================
+REMINDER — THE USER'S PRIMARY DIRECTIVE (repeated here so you don't lose it after reading the long context above):
+"""
+${userPrompt}
+"""
+Before emitting your JSON, sanity-check each model against this directive. If a model doesn't visibly honor it, REPLACE that model with one that does, even if it means a less novel structure.`
+    : "";
 
-Your task: produce ${numModels} *novel* and theoretically coherent research model proposals by RECOMBINING the source papers' own research models below using EXPLICIT STRUCTURAL OPERATORS. Each output model MUST be the result of applying TWO chained operators (a primary then a different secondary) to AT LEAST ${userPrompt ? "TWO" : "THREE"} of the original models, AND must satisfy the UNIFIED USER INTENT below in full.${unifiedIntent}
+  // Synthesis prompt: explicit STRUCTURAL OPERATORS + theory backbones.
+  // Wrapped in a builder so we can fan out N parallel calls (each producing
+  // 1 model) instead of a single slow call producing N models. Each
+  // parallel variant gets a different operator-pair seed for diversity.
+  const buildPrompt = (variantSeed: string): string => `You are a senior researcher in academic methodology and structural equation modeling.${directiveBlock}
+
+Your task: produce ${perCallNumModels} *novel* and theoretically coherent research model proposal${perCallNumModels > 1 ? "s" : ""} by RECOMBINING the source papers' own research models below using EXPLICIT STRUCTURAL OPERATORS. Each output model MUST be the result of applying TWO chained operators (a primary then a different secondary) to AT LEAST ${userPrompt ? "TWO" : "THREE"} of the original models, AND must satisfy the UNIFIED USER INTENT below in full.${unifiedIntent}${variantSeed}
 
 ================================================================
 PAPER REFERENCES (use exact tags when citing — abstracts included so you can judge topical fit):
@@ -556,7 +594,7 @@ ${learnedBlock}${userPersonalizationBlock}
 HARD RULES (violations = invalid output):
 1. **Operator-driven + alignment header**: each model's \`rationale\` MUST start with "[OPERATOR: <PRIMARY>+<SECONDARY>] [BASE: <Pn>+<Pm>(+<Pk>...)] [BACKBONE: <id or NONE>]" so the recombination logic is auditable. IMMEDIATELY after that prefix, the rationale MUST contain the three alignment lines required by the ALIGNMENT CONTRACT in the UNIFIED USER INTENT block at the top of this prompt: [TOPIC FIT] / [FOCUS FIT] / [USER PROMPT FIT]. ONLY AFTER those four prefix lines may you write the free-form 3-5 sentences explaining the operator application.
 2. **Chained operators (CRITICAL)**: each model MUST apply TWO operators in sequence — a PRIMARY operator that defines the spine of the model, then a SECONDARY operator (must be different from the primary) that enriches it (e.g. INSERT_MODERATOR after EXTEND, PARALLEL_MEDIATORS after THEORY_GRAFT). Single-operator models are too weak and will be rejected.
-3. **Distinct operator pairs**: across the ${numModels} models, no two models may use the same (primary, secondary) operator pair OR the same base paper set.
+3. **Distinct operator pairs**: across the ${perCallNumModels} models, no two models may use the same (primary, secondary) operator pair OR the same base paper set.
 4. **Cross-paper synthesis**: ${userPrompt ? "The user has provided a custom prompt — honor its scope strictly. Multi-paper synthesis is still preferred when compatible with the user's intent, but a focused single-paper model that faithfully matches the user's request is acceptable." : "each model MUST include nodes from ≥ 3 DIFFERENT source papers (not 2). The whole point is multi-paper recombination — a model that only fuses 2 papers is a weak combination and will be rejected."}
 5. **Respect original directions**: when an edge connects two variables that already appeared together in a paper's hypothesis, use the SAME direction and sign that paper proposed. Do not flip causality unless explicitly justified in the rationale.
 6. **Citation grounding**: every "evidenceCitationText" MUST be a verbatim sentence either from the variable's "Citation" field or from the paper graph's "evidence" field above. If you cannot find such a sentence, omit that edge.
@@ -586,50 +624,115 @@ OUTPUT FORMAT — return ONLY a JSON array, no markdown:
       { "fromVariableId": <int>, "toVariableId": <int>, "fromVariableName": "<name>", "toVariableName": "<name>", "relationship": "positive|negative|moderates|mediates", "evidencePaperId": <int>, "evidencePaperTitle": "<title>", "evidencePaperAuthors": ["<author>"], "evidencePaperYear": <year or null>, "evidenceCitationText": "<verbatim sentence from the paper>", "evidenceHypothesisId": "<H1|H2a|null>", "effectSize": "<β=.34, p<.001 | null>", "evidenceLocation": "<p.412 | Section 3.2 | null>", "moderatorJustification": "<REQUIRED when relationship=moderates; null otherwise>" }
     ]
   }
-]`;
+]${directiveReminder}`;
+
+  // Per-call diversity seeds. When we fan out N parallel single-model calls
+  // they can't see each other, so each gets a different "preferred operator
+  // pair" hint. The post-hoc dedup pass still rejects collisions if two
+  // calls happen to converge on the same pair anyway.
+  const VARIANT_OPERATOR_PAIRS = [
+    "PARALLEL_MEDIATORS + INSERT_MODERATOR",
+    "THEORY_GRAFT + EXTEND",
+    "EXTEND + INSERT_MODERATOR",
+    "SWAP_MEDIATOR + THEORY_GRAFT",
+    "PARALLEL_MEDIATORS + THEORY_GRAFT",
+    "EXTEND + PARALLEL_MEDIATORS",
+  ];
+  const variantSeedFor = (i: number): string => {
+    if (!PARALLEL_MODE) return "";
+    const pair = VARIANT_OPERATOR_PAIRS[i % VARIANT_OPERATOR_PAIRS.length];
+    return `\n\nVARIANT HINT (parallel batch ${i + 1} of ${numModels}): to keep the batch diverse from the other parallel variants you cannot see, PREFER this operator pair unless the user's primary directive demands a different one — pair: ${pair}.`;
+  };
 
   // Replit Autoscale Deployments terminate any HTTP request that takes longer
-  // than 60 seconds with a 502, regardless of what the server is doing. The
-  // model-generation OpenAI call can occasionally exceed this on cold starts
-  // or large prompts, which surfaces to the user as a generic "generation
-  // failed" with no actionable info. Abort at 55s so we still have time to
-  // return a clean JSON error explaining what happened (and suggesting the
-  // user retry with fewer papers or move the deployment to Reserved VM).
-  let completion;
-  try {
-    completion = await openai.chat.completions.create(
+  // than 60 seconds with a 502, regardless of what the server is doing. To
+  // stay under the 60s budget *while* generating multiple models, we fan out
+  // N parallel single-model OpenAI calls (each ~5k output tokens, ~15-25s)
+  // instead of one big call producing N models (~12k output tokens, ~40-60s).
+  // Each parallel call has its own 50s abort. Partial successes (e.g. 2/3)
+  // are still returned to the user — strictly better than nuking the whole
+  // batch on one slow call.
+  type GeneratedModel = { operator?: string; secondaryOperator?: string; basePaperTags?: string[]; backbone?: string; name: string; description: string; rationale: string; nodes: ModelNode[]; edges: ModelEdge[] };
+  let generated: GeneratedModel[] = [];
+  const callTimeoutMs = PARALLEL_MODE ? 50_000 : 55_000;
+  const perCallMaxTokens = PARALLEL_MODE ? 5_000 : 12_000;
+
+  const callOpenAI = async (variantIdx: number) => {
+    const completion = await openai.chat.completions.create(
       {
         model: "gpt-5.4",
-        max_completion_tokens: 12000,
-        messages: [{ role: "user", content: prompt }],
+        max_completion_tokens: perCallMaxTokens,
+        messages: [{ role: "user", content: buildPrompt(variantSeedFor(variantIdx)) }],
       },
-      { signal: AbortSignal.timeout(55_000) },
+      { signal: AbortSignal.timeout(callTimeoutMs) },
     );
     logAiUsageFromOpenAI(completion, { route: "models/generate", sessionId, userId: req.user?.id ?? null });
-    scheduleProfileRefresh(req.user?.id, sessionId);
-  } catch (err: unknown) {
-    const e = err as { name?: string; message?: string };
-    const aborted = e?.name === "AbortError" || e?.name === "TimeoutError" || /aborted|timeout/i.test(e?.message ?? "");
-    if (aborted) {
-      req.log.warn({ err, sessionId, papers: papers.length, vars: variables.length }, "AI model generation timed out (>55s)");
+    return completion;
+  };
+
+  const callCount = PARALLEL_MODE ? numModels : 1;
+  const settled = await Promise.allSettled(
+    Array.from({ length: callCount }, (_, i) => callOpenAI(i)),
+  );
+  scheduleProfileRefresh(req.user?.id, sessionId);
+
+  const fulfilled = settled.filter((s): s is PromiseFulfilledResult<Awaited<ReturnType<typeof callOpenAI>>> => s.status === "fulfilled");
+  const rejectedCalls = settled.filter((s): s is PromiseRejectedResult => s.status === "rejected");
+
+  // If EVERY call failed, surface the most informative error (timeout > other).
+  if (fulfilled.length === 0) {
+    const anyTimeout = rejectedCalls.some((r) => {
+      const e = r.reason as { name?: string; message?: string };
+      return e?.name === "AbortError" || e?.name === "TimeoutError" || /aborted|timeout/i.test(e?.message ?? "");
+    });
+    req.log.warn(
+      { sessionId, papers: papers.length, vars: variables.length, callCount, rejectedCount: rejectedCalls.length },
+      "All parallel model-generation calls failed",
+    );
+    if (anyTimeout) {
       res.status(504).json({
-        error: "AI 生成模型时间超过 55 秒。线上部署对单次请求最长允许 60 秒。请尝试：(1) 减少本会话中的论文数量；(2) 在『自定义提示词』里写得更聚焦；(3) 把部署类型切到 Reserved VM 以解除超时限制。",
+        error: "AI 生成模型时间超过 50 秒（已采用并行加速仍未及时完成）。请尝试：(1) 减少本会话中的论文数量；(2) 在『自定义提示词』里写得更聚焦、更短；(3) 把部署类型切到 Reserved VM 以解除超时限制。",
       });
       return;
     }
-    throw err;
+    const firstReason = rejectedCalls[0]?.reason as { message?: string } | undefined;
+    res.status(502).json({
+      error: `AI 生成失败：${firstReason?.message ?? "unknown error"}。请重试。`,
+    });
+    return;
+  }
+
+  if (rejectedCalls.length > 0) {
+    req.log.warn(
+      { sessionId, fulfilled: fulfilled.length, rejected: rejectedCalls.length, reasons: rejectedCalls.map((r) => (r.reason as { message?: string })?.message) },
+      "Some parallel model-generation calls failed; continuing with partial results",
+    );
   }
 
   try {
 
-    const content = completion.choices[0]?.message?.content ?? "[]";
-    let generated: Array<{ operator?: string; secondaryOperator?: string; basePaperTags?: string[]; backbone?: string; name: string; description: string; rationale: string; nodes: ModelNode[]; edges: ModelEdge[] }> = [];
-
-    try {
+    // Aggregate generated models from each successful call. Each call may
+    // return either a single object (single-model call) or an array, so we
+    // normalize into one flat array.
+    for (const f of fulfilled) {
+      const content = f.value.choices[0]?.message?.content ?? "[]";
       const cleaned = content.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-      generated = JSON.parse(cleaned);
-    } catch {
-      req.log.warn({ content }, "Failed to parse AI model generation response");
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(cleaned);
+      } catch {
+        req.log.warn({ content: cleaned.slice(0, 500) }, "Failed to parse AI model generation response (one of the parallel calls)");
+        continue;
+      }
+      if (Array.isArray(parsed)) {
+        generated.push(...(parsed as GeneratedModel[]));
+      } else if (parsed && typeof parsed === "object") {
+        generated.push(parsed as GeneratedModel);
+      }
+    }
+
+    if (generated.length === 0) {
+      req.log.warn({ sessionId }, "All parallel calls returned but none produced parseable model JSON");
       res.status(500).json({ error: "Failed to parse AI model generation result" });
       return;
     }
