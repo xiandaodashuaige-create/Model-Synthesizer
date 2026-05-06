@@ -375,8 +375,29 @@ router.post("/sessions/:id/live-model/import-from-model", async (req, res) => {
   }>) ?? [];
   const sourceEdges = (m[0].edges as Array<{
     fromVariableId: number; toVariableId: number; relationship: string;
+    fromVariableName?: string; toVariableName?: string;
     evidencePaperId?: number; evidenceCitationText?: string;
   }>) ?? [];
+
+  // Build a remap from the model's stored variableIds → currently-existing variable IDs in this session.
+  // Generated models can carry stale IDs (the variables row was deleted/re-extracted) but the names
+  // typically still match a current variable, so we recover by case-insensitive name lookup.
+  const sessionVars = await db.select({ id: variablesTable.id, name: variablesTable.name })
+    .from(variablesTable).where(eq(variablesTable.sessionId, sessionId));
+  const liveIdSet = new Set(sessionVars.map((v) => v.id));
+  const nameToId = new Map(sessionVars.map((v) => [v.name.trim().toLowerCase(), v.id] as const));
+
+  const resolve = (id: number, name?: string): number | null => {
+    if (Number.isFinite(id) && liveIdSet.has(id)) return id;
+    if (name) {
+      const found = nameToId.get(name.trim().toLowerCase());
+      if (found != null) return found;
+    }
+    return null;
+  };
+
+  let skippedNodes = 0;
+  let skippedEdges = 0;
 
   await db.transaction(async (tx) => {
     await tx.insert(liveModelsTable).values({ sessionId }).onConflictDoNothing({ target: liveModelsTable.sessionId });
@@ -389,10 +410,11 @@ router.post("/sessions/:id/live-model/import-from-model", async (req, res) => {
 
     // Insert all nodes (idempotent via unique index)
     for (const n of sourceNodes) {
-      if (!Number.isFinite(n.variableId)) continue;
+      const vid = resolve(n.variableId, n.variableName);
+      if (vid == null) { skippedNodes++; continue; }
       await tx.insert(liveModelNodesTable).values({
         liveModelId: liveModel.id,
-        variableId: n.variableId,
+        variableId: vid,
         sourceModelId: modelId,
         userAdded: false,
       }).onConflictDoNothing();
@@ -409,13 +431,15 @@ router.post("/sessions/:id/live-model/import-from-model", async (req, res) => {
       `${e.fromVariableId}->${e.toVariableId}:${e.relationship}:${e.sourceModelId ?? ""}`));
 
     for (const e of sourceEdges) {
-      if (!Number.isFinite(e.fromVariableId) || !Number.isFinite(e.toVariableId)) continue;
-      const key = `${e.fromVariableId}->${e.toVariableId}:${e.relationship}:${modelId}`;
+      const fromId = resolve(e.fromVariableId, e.fromVariableName);
+      const toId = resolve(e.toVariableId, e.toVariableName);
+      if (fromId == null || toId == null) { skippedEdges++; continue; }
+      const key = `${fromId}->${toId}:${e.relationship}:${modelId}`;
       if (existingKey.has(key)) continue;
       await tx.insert(liveModelEdgesTable).values({
         liveModelId: liveModel.id,
-        fromVariableId: e.fromVariableId,
-        toVariableId: e.toVariableId,
+        fromVariableId: fromId,
+        toVariableId: toId,
         relationship: e.relationship,
         provenancePaperId: e.evidencePaperId ?? null,
         provenanceCitationText: e.evidenceCitationText ?? null,
@@ -430,8 +454,12 @@ router.post("/sessions/:id/live-model/import-from-model", async (req, res) => {
       .where(eq(liveModelsTable.id, liveModel.id));
   });
 
+  if (skippedNodes > 0 || skippedEdges > 0) {
+    req.log.warn({ modelId, sessionId, skippedNodes, skippedEdges }, "import-from-model skipped some items");
+  }
+
   const detail = await loadLiveModelDetail(sessionId);
-  return res.json(detail);
+  return res.json({ ...detail, skippedNodes, skippedEdges });
 });
 
 // ============================================================================
