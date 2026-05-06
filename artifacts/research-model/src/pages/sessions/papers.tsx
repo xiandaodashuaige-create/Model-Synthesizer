@@ -54,6 +54,11 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
     failures: Array<{ identifier: string; reason: string }>;
   }>(null);
   const [pdfUploading, setPdfUploading] = useState<string | null>(null);
+  // Track WHICH paper is currently being extracted so a single click only
+  // spins that one button. Without this, every card shares
+  // `extractVariables.isPending` and lights up together — visually it looks
+  // like every paper is being processed.
+  const [extractingPaperId, setExtractingPaperId] = useState<number | null>(null);
   const [pdfQueueProgress, setPdfQueueProgress] = useState<{ done: number; total: number } | null>(null);
   const [pdfDragOver, setPdfDragOver] = useState(false);
 
@@ -311,9 +316,11 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
   };
 
   const handleExtract = (paperId: number, title: string) => {
+    setExtractingPaperId(paperId);
     extractVariables.mutate(
       { id: sessionId, paperId },
       {
+        onSettled: () => setExtractingPaperId(null),
         onSuccess: (vars) => {
           queryClient.invalidateQueries({ queryKey: getListSessionPapersQueryKey(sessionId) });
           queryClient.invalidateQueries({ queryKey: getListSessionVariablesQueryKey(sessionId) });
@@ -604,29 +611,31 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
         )}
       </div>
 
-      {/* Next-step hint */}
+      {/* Next-step hint. Show "extract all" whenever there are still pending
+          papers (even after some have been extracted) — previously this
+          collapsed to the "go to variables" hint after the first single
+          extraction, hiding the bulk button. */}
       {(sessionPapers?.length ?? 0) > 0 && !allExtracted && (
-        someExtracted ? (
-          <NextStepHint
-            title={t("papers.tip.next.title" as any)}
-            body={t("papers.tip.next.body" as any)}
-            href={`/sessions/${sessionId}/variables`}
-            cta={t("vars.goModels" as any)}
-          />
-        ) : (
-          <NextStepHint
-            title={t("papers.tip.extractAll.title" as any)}
-            body={
-              extractAllProgress
-                ? t("papers.tip.extractAll.progress" as any, { done: extractAllProgress.done, total: extractAllProgress.total })
-                : t("papers.tip.extractAll.body" as any, { count: (sessionPapers ?? []).filter((p) => !p.extracted).length })
-            }
-            cta={extractAllProgress ? t("papers.extract.btn.working" as any) : t("papers.extract.btn.all" as any)}
-            onClick={handleExtractAll}
-            loading={extractAllProgress !== null || extractVariables.isPending}
-            disabled={extractAllProgress !== null}
-          />
-        )
+        <NextStepHint
+          title={t("papers.tip.extractAll.title" as any)}
+          body={
+            extractAllProgress
+              ? t("papers.tip.extractAll.progress" as any, { done: extractAllProgress.done, total: extractAllProgress.total })
+              : t("papers.tip.extractAll.body" as any, { count: (sessionPapers ?? []).filter((p) => !p.extracted).length })
+          }
+          cta={extractAllProgress ? t("papers.extract.btn.working" as any) : t("papers.extract.btn.all" as any)}
+          onClick={handleExtractAll}
+          loading={extractAllProgress !== null}
+          disabled={extractAllProgress !== null || extractingPaperId !== null}
+        />
+      )}
+      {someExtracted && !allExtracted && (
+        <NextStepHint
+          title={t("papers.tip.next.title" as any)}
+          body={t("papers.tip.next.body" as any)}
+          href={`/sessions/${sessionId}/variables`}
+          cta={t("vars.goModels" as any)}
+        />
       )}
       {allExtracted && (sessionPapers?.length ?? 0) > 0 && (
         <NextStepHint
@@ -716,10 +725,10 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
                     <button
                       data-testid={`button-extract-${paper.id}`}
                       onClick={() => handleExtract(paper.id, paper.title)}
-                      disabled={extractVariables.isPending}
+                      disabled={extractingPaperId === paper.id || extractAllProgress !== null}
                       className="inline-flex items-center gap-1.5 rounded-md text-xs font-medium h-8 px-3 bg-secondary text-secondary-foreground hover:bg-accent transition-colors disabled:opacity-50"
                     >
-                      {extractVariables.isPending ? (
+                      {extractingPaperId === paper.id ? (
                         <Loader2 className="w-3.5 h-3.5 animate-spin" />
                       ) : (
                         <Clock className="w-3.5 h-3.5" />

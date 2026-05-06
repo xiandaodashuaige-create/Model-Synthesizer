@@ -53,6 +53,66 @@ function canonicalize(name: string): string {
 
 const VALID_LAYERS = new Set<string>(CONSTRUCT_LAYERS as readonly string[]);
 
+// Best-effort recovery for JSON that was truncated mid-output by the model
+// hitting max_completion_tokens. Strategy: walk the string, track bracket
+// depth while respecting strings/escapes, find the last position where the
+// structure was a complete top-level value, then close any still-open arrays
+// and objects. Returns null if the structure can't be salvaged.
+function tryRepairTruncatedJson(raw: string): string | null {
+  if (!raw || raw[0] !== "{") return null;
+  const stack: Array<"{" | "["> = [];
+  let inStr = false;
+  let escape = false;
+  let lastSafeEnd = -1; // index just after last fully-closed top-level child
+  let lastCommaInArray = -1; // index of last "," inside the deepest array — safe to truncate to
+  for (let i = 0; i < raw.length; i++) {
+    const c = raw[i];
+    if (escape) { escape = false; continue; }
+    if (inStr) {
+      if (c === "\\") { escape = true; continue; }
+      if (c === '"') inStr = false;
+      continue;
+    }
+    if (c === '"') { inStr = true; continue; }
+    if (c === "{" || c === "[") { stack.push(c); continue; }
+    if (c === "}" || c === "]") {
+      stack.pop();
+      if (stack.length === 1) lastSafeEnd = i + 1;
+    }
+    if (c === "," && stack.length >= 2 && stack[stack.length - 1] === "[") {
+      lastCommaInArray = i;
+    }
+  }
+  // If the JSON parsed cleanly, no repair needed (caller already tried).
+  // We're here because parsing failed — so we expect stack.length > 0 OR inStr.
+  // Truncate at the last comma inside the deepest array, drop the partial
+  // element, and close all open brackets.
+  if (lastCommaInArray < 0 && lastSafeEnd < 0) return null;
+  const cutAt = lastCommaInArray > 0 ? lastCommaInArray : lastSafeEnd;
+  let head = raw.slice(0, cutAt);
+  // Re-walk just the head to know what brackets remain open (the partial
+  // element we just dropped may have included unmatched openers).
+  const openStack: string[] = [];
+  let s2 = false, esc2 = false;
+  for (let i = 0; i < head.length; i++) {
+    const c = head[i];
+    if (esc2) { esc2 = false; continue; }
+    if (s2) {
+      if (c === "\\") { esc2 = true; continue; }
+      if (c === '"') s2 = false;
+      continue;
+    }
+    if (c === '"') { s2 = true; continue; }
+    if (c === "{" || c === "[") openStack.push(c);
+    else if (c === "}" || c === "]") openStack.pop();
+  }
+  while (openStack.length > 0) {
+    const top = openStack.pop();
+    head += top === "{" ? "}" : "]";
+  }
+  return head;
+}
+
 router.post("/sessions/:id/papers/:paperId/extract", async (req, res): Promise<void> => {
   const params = ExtractVariablesParams.safeParse(req.params);
   if (!params.success) {
@@ -124,7 +184,10 @@ Strict rules:
   try {
     const completion = await openai.chat.completions.create({
       model: "gpt-5.4",
-      max_completion_tokens: 3500,
+      // Bumped from 3500 → 8000. Papers with ~20 hypotheses + verbatim quotes
+      // routinely blew past 3500 and the response was cut mid-string, causing
+      // JSON.parse to fail and returning a 500. 8000 is well within budget.
+      max_completion_tokens: 8000,
       messages: [{ role: "user", content: prompt }],
     });
     logAiUsageFromOpenAI(completion, { route: "variables/extract", sessionId: paper.sessionId });
@@ -135,15 +198,32 @@ Strict rules:
       hypotheses?: Array<{ id: string; from: string; to: string; via?: string | null; relationship: string; statement: string; effectSize?: string | null; pageOrSection?: string | null }>;
     } = {};
 
+    const cleaned = content.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
     try {
-      const cleaned = content.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
       parsed = JSON.parse(cleaned);
       // Backwards-compat: previous prompt returned a bare array.
       if (Array.isArray(parsed)) parsed = { variables: parsed as typeof parsed.variables, hypotheses: [] };
     } catch {
-      req.log.warn({ content }, "Failed to parse AI extraction JSON");
-      res.status(500).json({ error: "Failed to parse AI extraction result" });
-      return;
+      // Repair attempt: if the response was truncated by max_completion_tokens
+      // (finish_reason="length"), the JSON is well-formed up to some object in
+      // the "hypotheses" array. Try to salvage by finding the last complete
+      // hypothesis object and closing the structure. Variables almost always
+      // come first and finish before hypotheses, so we still get usable data.
+      const repaired = tryRepairTruncatedJson(cleaned);
+      if (repaired) {
+        try {
+          parsed = JSON.parse(repaired);
+          req.log.warn({ paperId: paper.id, finishReason: completion.choices[0]?.finish_reason }, "Recovered truncated extraction JSON");
+        } catch {
+          req.log.warn({ content, finishReason: completion.choices[0]?.finish_reason }, "Failed to parse AI extraction JSON (repair also failed)");
+          res.status(500).json({ error: "Failed to parse AI extraction result" });
+          return;
+        }
+      } else {
+        req.log.warn({ content, finishReason: completion.choices[0]?.finish_reason }, "Failed to parse AI extraction JSON");
+        res.status(500).json({ error: "Failed to parse AI extraction result" });
+        return;
+      }
     }
 
     const extractedVars = Array.isArray(parsed.variables) ? parsed.variables : [];
