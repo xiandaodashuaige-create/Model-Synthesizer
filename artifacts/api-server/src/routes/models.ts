@@ -435,30 +435,72 @@ router.post("/sessions/:id/models/generate", async (req, res): Promise<void> => 
       }).join("\n")
     : "";
 
-  const userBlock = userPrompt
-    ? `\n\nUSER REQUIREMENTS (must be followed strictly — these override default behavior):\n"""\n${userPrompt}\n"""`
-    : "";
-  // Top-of-prompt research-direction block. This is the user's stated topic
-  // from session creation — it is the primary alignment signal for the AI.
-  // If the topic is empty (legacy sessions) we omit the block; the existing
-  // variable/paper material then carries the burden as before.
-  const topicBlock = sessionTopic
-    ? `\n\n================================================================\nRESEARCH TOPIC / USER'S STATED DIRECTION (TOP PRIORITY — every model MUST advance this exact topic; do not drift toward whatever variables happen to be most numerous):\nProject: "${sessionName || "(unnamed)"}"\nTopic: """\n${sessionTopic}\n"""\nIf some of the source papers below are tangential to this topic, prefer combinations that stay closer to the topic; only pull in tangential papers when they supply a missing mediator/moderator/boundary-condition that materially advances the topic.`
-    : "";
   const userPersonalizationBlock = await buildUserPersonalizationContext(req.user?.id);
-  // The user explicitly hand-picked these variable clusters on /variables as
-  // the spine of the model they want. Treat them as MUCH stronger than the
-  // legacy "include in at least N/2 models" hint — every generated model
-  // should be built AROUND these picks, using them as the IV / key mediator /
-  // DV (not as decorative leaf nodes), and the rationale must say so.
-  const focusBlock = focusVariableIds.length > 0
-    ? `\n\n================================================================\nUSER HAND-PICKED FOCUS VARIABLES (CRITICAL — these are the spine of the model the user wants):\nVariable IDs: ${focusVariableIds.join(", ")}\n\nMandatory rules for handling the focus set:\n- EVERY generated model MUST include AT LEAST ${Math.min(focusVariableIds.length, 2)} of these variables as STRUCTURAL nodes (IV, mediator, moderator, or DV — never as a passive label).\n- AT LEAST ${Math.ceil(numModels / 2)} of the ${numModels} models MUST include AT LEAST ${Math.min(focusVariableIds.length, 3)} of these variables, forming the model's spine.\n- The model's \`description\` MUST explicitly name the user-picked variables it builds on (e.g. "本模型以你选择的『X』为核心自变量,通过『Y』传导到『Z』").\n- The \`rationale\` MUST explain WHY the user's picks combine theoretically — do not silently swap one of the user's picks for a more convenient variable from the pool.\n- If a user-picked variable cannot be plausibly used in a given model, OMIT that model entirely rather than build a model that ignores the user's choice — return fewer than ${numModels} models if necessary, and surface the reason in the omitted model's slot rationale.`
+
+  // ── UNIFIED USER INTENT preamble ────────────────────────────────────
+  // Past versions injected three independent blocks (topicBlock, userBlock,
+  // focusBlock) at three different positions in the prompt. The AI treated
+  // them as three separate filters and would silently satisfy whichever was
+  // easiest, producing models that drifted on the others — e.g. session
+  // topic "AI chatbot + impulse purchase" plus focus picks coming from
+  // live-streaming papers would yield "AI-streamer → purchase intention",
+  // drifting BOTH the domain (chatbot→streamer) AND the outcome family
+  // (impulse purchase→purchase intention).
+  //
+  // We now fuse all three signals into ONE coherent brief at the top of the
+  // prompt with explicit DOMAIN LOCK / OUTCOME LOCK anti-drift rules and an
+  // ALIGNMENT CONTRACT that forces every generated model's rationale to
+  // start with three labeled lines proving topic-fit, focus-fit and
+  // user-prompt-fit. A model that passes one sub-check but drifts on
+  // another is invalid and must be omitted.
+  const focusVarLookup = new Map(variables.map((v) => [v.id, v]));
+  const focusPicks = focusVariableIds
+    .map((id) => focusVarLookup.get(id))
+    .filter((v): v is (typeof variables)[number] => !!v);
+  const focusListing = focusPicks.length > 0
+    ? focusPicks.map((p) => `  - id ${p.id} | ${p.type.toUpperCase()} | "${p.name}" (from paper id ${p.paperId})`).join("\n")
+    : "(none — AI may freely choose variables from the extracted pool)";
+  const focusRules = focusPicks.length > 0
+    ? `Mandatory focus rules:
+- EVERY generated model MUST include AT LEAST ${Math.min(focusPicks.length, 2)} of these picks as STRUCTURAL nodes (IV, mediator, moderator, or DV — never as a passive label).
+- AT LEAST ${Math.ceil(numModels / 2)} of the ${numModels} models MUST include AT LEAST ${Math.min(focusPicks.length, 3)} picks forming the structural spine.
+- The model's \`description\` MUST name the picks it builds on (in the user's language, by the variable's natural-language name, NOT by id).
+- If a focus pick conflicts with the TOPIC's domain or outcome lock below, OMIT the entire model rather than (a) silently keeping the pick and drifting the topic, or (b) silently keeping the topic and dropping the pick.
+`
+    : "";
+  const hasAnyIntent = !!(sessionTopic || userPrompt || focusPicks.length > 0);
+  const unifiedIntent = hasAnyIntent
+    ? `\n\n================================================================
+UNIFIED USER INTENT — TREAT THE THREE SUB-BLOCKS BELOW AS ONE COHERENT RESEARCH GOAL, NOT THREE INDEPENDENT FILTERS. A model that satisfies one sub-block but drifts on another is INVALID and MUST be omitted (return fewer than ${numModels} models rather than emit a misaligned one). When in doubt, prefer FEWER topically-tight models over MORE drifted ones.
+
+[1] RESEARCH TOPIC — what the user is actually studying (THIS is the spine of the project; do not silently swap its domain or its outcome family):
+Project: "${sessionName || "(unnamed)"}"
+Topic: """
+${sessionTopic || "(no explicit topic — defer to USER PROMPT and FOCUS VARIABLES below for direction)"}
+"""
+Critical anti-drift rules for the topic:
+- DOMAIN LOCK: if the topic names a specific stimulus/context (e.g. "AI chatbot", "AI live streamer / AI 主播", "metaverse retail", "short-video commerce", "voice assistant", "hospital accreditation"), EVERY model's IV/stimulus side MUST be that exact context. Do NOT swap "AI chatbot" for "AI streamer" or "metaverse retail" or "short-video commerce" — these are DIFFERENT studies, not interchangeable. If the pool's papers cover a wider range than the topic, restrict yourself to papers that match the topic's domain.
+- OUTCOME LOCK: if the topic names a specific dependent-variable family (e.g. "impulse purchase / 冲动购买", "purchase intention / 购买意愿", "loyalty / 忠诚度", "continuance intention / 持续使用意愿", "satisfaction / 满意度", "customer experience / 客户体验"), EVERY model's DV MUST belong to THAT exact family — these are RELATED BUT DISTINCT constructs and swapping them changes the user's research question. Examples of forbidden swaps: impulse purchase → purchase intention, loyalty → satisfaction, continuance intention → adoption intention.
+- TANGENTIAL-PAPER POLICY: if a paper in the pool is tangential to the topic's domain or outcome, prefer to SKIP it rather than awkwardly include it. Topical fit beats variable count.
+
+[2] USER PROMPT — additional free-form constraints the user typed in the form (these override defaults when present, but must NOT override the topic's domain/outcome lock above):
+${userPrompt ? `"""\n${userPrompt}\n"""` : "(empty — apply defaults)"}
+
+[3] HAND-PICKED FOCUS VARIABLES — variables the user explicitly pinned on the /variables page (the structural backbone of the model the user wants):
+${focusListing}
+${focusRules}
+ALIGNMENT CONTRACT (applies to EVERY generated model — non-negotiable):
+After the OPERATOR/BASE/BACKBONE prefix required by Hard Rule #1, the \`rationale\` field MUST contain three labeled alignment lines BEFORE any free-form text, in this exact order:
+[TOPIC FIT] One sentence in the user's language naming the topic's DOMAIN and OUTCOME FAMILY and stating how this model preserves both. If you had to omit a focus pick to keep the topic intact, say so here.
+[FOCUS FIT] One sentence listing which focus pick names anchor which structural roles (e.g. "用户重点选用的『信任』作为中介,『拟人化感知』作为自变量,『性别』作为调节"). If no focus picks were supplied, write the literal "n/a — no focus picks supplied".
+[USER PROMPT FIT] One sentence stating how the user's typed prompt was honored. If no user prompt was supplied, write the literal "n/a — no user prompt".
+A rationale missing any of these three lines, or whose [TOPIC FIT] line shows a domain/outcome swap, will be REJECTED.`
     : "";
 
   // Synthesis prompt: explicit STRUCTURAL OPERATORS + theory backbones.
   const prompt = `You are a senior researcher in academic methodology and structural equation modeling.
 
-Your task: produce ${numModels} *novel* and theoretically coherent research model proposals by RECOMBINING the source papers' own research models below using EXPLICIT STRUCTURAL OPERATORS. Each output model MUST be the result of applying TWO chained operators (a primary then a different secondary) to AT LEAST ${userPrompt ? "TWO" : "THREE"} of the original models.${topicBlock}
+Your task: produce ${numModels} *novel* and theoretically coherent research model proposals by RECOMBINING the source papers' own research models below using EXPLICIT STRUCTURAL OPERATORS. Each output model MUST be the result of applying TWO chained operators (a primary then a different secondary) to AT LEAST ${userPrompt ? "TWO" : "THREE"} of the original models, AND must satisfy the UNIFIED USER INTENT below in full.${unifiedIntent}
 
 ================================================================
 PAPER REFERENCES (use exact tags when citing — abstracts included so you can judge topical fit):
@@ -486,11 +528,11 @@ ${hypothesesBlock}
 ================================================================
 STRUCTURAL OPERATORS (each output model must use TWO of these — a primary and a different secondary — applied in sequence):
 ${operatorsAsPromptBlock()}
-${userBlock}${focusBlock}${learnedBlock}${userPersonalizationBlock}
+${learnedBlock}${userPersonalizationBlock}
 
 ================================================================
 HARD RULES (violations = invalid output):
-1. **Operator-driven**: each model MUST start its rationale with "[OPERATOR: <PRIMARY>+<SECONDARY>] [BASE: <Pn>+<Pm>(+<Pk>...)] [BACKBONE: <id or NONE>]" so the recombination logic is auditable.
+1. **Operator-driven + alignment header**: each model's \`rationale\` MUST start with "[OPERATOR: <PRIMARY>+<SECONDARY>] [BASE: <Pn>+<Pm>(+<Pk>...)] [BACKBONE: <id or NONE>]" so the recombination logic is auditable. IMMEDIATELY after that prefix, the rationale MUST contain the three alignment lines required by the ALIGNMENT CONTRACT in the UNIFIED USER INTENT block at the top of this prompt: [TOPIC FIT] / [FOCUS FIT] / [USER PROMPT FIT]. ONLY AFTER those four prefix lines may you write the free-form 3-5 sentences explaining the operator application.
 2. **Chained operators (CRITICAL)**: each model MUST apply TWO operators in sequence — a PRIMARY operator that defines the spine of the model, then a SECONDARY operator (must be different from the primary) that enriches it (e.g. INSERT_MODERATOR after EXTEND, PARALLEL_MEDIATORS after THEORY_GRAFT). Single-operator models are too weak and will be rejected.
 3. **Distinct operator pairs**: across the ${numModels} models, no two models may use the same (primary, secondary) operator pair OR the same base paper set.
 4. **Cross-paper synthesis**: ${userPrompt ? "The user has provided a custom prompt — honor its scope strictly. Multi-paper synthesis is still preferred when compatible with the user's intent, but a focused single-paper model that faithfully matches the user's request is acceptable." : "each model MUST include nodes from ≥ 3 DIFFERENT source papers (not 2). The whole point is multi-paper recombination — a model that only fuses 2 papers is a weak combination and will be rejected."}
@@ -503,7 +545,7 @@ HARD RULES (violations = invalid output):
 11. **One role per canonical construct**: a single canonicalConstruct may NOT appear with two different roles in the same model (e.g. you cannot use "trust" as both a mediator AND a moderator in the same model). This prevents nonsensical self-moderation.
 12. **Moderator justification (REQUIRED when relationship = "moderates")**: every moderator edge MUST include a non-empty \`moderatorJustification\` field (≥ 1 sentence) explaining (a) WHY this variable can theoretically condition the moderated path (e.g. it's a contextual factor, individual difference, or boundary condition) and (b) WHICH paper grounds this moderating role. Without justification, the moderator edge is rejected.
 13. **Hypothesis-grounded evidence (preferred)**: when an edge corresponds to a row in the FORMAL HYPOTHESES POOL above, set \`evidenceHypothesisId\` to that row's id (e.g. "H2a"), copy \`statement\` verbatim into \`evidenceCitationText\`, copy \`effectSize\` and \`pageOrSection\` if available. Edges grounded in formal hypotheses are stronger than those grounded only in narrative citations.
-14. **Topic alignment (CRITICAL when a RESEARCH TOPIC block is present above)**: every generated model MUST visibly advance the user's stated research topic. The model's \`description\` MUST start with one sentence in the user's language that names the topic and explains how this model addresses it (e.g. "针对你提出的『AI 主播对冲动消费的影响』方向，本模型……"). The \`rationale\` MUST also reference the topic explicitly. Models that recombine variables in interesting structural ways but drift away from the stated topic (e.g. ignoring the user's industry/context, or producing a model whose dependent variable is unrelated to the topic) are LOW quality and will be rejected. If the topic is so narrow that only 2 papers are clearly relevant, override Hard Rule #4's "≥3 papers" requirement and prefer a topically-tight 2-paper combination over a topically-loose 3-paper one — call this out in the rationale.
+14. **Topic alignment (enforced by the UNIFIED USER INTENT block at the top)**: every generated model MUST visibly advance the user's stated research topic and respect the DOMAIN LOCK + OUTCOME LOCK rules. The model's \`description\` MUST open with one sentence in the user's language that explicitly names BOTH the topic's domain (e.g. "AI 客服机器人") AND its outcome family (e.g. "消费者冲动购买"), and states how this model preserves both. Drifting the domain (e.g. swapping "AI chatbot" for "AI streamer") OR the outcome family (e.g. swapping "impulse purchase" for "purchase intention") is INVALID and the model will be REJECTED. If the topic is so narrow that only 2 papers are clearly relevant, override Hard Rule #4's "≥3 papers" requirement and prefer a topically-tight 2-paper combination over a topically-loose 3-paper one — call this out in [TOPIC FIT].
 
 OUTPUT FORMAT — return ONLY a JSON array, no markdown:
 [
@@ -689,8 +731,32 @@ OUTPUT FORMAT — return ONLY a JSON array, no markdown:
     const minDistinctPapers = hasCustomPrompt ? 1 : Math.min(3, papers.length);
     const minNodes = hasCustomPrompt ? 4 : (papers.length >= 3 ? 5 : 4);
 
+    // ALIGNMENT CONTRACT enforcement (server-side):
+    // The prompt requires every rationale to begin with the OPERATOR/BASE/BACKBONE
+    // prefix followed by three labeled lines [TOPIC FIT] / [FOCUS FIT] /
+    // [USER PROMPT FIT]. Without server-side checking, the AI sometimes drops
+    // one of the lines and the user only finds out by reading rationales. We
+    // tag missing-alignment as a SOFT failure so rescue mode keeps the model
+    // visible (with a warning prefix) when nothing else passes — better than
+    // a blank screen — but rejects it during normal operation so the AI is
+    // pressured to follow the contract on the next regeneration.
+    const requireAlignment = hasAnyIntent;
+    function checkAlignment(rationale: string): string | null {
+      if (!requireAlignment) return null;
+      const text = (rationale ?? "").trim();
+      if (!text) return "rationale empty (alignment contract requires header lines)";
+      const missing: string[] = [];
+      if (!/\[TOPIC FIT\]/i.test(text)) missing.push("[TOPIC FIT]");
+      if (!/\[FOCUS FIT\]/i.test(text)) missing.push("[FOCUS FIT]");
+      if (!/\[USER PROMPT FIT\]/i.test(text)) missing.push("[USER PROMPT FIT]");
+      if (missing.length > 0) return `alignment contract violated — rationale missing ${missing.join(", ")}`;
+      return null;
+    }
+
     function validate(m: typeof generated[number] & { secondaryOperator?: string }): { ok: true } | { ok: false; reason: string } {
       if (!m || typeof m.name !== "string" || !Array.isArray(m.nodes) || !Array.isArray(m.edges)) return { ok: false, reason: "missing required fields" };
+      const alignErr = checkAlignment(m.rationale ?? "");
+      if (alignErr) return { ok: false, reason: alignErr };
       if (!m.operator || !ALLOWED_OPERATORS.has(m.operator)) return { ok: false, reason: `invalid operator: ${m.operator}` };
       if (!m.secondaryOperator || !ALLOWED_OPERATORS.has(m.secondaryOperator)) return { ok: false, reason: `missing/invalid secondaryOperator: ${m.secondaryOperator}` };
       if (m.secondaryOperator === m.operator) return { ok: false, reason: "secondaryOperator must differ from primary operator" };
@@ -801,6 +867,7 @@ OUTPUT FORMAT — return ONLY a JSON array, no markdown:
       /node count out of range/i,
       /edge count out of range/i,
       /requires nodes from/i,
+      /alignment contract violated/i,
     ];
     const isSoftFail = (reason: string) => SOFT_FAIL_PATTERNS.some((re) => re.test(reason));
 
