@@ -36,10 +36,11 @@ const REL_STYLE: Record<string, { dash?: string; color?: string }> = {
   mediates: {},
 };
 
-function ModelGraph({ nodes, edges, paperTagById }: {
+function ModelGraph({ nodes, edges, paperTagById, edgeHTagByKey }: {
   nodes: Array<{ variableId: number; variableName: string; type: string; paperId: number }>;
   edges: Array<{ fromVariableId: number; toVariableId: number; relationship: string; evidencePaperId: number }>;
   paperTagById: Map<number, string>;
+  edgeHTagByKey: Map<string, string>;
 }) {
   const layout = useMemo(() => {
     if (!nodes.length) return null;
@@ -141,16 +142,16 @@ function ModelGraph({ nodes, edges, paperTagById }: {
           <g key={key}>
             <path d={d} fill="none" stroke={stroke} strokeOpacity={0.55} strokeWidth={1.8} strokeDasharray={dash} markerEnd={marker} />
             {group.map((edge, gi) => {
-              const tag = paperTagById.get(edge.evidencePaperId);
-              if (!tag) return null;
+              const hTag = edgeHTagByKey.get(`${edge.fromVariableId}->${edge.toVariableId}#${gi}`);
+              if (!hTag) return null;
               // Stack labels perpendicular to the curve at its midpoint.
               const offset = 14 + gi * 18;
               const lx = mid.x + perpX * offset;
               const ly = mid.y + perpY * offset;
               return (
                 <g key={gi} transform={`translate(${lx - 16}, ${ly - 8})`}>
-                  <rect width={32} height={16} rx={3} fill="white" stroke="#999" strokeOpacity={0.5} strokeWidth={0.8} />
-                  <text x={16} y={11.5} textAnchor="middle" fontSize={10} fontWeight={700} fill="#444">{tag}</text>
+                  <rect width={32} height={16} rx={3} fill="white" stroke="#7c3aed" strokeOpacity={0.55} strokeWidth={0.9} />
+                  <text x={16} y={11.5} textAnchor="middle" fontSize={10} fontWeight={700} fill="#6d28d9">{hTag}</text>
                 </g>
               );
             })}
@@ -179,6 +180,28 @@ function ModelGraph({ nodes, edges, paperTagById }: {
         );
       })}
     </svg>
+  );
+}
+
+function HypothesisLegend({ items }: { items: Array<{ tag: string; from: string; to: string; rel: string; paperTag: string }> }) {
+  if (!items.length) return null;
+  const relSymbol: Record<string, string> = { positive: "→ (+)", negative: "→ (−)", moderates: "⇢ moderates", mediates: "→ mediates" };
+  return (
+    <div className="mt-3 pt-3 border-t border-border/60 grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1">
+      {items.map((h) => (
+        <div key={h.tag} className="flex items-start gap-2 text-[11px] text-muted-foreground" data-testid={`legend-hypothesis-${h.tag}`}>
+          <span className="shrink-0 inline-flex items-center justify-center min-w-[26px] h-4 px-1 rounded bg-violet-50 text-violet-800 text-[10px] font-bold border border-violet-200">
+            {h.tag}
+          </span>
+          <span className="truncate" title={`${h.from} ${relSymbol[h.rel] ?? "→"} ${h.to}${h.paperTag ? ` (${h.paperTag})` : ""}`}>
+            <span className="text-foreground">{h.from}</span>
+            <span className="mx-1 text-muted-foreground">{relSymbol[h.rel] ?? "→"}</span>
+            <span className="text-foreground">{h.to}</span>
+            {h.paperTag && <span className="ml-1 text-muted-foreground">({h.paperTag})</span>}
+          </span>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -469,9 +492,25 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
                   }
                 }
                 const refs = paperOrder.map((pid) => ({ tag: paperTagById.get(pid)!, label: paperLabelById.get(pid) ?? `Paper ${pid}` }));
+                // Build H-tags for edges (H1, H2, …) in declared order, keyed by
+                // `${from}->${to}#${gi}` so multiple parallel edges each get their own H#.
+                const edgeHTagByKey = new Map<string, string>();
+                const groupCounter = new Map<string, number>();
+                const hLegend: Array<{ tag: string; from: string; to: string; rel: string; paperTag: string }> = [];
+                edges.forEach((e, i) => {
+                  const k = `${e.fromVariableId}->${e.toVariableId}`;
+                  const gi = groupCounter.get(k) ?? 0;
+                  groupCounter.set(k, gi + 1);
+                  const tag = `H${i + 1}`;
+                  edgeHTagByKey.set(`${k}#${gi}`, tag);
+                  const fromName = nodes.find((n) => n.variableId === e.fromVariableId)?.variableName ?? `#${e.fromVariableId}`;
+                  const toName = nodes.find((n) => n.variableId === e.toVariableId)?.variableName ?? `#${e.toVariableId}`;
+                  hLegend.push({ tag, from: fromName, to: toName, rel: e.relationship, paperTag: paperTagById.get(e.evidencePaperId) ?? "" });
+                });
                 return (
                   <div className="mb-4 bg-background/50 rounded-lg p-4 border border-border overflow-hidden">
-                    <ModelGraph nodes={nodes} edges={edges} paperTagById={paperTagById} />
+                    <ModelGraph nodes={nodes} edges={edges} paperTagById={paperTagById} edgeHTagByKey={edgeHTagByKey} />
+                    <HypothesisLegend items={hLegend} />
                     <PaperLegend refs={refs} />
                   </div>
                 );
