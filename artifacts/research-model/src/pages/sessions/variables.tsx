@@ -80,6 +80,7 @@ function ReExtractAllButton({ sessionId }: { sessionId: number }) {
 function VariableGraph({ sessionId }: { sessionId: number }) {
   const { t } = useT();
   const TYPE_META = useTypeMeta();
+  const [focusNodeId, setFocusNodeId] = useState<string | null>(null);
   const { data: graph, isLoading } = useGetVariableGraph(sessionId, {
     query: { enabled: !!sessionId, queryKey: getGetVariableGraphQueryKey(sessionId) },
   });
@@ -191,9 +192,56 @@ function VariableGraph({ sessionId }: { sessionId: number }) {
     mediates:  { color: "#d97706", symbol: "Med", labelKey: "vars.graph.rel.mediates" },
   };
 
+  // Focus mode: when a node is selected, only edges touching it stay visible;
+  // the focused node and its neighbors stay full opacity, everything else dims.
+  const focusedNode = focusNodeId ? graph.nodes.find((n) => n.id === focusNodeId) ?? null : null;
+  const focusedEdges = focusedNode
+    ? aggEdges.filter((e) => e.source === focusedNode.id || e.target === focusedNode.id)
+    : aggEdges;
+  const neighborIds = new Set<string>();
+  if (focusedNode) {
+    neighborIds.add(focusedNode.id);
+    for (const e of focusedEdges) {
+      neighborIds.add(e.source);
+      neighborIds.add(e.target);
+    }
+  }
+  const isNodeDim = (nodeId: string) => focusedNode !== null && !neighborIds.has(nodeId);
+  const handleNodeClick = (nodeId: string) => {
+    setFocusNodeId((cur) => (cur === nodeId ? null : nodeId));
+  };
+
   return (
     <div className="bg-card border border-border rounded-lg p-5">
-      <h3 className="text-sm font-semibold text-foreground mb-4">{t("vars.graph.title" as any)}</h3>
+      <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
+        <h3 className="text-sm font-semibold text-foreground">{t("vars.graph.title" as any)}</h3>
+        {focusedNode ? (
+          <div className="inline-flex items-center gap-2 text-xs">
+            <span
+              className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full font-medium border"
+              style={{ color: colorMap[focusedNode.type] ?? "#666", borderColor: (colorMap[focusedNode.type] ?? "#666") + "66", backgroundColor: (colorMap[focusedNode.type] ?? "#666") + "14" }}
+            >
+              {t("vars.graph.focus.label" as any, { name: focusedNode.label })}
+              <span className="text-muted-foreground font-normal">· {t("vars.graph.focus.count" as any, { n: focusedEdges.length })}</span>
+            </span>
+            <button
+              type="button"
+              onClick={() => setFocusNodeId(null)}
+              className="text-xs text-primary hover:underline font-medium"
+              data-testid="btn-clear-focus"
+            >
+              {t("vars.graph.focus.clear" as any)}
+            </button>
+          </div>
+        ) : (
+          <span className="text-[11px] text-muted-foreground">{t("vars.graph.focus.hint" as any)}</span>
+        )}
+      </div>
+      {focusedNode && focusedEdges.length === 0 && (
+        <div className="mb-3 rounded-md border border-amber-200 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/30 px-3 py-2 text-xs text-amber-900 dark:text-amber-200">
+          {t("vars.graph.focus.empty" as any)}
+        </div>
+      )}
       <div className="overflow-auto max-h-[640px]">
         <svg
           width={WIDTH}
@@ -201,7 +249,19 @@ function VariableGraph({ sessionId }: { sessionId: number }) {
           viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
           className="text-foreground"
           style={{ minWidth: WIDTH, minHeight: HEIGHT }}
+          onClick={(e) => {
+            // Click on blank SVG area (not on a node/edge group) clears focus.
+            if (e.target === e.currentTarget) setFocusNodeId(null);
+          }}
         >
+          <rect
+            x={0}
+            y={0}
+            width={WIDTH}
+            height={HEIGHT}
+            fill="transparent"
+            onClick={() => setFocusNodeId(null)}
+          />
           <defs>
             {Object.entries(REL_STYLE).map(([rel, s]) => (
               <marker key={rel} id={`arrow-${rel}`} markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto">
@@ -213,6 +273,8 @@ function VariableGraph({ sessionId }: { sessionId: number }) {
             const from = positions.get(edge.source);
             const to = positions.get(edge.target);
             if (!from || !to) return null;
+            const isFocusedEdge = !focusedNode || edge.source === focusedNode.id || edge.target === focusedNode.id;
+            const dimEdge = focusedNode !== null && !isFocusedEdge;
             const safeRel = REL_STYLE[edge.relationship] ? edge.relationship : "positive";
             const style = REL_STYLE[safeRel];
             const fromX = from.x + NODE_W / 2;
@@ -229,14 +291,14 @@ function VariableGraph({ sessionId }: { sessionId: number }) {
             const midX = Math.min(WIDTH - labelW / 2 - 2, Math.max(labelW / 2 + 2, rawMidX));
             const tooltip = edge.statements.join("\n\n");
             return (
-              <g key={i}>
+              <g key={i} opacity={dimEdge ? 0.08 : 1} style={{ transition: "opacity 150ms" }}>
                 <title>{tooltip}</title>
                 <path
                   d={`M ${fromX} ${from.y} C ${c1x} ${from.y}, ${c2x} ${to.y}, ${toX} ${to.y}`}
                   fill="none"
                   stroke={style.color}
                   strokeOpacity={0.7}
-                  strokeWidth={1.8}
+                  strokeWidth={isFocusedEdge && focusedNode ? 2.4 : 1.8}
                   strokeDasharray={style.dash}
                   markerEnd={`url(#arrow-${safeRel})`}
                 />
@@ -270,10 +332,28 @@ function VariableGraph({ sessionId }: { sessionId: number }) {
             if (!pos) return null;
             const color = colorMap[node.type] ?? "#888";
             const lines = wrapLabel(node.label);
+            const isFocused = focusedNode?.id === node.id;
+            const dim = isNodeDim(node.id);
             return (
-              <g key={node.id} transform={`translate(${pos.x - NODE_W / 2}, ${pos.y - NODE_H / 2})`}>
+              <g
+                key={node.id}
+                transform={`translate(${pos.x - NODE_W / 2}, ${pos.y - NODE_H / 2})`}
+                onClick={(e) => { e.stopPropagation(); handleNodeClick(node.id); }}
+                style={{ cursor: "pointer", transition: "opacity 150ms" }}
+                opacity={dim ? 0.25 : 1}
+                data-testid={`graph-node-${node.id}`}
+              >
                 <title>{node.label}</title>
-                <rect width={NODE_W} height={NODE_H} rx={6} fill={color} fillOpacity={0.12} stroke={color} strokeOpacity={0.4} strokeWidth={1.5} />
+                <rect
+                  width={NODE_W}
+                  height={NODE_H}
+                  rx={6}
+                  fill={color}
+                  fillOpacity={isFocused ? 0.22 : 0.12}
+                  stroke={color}
+                  strokeOpacity={isFocused ? 0.95 : 0.4}
+                  strokeWidth={isFocused ? 2.5 : 1.5}
+                />
                 {lines.length === 1 ? (
                   <text x={NODE_W / 2} y={NODE_H / 2 - 2} textAnchor="middle" fontSize={11} fontWeight={600} fill={color}>
                     {lines[0]}
