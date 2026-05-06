@@ -461,7 +461,23 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
         <div className="bg-card border border-dashed border-border rounded-lg p-12 text-center">
           <Share2 className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
           <h3 className="font-semibold text-foreground mb-1">{t("models.empty.title" as any)}</h3>
-          <p className="text-sm text-muted-foreground">{t("models.empty.body" as any)}</p>
+          {/* Context-aware empty state. The previous copy unconditionally told
+              users to "go extract variables", which contradicted reality when
+              the user already had hundreds of variables and was just one click
+              away from generation. Now we branch on the actual blocker: no
+              vars / extraction in progress / pending papers / ready-to-go. */}
+          <p className="text-sm text-muted-foreground">
+            {hasNoVariables
+              ? t("models.empty.body" as any)
+              : isExtracting
+                ? t("models.empty.bodyExtracting" as any, {
+                    done: extractionProgress!.done,
+                    total: extractionProgress!.total,
+                  })
+                : hasPendingPapers
+                  ? t("models.empty.bodyPending" as any, { count: pendingPapersCount })
+                  : t("models.empty.bodyReady" as any)}
+          </p>
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-6">
