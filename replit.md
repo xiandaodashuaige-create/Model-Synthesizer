@@ -62,7 +62,7 @@ _Populate as you build_
 
 ## Gotchas
 - **OpenAlex search resilience**: `routes/papers.ts` `fetchOpenAlexWithRetry` wraps `fetch` with a hard 15s `AbortController` timeout and one retry on transient failures (timeout / 5xx / network — but NOT 429). Errors map to differentiated HTTP codes (504 timeout / 429 rate-limited / 502 upstream/network) with Chinese error bodies. Frontend `papers.tsx` `handleSearch` `onError` surfaces `err.data.error` as the toast description, so users see the real reason (e.g. "学术数据库响应超时") instead of a generic "搜索失败". Don't add a 3rd retry without raising the upstream proxy timeout — total budget = 15s + 0.8s + 15s = ~31s, near the proxy ceiling.
-- Variable extraction via AI can take ~10 seconds per paper.
+- Variable extraction via AI can take ~10 seconds per paper. The "一键重新提取" button (`variables.tsx` `ReExtractAllButton`) uses a worker-pool with `CONCURRENCY = 4` to parallelize calls — 10 papers go from ~100s serial to ~25s. Don't raise above 4 without checking the OpenAI proxy's per-key rate limit; 429s start appearing around 6-8 concurrent.
 - Model generation via AI can take ~20 seconds.
 - Search results are cached in-memory for 15 minutes to reduce redundant API calls.
 - The codegen script for `lib/api-zod` overwrites `index.ts` after Orval generation to fix an `export *` issue.
