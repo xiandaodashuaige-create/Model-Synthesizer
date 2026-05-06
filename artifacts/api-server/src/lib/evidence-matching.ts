@@ -337,9 +337,15 @@ export async function findEvidenceForModel(args: {
   }
 
   // ---------- AI scoring ----------
+  type PerEdgeHit = { ref: string; score: number; rationale: string; evidenceQuote?: string };
+  type OverallHit = { ref: string; score: number; rationale: string };
   const [perEdgeMap, overallList] = await Promise.all([
-    wantPerEdge ? aiPerEdge(args.edges, aiCandidates, userInstructions) : Promise.resolve(new Map()),
-    wantOverall ? aiOverall(args.modelSummary, aiCandidates, userInstructions) : Promise.resolve([]),
+    wantPerEdge
+      ? aiPerEdge(args.edges, aiCandidates, userInstructions)
+      : Promise.resolve(new Map<string, PerEdgeHit[]>()),
+    wantOverall
+      ? aiOverall(args.modelSummary, aiCandidates, userInstructions)
+      : Promise.resolve([] as OverallHit[]),
   ]);
 
   // ---------- materialise hits ----------
