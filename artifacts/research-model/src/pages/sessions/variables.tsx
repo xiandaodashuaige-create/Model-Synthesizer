@@ -30,6 +30,32 @@ function VariableGraph({ sessionId }: { sessionId: number }) {
   if (isLoading) return <div className="flex justify-center py-8"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>;
   if (!graph || graph.nodes.length === 0) return null;
 
+  // Honest empty state: when variables exist but the paper_hypotheses
+  // table has nothing for this session, we render NO synthetic edges
+  // (the previous behavior fabricated cartesian-product edges, which
+  // misled users). Tell them how to populate real relationships.
+  if (graph.edges.length === 0) {
+    return (
+      <div className="bg-card border border-border rounded-lg p-5">
+        <h3 className="text-sm font-semibold text-foreground mb-3">{t("vars.graph.title" as any)}</h3>
+        <div className="rounded-md border border-amber-200 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/30 p-4">
+          <div className="text-sm font-semibold text-amber-900 dark:text-amber-200 mb-1">
+            {t("vars.graph.empty.title" as any)}
+          </div>
+          <p className="text-sm text-amber-900/80 dark:text-amber-200/80 leading-relaxed">
+            {t("vars.graph.empty.body" as any)}
+          </p>
+          <Link
+            href={`/sessions/${sessionId}/papers`}
+            className="inline-flex items-center gap-1.5 mt-3 text-sm font-medium text-amber-900 dark:text-amber-100 hover:underline"
+          >
+            {t("vars.graph.empty.cta" as any)} <ArrowRight className="w-4 h-4" />
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
   const NODE_W = 170;
   const NODE_H = 52;
   const ROW_GAP = 14;

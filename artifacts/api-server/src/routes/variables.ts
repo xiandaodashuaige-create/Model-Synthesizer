@@ -287,31 +287,39 @@ router.get("/sessions/:id/variable-graph", async (req, res): Promise<void> => {
     }
   }
 
-  const edges: Array<{ source: string; target: string; paperId: number; paperTitle: string }> = [];
-  const byPaper = new Map<number, typeof variables>();
-  for (const v of variables) {
-    if (!byPaper.has(v.paperId)) byPaper.set(v.paperId, []);
-    byPaper.get(v.paperId)!.push(v);
-  }
+  // Edges come ONLY from real relationships extracted from each paper
+  // (paper_hypotheses table). We do NOT synthesize edges by taking the
+  // cartesian product of variable types — that would invent relationships
+  // the paper never actually states.
+  const hypotheses = await db
+    .select()
+    .from(paperHypothesesTable)
+    .where(eq(paperHypothesesTable.sessionId, params.data.id));
 
-  for (const [paperId, pvars] of byPaper) {
-    const paper = paperMap.get(paperId);
+  const norm = (s: string) => s.toLowerCase().trim();
+  const edges: Array<{ source: string; target: string; paperId: number; paperTitle: string }> = [];
+  const seen = new Set<string>();
+  const pushEdge = (src: string, tgt: string, paperId: number, paperTitle: string) => {
+    if (!src || !tgt || src === tgt) return;
+    if (!nodeMap.has(src) || !nodeMap.has(tgt)) return; // skip if endpoint isn't a known variable
+    const k = `${src}->${tgt}|${paperId}`;
+    if (seen.has(k)) return;
+    seen.add(k);
+    edges.push({ source: src, target: tgt, paperId, paperTitle });
+  };
+
+  for (const h of hypotheses) {
+    const paper = paperMap.get(h.paperId);
     if (!paper) continue;
-    const independents = pvars.filter((v) => v.type === "independent");
-    const dependents = pvars.filter((v) => v.type === "dependent");
-    const mediators = pvars.filter((v) => v.type === "mediator");
-    for (const ind of independents) {
-      for (const dep of dependents) {
-        edges.push({ source: ind.name.toLowerCase().trim(), target: dep.name.toLowerCase().trim(), paperId, paperTitle: paper.title });
-      }
-      for (const med of mediators) {
-        edges.push({ source: ind.name.toLowerCase().trim(), target: med.name.toLowerCase().trim(), paperId, paperTitle: paper.title });
-      }
-    }
-    for (const med of mediators) {
-      for (const dep of dependents) {
-        edges.push({ source: med.name.toLowerCase().trim(), target: dep.name.toLowerCase().trim(), paperId, paperTitle: paper.title });
-      }
+    const from = norm(h.fromVariable);
+    const to = norm(h.toVariable);
+    const via = h.viaVariable ? norm(h.viaVariable) : null;
+    if (via && nodeMap.has(via)) {
+      // Mediation chain: from → via → to
+      pushEdge(from, via, h.paperId, paper.title);
+      pushEdge(via, to, h.paperId, paper.title);
+    } else {
+      pushEdge(from, to, h.paperId, paper.title);
     }
   }
 
