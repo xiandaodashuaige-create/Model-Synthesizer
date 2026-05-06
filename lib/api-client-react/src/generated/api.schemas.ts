@@ -39,6 +39,61 @@ export interface AiUsageSummary {
   byRoute: AiUsageSummaryByRouteItem[];
 }
 
+export type UserPersonalizationCounters = {
+  sessions: number;
+  papers: number;
+  modelsGenerated: number;
+  modelsAccepted: number;
+  chatTurns: number;
+};
+
+export type UserPersonalizationProfilePreferredLanguage =
+  (typeof UserPersonalizationProfilePreferredLanguage)[keyof typeof UserPersonalizationProfilePreferredLanguage];
+
+export const UserPersonalizationProfilePreferredLanguage = {
+  zh: "zh",
+  en: "en",
+  mixed: "mixed",
+} as const;
+
+export type UserPersonalizationProfileTopVariableTypesItem = {
+  type: string;
+  count: number;
+};
+
+export type UserPersonalizationProfileTopDomainKeywordsItem = {
+  token: string;
+  count: number;
+};
+
+export type UserPersonalizationProfileTopAcceptedBackbonesItem = {
+  id: string;
+  count: number;
+};
+
+export type UserPersonalizationProfileTopAcceptedOperatorsItem = {
+  op: string;
+  count: number;
+};
+
+export type UserPersonalizationProfile = {
+  preferredLanguage: UserPersonalizationProfilePreferredLanguage;
+  avgVariablesPerAcceptedModel: number;
+  avgEdgesPerAcceptedModel: number;
+  acceptanceRate: number;
+  recentTopics: string[];
+  topVariableTypes: UserPersonalizationProfileTopVariableTypesItem[];
+  topDomainKeywords: UserPersonalizationProfileTopDomainKeywordsItem[];
+  topAcceptedBackbones: UserPersonalizationProfileTopAcceptedBackbonesItem[];
+  topAcceptedOperators: UserPersonalizationProfileTopAcceptedOperatorsItem[];
+};
+
+export interface UserPersonalization {
+  lastRefreshedAt: string;
+  counters: UserPersonalizationCounters;
+  profile: UserPersonalizationProfile;
+}
+
 export interface PaperFullTextHit {
   id: number;
   title: string;

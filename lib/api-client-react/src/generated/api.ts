@@ -66,6 +66,7 @@ import type {
   UpdateSessionBody,
   UpdateSessionVariableBody,
   UploadSessionPaperPdfBody,
+  UserPersonalization,
   Variable,
   VariableGraph,
 } from "./api.schemas";
@@ -240,6 +241,243 @@ export function useGetSessionAiUsage<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * @summary Get the current user's AI personalization profile
+ */
+export const getGetMyPersonalizationUrl = () => {
+  return `/api/me/personalization`;
+};
+
+export const getMyPersonalization = async (
+  options?: RequestInit,
+): Promise<UserPersonalization> => {
+  return customFetch<UserPersonalization>(getGetMyPersonalizationUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetMyPersonalizationQueryKey = () => {
+  return [`/api/me/personalization`] as const;
+};
+
+export const getGetMyPersonalizationQueryOptions = <
+  TData = Awaited<ReturnType<typeof getMyPersonalization>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getMyPersonalization>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetMyPersonalizationQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getMyPersonalization>>
+  > = ({ signal }) => getMyPersonalization({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getMyPersonalization>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetMyPersonalizationQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getMyPersonalization>>
+>;
+export type GetMyPersonalizationQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get the current user's AI personalization profile
+ */
+
+export function useGetMyPersonalization<
+  TData = Awaited<ReturnType<typeof getMyPersonalization>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getMyPersonalization>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetMyPersonalizationQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Forget — delete the current user's personalization profile
+ */
+export const getForgetMyPersonalizationUrl = () => {
+  return `/api/me/personalization`;
+};
+
+export const forgetMyPersonalization = async (
+  options?: RequestInit,
+): Promise<void> => {
+  return customFetch<void>(getForgetMyPersonalizationUrl(), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getForgetMyPersonalizationMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof forgetMyPersonalization>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof forgetMyPersonalization>>,
+  TError,
+  void,
+  TContext
+> => {
+  const mutationKey = ["forgetMyPersonalization"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof forgetMyPersonalization>>,
+    void
+  > = () => {
+    return forgetMyPersonalization(requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ForgetMyPersonalizationMutationResult = NonNullable<
+  Awaited<ReturnType<typeof forgetMyPersonalization>>
+>;
+
+export type ForgetMyPersonalizationMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Forget — delete the current user's personalization profile
+ */
+export const useForgetMyPersonalization = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof forgetMyPersonalization>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof forgetMyPersonalization>>,
+  TError,
+  void,
+  TContext
+> => {
+  return useMutation(getForgetMyPersonalizationMutationOptions(options));
+};
+
+/**
+ * @summary Force-recompute the personalization profile from history
+ */
+export const getRefreshMyPersonalizationUrl = () => {
+  return `/api/me/personalization/refresh`;
+};
+
+export const refreshMyPersonalization = async (
+  options?: RequestInit,
+): Promise<UserPersonalization> => {
+  return customFetch<UserPersonalization>(getRefreshMyPersonalizationUrl(), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getRefreshMyPersonalizationMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof refreshMyPersonalization>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof refreshMyPersonalization>>,
+  TError,
+  void,
+  TContext
+> => {
+  const mutationKey = ["refreshMyPersonalization"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof refreshMyPersonalization>>,
+    void
+  > = () => {
+    return refreshMyPersonalization(requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RefreshMyPersonalizationMutationResult = NonNullable<
+  Awaited<ReturnType<typeof refreshMyPersonalization>>
+>;
+
+export type RefreshMyPersonalizationMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Force-recompute the personalization profile from history
+ */
+export const useRefreshMyPersonalization = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof refreshMyPersonalization>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof refreshMyPersonalization>>,
+  TError,
+  void,
+  TContext
+> => {
+  return useMutation(getRefreshMyPersonalizationMutationOptions(options));
+};
 
 /**
  * @summary Postgres full-text search across this session's papers (title + abstract + fullText)

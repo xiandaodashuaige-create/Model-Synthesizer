@@ -29,7 +29,11 @@ import {
   operatorsAsPromptBlock,
   recommendBackbones,
   layerIndex,
-} from "../lib/theoryTemplates.js";
+} from "../lib/theoryTemplates";
+import {
+  buildUserPersonalizationContext,
+  scheduleProfileRefresh,
+} from "../lib/personalization";
 
 const router: IRouter = Router();
 
@@ -406,6 +410,7 @@ router.post("/sessions/:id/models/generate", async (req, res): Promise<void> => 
   const userBlock = userPrompt
     ? `\n\nUSER REQUIREMENTS (must be followed strictly — these override default behavior):\n"""\n${userPrompt}\n"""`
     : "";
+  const userPersonalizationBlock = await buildUserPersonalizationContext(req.user?.id);
   const focusBlock = focusVariableIds.length > 0
     ? `\n\nUSER-PRIORITY variable IDs: ${focusVariableIds.join(", ")}. At least ${Math.ceil(numModels / 2)} of the ${numModels} models MUST include these.`
     : "";
@@ -441,7 +446,7 @@ ${hypothesesBlock}
 ================================================================
 STRUCTURAL OPERATORS (each output model must use TWO of these — a primary and a different secondary — applied in sequence):
 ${operatorsAsPromptBlock()}
-${userBlock}${focusBlock}${learnedBlock}
+${userBlock}${focusBlock}${learnedBlock}${userPersonalizationBlock}
 
 ================================================================
 HARD RULES (violations = invalid output):
@@ -496,6 +501,7 @@ OUTPUT FORMAT — return ONLY a JSON array, no markdown:
       { signal: AbortSignal.timeout(55_000) },
     );
     logAiUsageFromOpenAI(completion, { route: "models/generate", sessionId, userId: req.user?.id ?? null });
+    scheduleProfileRefresh(req.user?.id, sessionId);
   } catch (err: unknown) {
     const e = err as { name?: string; message?: string };
     const aborted = e?.name === "AbortError" || e?.name === "TimeoutError" || /aborted|timeout/i.test(e?.message ?? "");

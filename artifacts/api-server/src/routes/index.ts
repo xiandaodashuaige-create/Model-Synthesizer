@@ -8,6 +8,7 @@ import modelsRouter from "./models";
 import modelAssistantRouter from "./model-assistant";
 import liveModelRouter from "./live-model";
 import aiUsageRouter from "./ai-usage";
+import personalizationRouter from "./personalization";
 
 const router: IRouter = Router();
 
@@ -20,5 +21,6 @@ router.use(modelsRouter);
 router.use(modelAssistantRouter);
 router.use(liveModelRouter);
 router.use(aiUsageRouter);
+router.use(personalizationRouter);
 
 export default router;

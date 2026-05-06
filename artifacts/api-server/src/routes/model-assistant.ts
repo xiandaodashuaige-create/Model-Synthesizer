@@ -6,6 +6,7 @@ import { ChatModelAssistantParams, ChatModelAssistantBody } from "@workspace/api
 import { openai } from "@workspace/integrations-openai-ai-server";
 import { logAiUsageFromOpenAI } from "../lib/ai-usage";
 import { backbonesAsPromptBlock, operatorsAsPromptBlock } from "../lib/theoryTemplates.js";
+import { buildUserPersonalizationContext, scheduleProfileRefresh } from "../lib/personalization";
 
 const router: IRouter = Router();
 
@@ -104,6 +105,7 @@ ${operatorsAsPromptBlock()}
 
 AVAILABLE THEORY BACKBONES:
 ${backbonesAsPromptBlock()}
+${await buildUserPersonalizationContext(req.user?.id)}
 ================================================
 
 Be specific. Reference variables and papers BY NAME. Never invent variables that aren't in the list above.`;
@@ -152,6 +154,7 @@ Be specific. Reference variables and papers BY NAME. Never invent variables that
       { signal: AbortSignal.timeout(50_000) },
     );
     logAiUsageFromOpenAI(completion, { route: "model-assistant/chat", sessionId: Number(req.params["id"]) || null, userId: req.user?.id ?? null });
+    scheduleProfileRefresh(req.user?.id, Number(req.params["id"]) || undefined);
 
     const raw = completion.choices[0]?.message?.content ?? "";
 

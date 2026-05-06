@@ -5,6 +5,7 @@ import { useListSessions, getListSessionsQueryKey } from "@workspace/api-client-
 import { format } from "date-fns";
 import { useT } from "@/lib/i18n";
 import { GettingStarted } from "@/components/getting-started";
+import { PersonalizationCard } from "@/components/personalization-card";
 
 export default function Home() {
   const { t, lang } = useT();
@@ -17,6 +18,7 @@ export default function Home() {
   return (
     <div className="space-y-8">
       <GettingStarted />
+      <PersonalizationCard />
 
       <div className="flex items-center justify-between">
         <div>

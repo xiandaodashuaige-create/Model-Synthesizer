@@ -49,6 +49,96 @@ export const GetSessionAiUsageResponse = zod.object({
 });
 
 /**
+ * @summary Get the current user's AI personalization profile
+ */
+export const GetMyPersonalizationResponse = zod.object({
+  lastRefreshedAt: zod.string(),
+  counters: zod.object({
+    sessions: zod.number(),
+    papers: zod.number(),
+    modelsGenerated: zod.number(),
+    modelsAccepted: zod.number(),
+    chatTurns: zod.number(),
+  }),
+  profile: zod.object({
+    preferredLanguage: zod.enum(["zh", "en", "mixed"]),
+    avgVariablesPerAcceptedModel: zod.number(),
+    avgEdgesPerAcceptedModel: zod.number(),
+    acceptanceRate: zod.number(),
+    recentTopics: zod.array(zod.string()),
+    topVariableTypes: zod.array(
+      zod.object({
+        type: zod.string(),
+        count: zod.number(),
+      }),
+    ),
+    topDomainKeywords: zod.array(
+      zod.object({
+        token: zod.string(),
+        count: zod.number(),
+      }),
+    ),
+    topAcceptedBackbones: zod.array(
+      zod.object({
+        id: zod.string(),
+        count: zod.number(),
+      }),
+    ),
+    topAcceptedOperators: zod.array(
+      zod.object({
+        op: zod.string(),
+        count: zod.number(),
+      }),
+    ),
+  }),
+});
+
+/**
+ * @summary Force-recompute the personalization profile from history
+ */
+export const RefreshMyPersonalizationResponse = zod.object({
+  lastRefreshedAt: zod.string(),
+  counters: zod.object({
+    sessions: zod.number(),
+    papers: zod.number(),
+    modelsGenerated: zod.number(),
+    modelsAccepted: zod.number(),
+    chatTurns: zod.number(),
+  }),
+  profile: zod.object({
+    preferredLanguage: zod.enum(["zh", "en", "mixed"]),
+    avgVariablesPerAcceptedModel: zod.number(),
+    avgEdgesPerAcceptedModel: zod.number(),
+    acceptanceRate: zod.number(),
+    recentTopics: zod.array(zod.string()),
+    topVariableTypes: zod.array(
+      zod.object({
+        type: zod.string(),
+        count: zod.number(),
+      }),
+    ),
+    topDomainKeywords: zod.array(
+      zod.object({
+        token: zod.string(),
+        count: zod.number(),
+      }),
+    ),
+    topAcceptedBackbones: zod.array(
+      zod.object({
+        id: zod.string(),
+        count: zod.number(),
+      }),
+    ),
+    topAcceptedOperators: zod.array(
+      zod.object({
+        op: zod.string(),
+        count: zod.number(),
+      }),
+    ),
+  }),
+});
+
+/**
  * @summary Postgres full-text search across this session's papers (title + abstract + fullText)
  */
 export const SearchSessionPapersFullTextParams = zod.object({

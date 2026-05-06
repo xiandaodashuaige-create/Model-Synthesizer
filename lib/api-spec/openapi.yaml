@@ -21,6 +21,8 @@ tags:
     description: Browser authentication
   - name: usage
     description: AI usage and cost tracking
+  - name: personalization
+    description: Per-user AI learning profile
 paths:
   /auth/user:
     get:
@@ -52,6 +54,37 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AiUsageSummary"
+  /me/personalization:
+    get:
+      tags: [personalization]
+      operationId: getMyPersonalization
+      summary: Get the current user's AI personalization profile
+      responses:
+        "200":
+          description: Profile (lazily refreshed if older than 1 hour)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserPersonalization"
+    delete:
+      tags: [personalization]
+      operationId: forgetMyPersonalization
+      summary: Forget — delete the current user's personalization profile
+      responses:
+        "204":
+          description: Profile deleted
+  /me/personalization/refresh:
+    post:
+      tags: [personalization]
+      operationId: refreshMyPersonalization
+      summary: Force-recompute the personalization profile from history
+      responses:
+        "200":
+          description: Refreshed profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserPersonalization"
   /sessions/{id}/papers/full-text-search:
     get:
       tags: [papers]
@@ -1795,6 +1828,72 @@ components:
               completionTokens: { type: integer }
               totalTokens: { type: integer }
               costUsd: { type: number }
+    UserPersonalization:
+      type: object
+      required: [profile, counters, lastRefreshedAt]
+      properties:
+        lastRefreshedAt: { type: string }
+        counters:
+          type: object
+          required: [sessions, papers, modelsGenerated, modelsAccepted, chatTurns]
+          properties:
+            sessions: { type: integer }
+            papers: { type: integer }
+            modelsGenerated: { type: integer }
+            modelsAccepted: { type: integer }
+            chatTurns: { type: integer }
+        profile:
+          type: object
+          required:
+            - topVariableTypes
+            - topDomainKeywords
+            - topAcceptedBackbones
+            - topAcceptedOperators
+            - preferredLanguage
+            - avgVariablesPerAcceptedModel
+            - avgEdgesPerAcceptedModel
+            - acceptanceRate
+            - recentTopics
+          properties:
+            preferredLanguage: { type: string, enum: [zh, en, mixed] }
+            avgVariablesPerAcceptedModel: { type: number }
+            avgEdgesPerAcceptedModel: { type: number }
+            acceptanceRate: { type: number }
+            recentTopics:
+              type: array
+              items: { type: string }
+            topVariableTypes:
+              type: array
+              items:
+                type: object
+                required: [type, count]
+                properties:
+                  type: { type: string }
+                  count: { type: integer }
+            topDomainKeywords:
+              type: array
+              items:
+                type: object
+                required: [token, count]
+                properties:
+                  token: { type: string }
+                  count: { type: integer }
+            topAcceptedBackbones:
+              type: array
+              items:
+                type: object
+                required: [id, count]
+                properties:
+                  id: { type: string }
+                  count: { type: integer }
+            topAcceptedOperators:
+              type: array
+              items:
+                type: object
+                required: [op, count]
+                properties:
+                  op: { type: string }
+                  count: { type: integer }
     PaperFullTextHit:
       type: object
       required: [id, title, snippet, rank]
