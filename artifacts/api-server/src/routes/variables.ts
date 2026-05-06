@@ -144,12 +144,12 @@ Return ONLY this JSON (no markdown, no commentary):
 {
   "variables": [
     {
-      "name": "Variable Name",
+      "name": "Variable Name AS THIS PAPER USES IT — keep the domain qualifier (e.g. 'chatbot anthropomorphism', NOT 'anthropomorphism'; 'AI chatbot empathy', NOT 'empathy'; 'perceived chatbot competence', NOT 'competence'). Strip ONLY filler words like leading 'the/a/an'.",
       "type": "independent|mediator|moderator|dependent",
       "definition": "Brief definition in this paper's context",
       "citationText": "A verbatim sentence from the paper supporting this variable",
-      "canonicalConstruct": "lower-case canonical construct name, stripped of 'perceived/the/a' (e.g. 'trust', 'purchase intention', 'self-efficacy'). Use the SAME string for the same theoretical construct across papers.",
-      "constructLayer": "stimulus|cognitive|affective|intention|behavior — which step of the standard psychology pipeline this variable occupies. (stimulus = external cue; cognitive = belief/expectancy; affective = feeling/attitude; intention = stated willingness; behavior = enacted action/outcome.)"
+      "canonicalConstruct": "Short, generic, lower-case construct name with the domain stripped, used to merge the SAME construct across papers (e.g. 'anthropomorphism', 'empathy', 'trust', 'purchase intention', 'self-efficacy'). This is DIFFERENT from 'name' — 'name' keeps the paper's wording, 'canonicalConstruct' is the bare theoretical label.",
+      "constructLayer": "stimulus|cognitive|affective|intention|behavior — which step of the standard psychology pipeline this variable occupies. (stimulus = external cue / system feature / design characteristic; cognitive = belief/expectancy/perception; affective = feeling/attitude/emotion; intention = stated willingness; behavior = enacted action/outcome.)"
     }
   ],
   "hypotheses": [
@@ -166,28 +166,57 @@ Return ONLY this JSON (no markdown, no commentary):
   ]
 }
 
-What counts as a relationship (extract ALL of these — do NOT limit to formally labeled hypotheses):
+What counts as a VARIABLE — be GENEROUS, not stingy. A variable is anything the paper:
+- formally labels as a construct, factor, dimension, characteristic, feature, attribute, cue, quality, or trait;
+- treats as an antecedent, predictor, manipulation, moderator, mediator, or outcome;
+- operationalizes with a measurement scale, a manipulation check, or a stimulus condition.
+
+CRITICAL — system / agent / technology characteristics ARE independent variables.
+For papers about AI, chatbots, conversational agents, voice assistants, recommendation systems, AR/VR, livestreaming, or any human–technology interaction, the characteristics OF the system are the most important independent (stimulus-layer) variables. Do NOT skip them and jump straight to generic outcomes like "trust" or "satisfaction". Examples of stimulus-layer IVs that MUST be extracted when the paper discusses them:
+- chatbot/AI: anthropomorphism, humanlikeness, empathy, warmth, competence, social presence, conversational style, response speed, personalization, interactivity, transparency/explainability, voice, avatar realism, gender/persona, error handling, proactivity, self-disclosure, identity disclosure (human vs AI), dialogue script type, message framing
+- recommendation / livestream: explanation type, source credibility, parasocial cues, product information richness, streamer attractiveness, scarcity cues
+- VR/AR/metaverse: immersion, telepresence, embodiment, visual fidelity
+
+If the paper talks about "the design of the chatbot", "characteristics of the AI agent", "features of the system", "qualities of the assistant", "cues of the streamer" — those are independent variables. Extract each one as a separate row.
+
+What counts as a RELATIONSHIP (extract ALL of these — do NOT limit to formally labeled hypotheses):
 1. Formal hypotheses (H1, H2a, ...).
 2. Sentences in the abstract that assert a directional effect, e.g. "X positively predicts Y", "A increases B", "C reduces D", "E mediates the effect of F on G", "H moderates the relationship between I and J".
 3. Reported empirical findings stating a relationship between two of the extracted variables, e.g. "Trust significantly increased purchase intention (β = .42, p < .001)".
 4. Theoretical claims in the introduction/discussion that tie two of the extracted variables together with a stated direction.
 
 Strict rules:
-- Extract 3-8 variables and up to 20 relationships.
+- Extract 4-12 variables and up to 20 relationships. Lean toward MORE variables when the paper studies multiple system / design / agent characteristics — it is a serious error to drop chatbot/agent-specific stimulus variables (anthropomorphism, empathy, interactivity, voice, etc.) in favor of only generic outcome variables.
+- For chatbot / AI / human–agent interaction papers specifically, the result MUST contain at least one stimulus-layer variable describing the agent itself, UNLESS the paper truly does not study any agent characteristic (rare).
+- "name" keeps the paper's domain wording (e.g. "chatbot anthropomorphism"). "canonicalConstruct" strips the domain (e.g. "anthropomorphism"). Never collapse the two — both fields are required and serve different purposes.
 - Every relationship's "from"/"to"/"via" MUST exactly match a "name" in "variables". If a sentence ties together a variable you didn't extract, either add that variable to "variables" or skip the relationship.
-- "constructLayer" is REQUIRED for every variable. If unclear, use the closest fit; never leave it blank.
-- "canonicalConstruct" is REQUIRED — use a short, generic, lowercased construct name (e.g. "trust", not "consumer trust in AI streamer").
+- "constructLayer" is REQUIRED for every variable. If unclear, use the closest fit; never leave it blank. Agent / system / design characteristics → "stimulus".
+- "canonicalConstruct" is REQUIRED — use a short, generic, lowercased construct name.
 - "statement" / "citationText" must be COPIED verbatim from the paper — do NOT paraphrase or invent.
 - "relationship": use "moderates" when the source is a moderator on a path; "mediates" when the source is a mediator; "positive" / "negative" for direct effects with the stated sign. If the sign is unclear from the sentence, default to "positive".
-- If the paper genuinely states NO directional relationships between the extracted variables (e.g. a pure descriptive review with no claims), return "hypotheses": []. Otherwise extract them — do not return [] just because the paper lacks H1/H2 labels.`;
+- If the paper genuinely states NO directional relationships between the extracted variables (e.g. a pure descriptive review with no claims), return "hypotheses": []. Otherwise extract them — do not return [] just because the paper lacks H1/H2 labels.
+
+Mini-example of the correct shape for a typical chatbot paper:
+{
+  "variables": [
+    {"name":"chatbot anthropomorphism","type":"independent","constructLayer":"stimulus","canonicalConstruct":"anthropomorphism","definition":"...","citationText":"..."},
+    {"name":"chatbot empathy","type":"independent","constructLayer":"stimulus","canonicalConstruct":"empathy","definition":"...","citationText":"..."},
+    {"name":"perceived warmth","type":"mediator","constructLayer":"cognitive","canonicalConstruct":"warmth","definition":"...","citationText":"..."},
+    {"name":"trust in chatbot","type":"mediator","constructLayer":"cognitive","canonicalConstruct":"trust","definition":"...","citationText":"..."},
+    {"name":"continuance intention","type":"dependent","constructLayer":"intention","canonicalConstruct":"continuance intention","definition":"...","citationText":"..."}
+  ],
+  "hypotheses": [ ... ]
+}
+NOTICE: the chatbot characteristics are kept as separate IV rows even though the paper "is really about" trust and intention. That is the correct behavior.`;
 
   try {
     const completion = await openai.chat.completions.create({
       model: "gpt-5.4",
-      // Bumped from 3500 → 8000. Papers with ~20 hypotheses + verbatim quotes
-      // routinely blew past 3500 and the response was cut mid-string, causing
-      // JSON.parse to fail and returning a 500. 8000 is well within budget.
-      max_completion_tokens: 8000,
+      // 8000 → 10000. The expanded "system-characteristic IV" prompt encourages
+      // 4-12 variables (vs prior 3-8) and up to 20 hypotheses with verbatim
+      // statements; raising the ceiling avoids mid-JSON truncation on
+      // construct-rich chatbot/HCI papers.
+      max_completion_tokens: 10000,
       messages: [{ role: "user", content: prompt }],
     });
     logAiUsageFromOpenAI(completion, { route: "variables/extract", sessionId: paper.sessionId });
@@ -232,6 +261,31 @@ Strict rules:
     if (extractedVars.length === 0) {
       res.status(422).json({ error: "AI returned no variables" });
       return;
+    }
+
+    // Diagnostic: chatbot/AI/agent/recommender/HCI papers should produce at
+    // least one variable that is BOTH `type=independent` AND
+    // `constructLayer=stimulus` — i.e. an actual system/agent characteristic
+    // serving as a predictor. If they don't, that's a prompt-following
+    // regression we want to see in logs so we can iterate on the prompt
+    // instead of silently shipping incomplete extractions. We also fall back
+    // to scanning a short slice of the full text when title+abstract are too
+    // sparse to trip the regex.
+    const titleAbstract = `${paper.title} ${paper.abstract ?? ""}`;
+    const detectionHaystack = (titleAbstract.trim().length < 80 && paper.fullText)
+      ? `${titleAbstract} ${paper.fullText.slice(0, 4000)}`
+      : titleAbstract;
+    const AGENT_PAPER_RE = /(chat[- ]?bot|conversational agent|voice assistant|virtual assistant|ai assistant|ai agent|llm[- ]?based agent|dialogue system|smart speaker|ai companion|ai chatbot|generative ai|chatgpt|social robot|embodied agent|virtual (influencer|human|streamer)|digital human|recommender system|recommendation agent|human[- ]?ai interaction|human[- ]?computer interaction|hci experiment)/i;
+    if (AGENT_PAPER_RE.test(detectionHaystack)) {
+      const stimulusCount = extractedVars.filter((v) => (v.constructLayer ?? "").toLowerCase().trim() === "stimulus").length;
+      const independentCount = extractedVars.filter((v) => (v.type ?? "").toLowerCase() === "independent").length;
+      const stimulusIndependentCount = extractedVars.filter((v) => (v.type ?? "").toLowerCase() === "independent" && (v.constructLayer ?? "").toLowerCase().trim() === "stimulus").length;
+      if (stimulusIndependentCount === 0) {
+        req.log.warn(
+          { paperId: paper.id, sessionId: paper.sessionId, title: paper.title, totalVariables: extractedVars.length, stimulusCount, independentCount, stimulusIndependentCount },
+          "Agent/HCI paper extracted with 0 (independent ∩ stimulus) variables — prompt-following regression?",
+        );
+      }
     }
 
     // Wrap delete + insert + update in a single transaction so we never end up
