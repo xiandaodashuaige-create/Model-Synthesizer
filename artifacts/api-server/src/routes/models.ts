@@ -86,6 +86,9 @@ interface PartialPassMeta {
   basedOnPaperIds: number[];
   missingPaperIds: number[];
   missingPapers: Array<{ id: number; title: string }>;
+  // Set on rescued models (zero hard-pass case): structural warnings that
+  // were downgraded from rejection so the user still gets something to look at.
+  qualityWarnings?: string[];
 }
 
 function formatModel(model: typeof researchModelsTable.$inferSelect) {
@@ -679,24 +682,41 @@ OUTPUT FORMAT — return ONLY a JSON array, no markdown:
       return { ok: true };
     }
 
+    // Distinguish HARD failures (data corruption — unknown ids, missing fields,
+    // moderator without justification — these models are unusable) from SOFT
+    // failures (theoretical-shape violations like 2-step layer jumps or long
+    // mediator chains — the model is still readable, just imperfect). When we
+    // end up with zero hard-pass models, we rescue all soft-fail models so the
+    // user gets *something* to look at, with the warnings surfaced inline in
+    // the rationale instead of a blank screen.
+    const SOFT_FAIL_PATTERNS = [
+      /2-step layer jump/i,
+      /backward layer edge/i,
+      /mediator chain too long/i,
+      /node count out of range/i,
+      /edge count out of range/i,
+      /requires nodes from/i,
+    ];
+    const isSoftFail = (reason: string) => SOFT_FAIL_PATTERNS.some((re) => re.test(reason));
+
     const accepted: typeof generated = [];
-    const rejected: Array<{ m: typeof generated[number]; v: { reason: string } }> = [];
+    const rejected: Array<{ m: typeof generated[number]; v: { reason: string }; soft: boolean }> = [];
     const seenOpPairs = new Set<string>();
     const seenBaseSets = new Set<string>();
     for (const m of generated) {
       const v = validate(m);
       if (!v.ok) {
-        rejected.push({ m, v: { reason: v.reason } });
+        rejected.push({ m, v: { reason: v.reason }, soft: isSoftFail(v.reason) });
         continue;
       }
       const opPair = `${m.operator}+${m.secondaryOperator}`;
       const baseSet = [...new Set(m.nodes.map((n) => n.paperId))].sort((a, b) => a - b).join(",");
       if (seenOpPairs.has(opPair)) {
-        rejected.push({ m, v: { reason: `duplicate operator pair across models: ${opPair}` } });
+        rejected.push({ m, v: { reason: `duplicate operator pair across models: ${opPair}` }, soft: true });
         continue;
       }
       if (seenBaseSets.has(baseSet)) {
-        rejected.push({ m, v: { reason: `duplicate base-paper set across models: [${baseSet}]` } });
+        rejected.push({ m, v: { reason: `duplicate base-paper set across models: [${baseSet}]` }, soft: true });
         continue;
       }
       seenOpPairs.add(opPair);
@@ -704,14 +724,49 @@ OUTPUT FORMAT — return ONLY a JSON array, no markdown:
       accepted.push(m);
     }
     if (rejected.length > 0) {
-      req.log.warn({ rejected: rejected.map((r) => ({ name: r.m?.name, reason: r.v.reason })) }, "Some generated models rejected by validator");
+      req.log.warn({ rejected: rejected.map((r) => ({ name: r.m?.name, reason: r.v.reason, soft: r.soft })) }, "Some generated models rejected by validator");
     }
+
+    // Rescue path: when zero hard-pass models, salvage every soft-fail model
+    // so the user sees something to work from instead of a 502 error wall.
+    // We attach the warnings into both partialPassMeta (machine-readable) and
+    // a [质量警告:...] prefix on the rationale (so it shows up in the UI even
+    // before the frontend learns about the new field).
+    type RescuedItem = typeof generated[number] & { _qualityWarnings?: string[] };
     if (accepted.length === 0) {
-      res.status(502).json({
-        error: "AI did not produce any structurally valid models. Try rephrasing your custom prompt or regenerating.",
-        rejected: rejected.map((r) => ({ name: r.m?.name ?? "(unnamed)", reason: (r.v as { reason: string }).reason })),
-      });
-      return;
+      const softFails = rejected.filter((r) => r.soft && r.m && typeof r.m.name === "string" && Array.isArray(r.m.nodes) && Array.isArray(r.m.edges) && r.m.nodes.length > 0);
+      if (softFails.length === 0) {
+        res.status(502).json({
+          error: "AI 生成的模型都没通过基础数据校验（如缺字段、变量 id 不存在）。请重试一次，或精简你的『自定义提示词』。",
+          rejected: rejected.map((r) => ({ name: r.m?.name ?? "(unnamed)", reason: r.v.reason })),
+        });
+        return;
+      }
+      // Rescue must respect the same dedup rules the strict path enforced —
+      // otherwise we could reintroduce models that were rejected as duplicate
+      // operator-pairs / base-paper-sets.
+      const rescueOpPairs = new Set<string>();
+      const rescueBaseSets = new Set<string>();
+      let salvaged = 0;
+      for (const r of softFails) {
+        const opPair = `${r.m.operator ?? "?"}+${r.m.secondaryOperator ?? "?"}`;
+        const baseSet = [...new Set((r.m.nodes ?? []).map((n) => n.paperId))].sort((a, b) => a - b).join(",");
+        if (rescueOpPairs.has(opPair) || rescueBaseSets.has(baseSet)) continue;
+        rescueOpPairs.add(opPair);
+        rescueBaseSets.add(baseSet);
+        const item = r.m as RescuedItem;
+        item._qualityWarnings = [r.v.reason];
+        accepted.push(item);
+        salvaged++;
+      }
+      req.log.warn({ candidates: softFails.length, salvaged }, "Rescue mode: salvaged soft-fail models because zero passed strict validation");
+      if (accepted.length === 0) {
+        res.status(502).json({
+          error: "AI 生成的模型都没通过基础数据校验。请重试一次，或精简你的『自定义提示词』。",
+          rejected: rejected.map((r) => ({ name: r.m?.name ?? "(unnamed)", reason: r.v.reason })),
+        });
+        return;
+      }
     }
 
     await db.delete(researchModelsTable).where(eq(researchModelsTable.sessionId, sessionId));
@@ -722,7 +777,14 @@ OUTPUT FORMAT — return ONLY a JSON array, no markdown:
         const tagPrefix = `[OPERATOR: ${opTag}] [BASE: ${(m.basePaperTags ?? []).join("+") || "?"}] [BACKBONE: ${m.backbone ?? "NONE"}]`;
         // Always normalize: strip any pre-existing [OPERATOR:...] [BASE:...] [BACKBONE:...] header so the persisted prefix is canonical.
         const stripped = (m.rationale ?? "").replace(/^\s*\[OPERATOR:[^\]]*\]\s*(\[BASE:[^\]]*\])?\s*(\[BACKBONE:[^\]]*\])?\s*/i, "").trim();
-        const rationale = `${tagPrefix} ${stripped}`;
+        const warns = (m as RescuedItem)._qualityWarnings ?? [];
+        const warnPrefix = warns.length > 0 ? `[质量警告: ${warns.join("; ")}] ` : "";
+        const rationale = `${warnPrefix}${tagPrefix} ${stripped}`;
+        // Stash quality warnings into partialPassMeta (jsonb — schema-flexible).
+        const meta: (PartialPassMeta & { qualityWarnings?: string[] }) | null =
+          warns.length > 0
+            ? { ...(partialPassMeta ?? { allowPartial: false, basedOnPaperIds: papersWithVars.map((p) => p.id), missingPaperIds: [], missingPapers: [] }), qualityWarnings: warns }
+            : partialPassMeta;
         return db.insert(researchModelsTable).values({
           sessionId,
           name: m.name,
@@ -731,7 +793,7 @@ OUTPUT FORMAT — return ONLY a JSON array, no markdown:
           selected: "false",
           nodes: m.nodes,
           edges: m.edges,
-          partialPassMeta,
+          partialPassMeta: meta,
         }).returning();
       })
     );
