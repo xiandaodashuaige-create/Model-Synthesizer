@@ -1,0 +1,1250 @@
+我看到的关键现状
+文献主搜索：OpenAlex 单一来源，前端默认一次搜 15 篇
+artifacts/api-server/src/routes/papers.ts
+artifacts/research-model/src/pages/sessions/papers.tsx
+模型图片/参考图搜索：SerpAPI Google Images 优先，Brave 兜底，并用 AI 做分类
+artifacts/api-server/src/routes/model-assistant.ts
+变量抽取：从摘要或 PDF fullText 中抽取变量和 citationText
+artifacts/api-server/src/routes/variables.ts
+模型组合：让 AI 基于“论文原模型图 + 变量池 + 理论骨架 + 结构操作符”生成模型
+artifacts/api-server/src/routes/models.ts
+artifacts/api-server/src/lib/theoryTemplates.ts
+证据展示：模型详情页已经展示每条边的 evidenceCitationText 和论文信息
+artifacts/research-model/src/pages/sessions/model-detail.tsx
+一、模型图片/参考图搜索优化建议
+当前主要问题
+搜索源太少
+
+主文献搜索主要依赖 OpenAlex。
+图片搜索依赖 SerpAPI/Brave 的图片索引，不是真正的“论文模型图数据库”。
+当前 PUBLISHER_SITE_FILTER 只覆盖 ResearchGate、ScienceDirect、Springer、Wiley、Taylor & Francis、Emerald、SAGE、Frontiers、MDPI、PMC 等少数站点。
+筛选依赖标题/域名，不够理解图片内容
+
+AI relevance gate 主要看到候选的 title 和 sourceDomain，没有真正读取图片里的变量、箭头、图注、论文上下文。
+所以容易搜到“像模型图但主题不对”的结果。
+session 主题没有真正接入图片搜索上下文
+
+loadSessionImageCtx() 里 topic: null，目前主要只用变量名和论文标题，缺少用户创建 session 时填写的研究主题。
+前端筛选能力弱
+
+没有领域、年份、方法、模型类型、变量匹配度、是否有图、是否开放 PDF 等过滤器。
+收藏的参考资料存在 localStorage，不进入数据库，后续不能系统化用于模型生成依据。
+建议改造
+1. 扩大“文献 + 模型图”检索来源
+建议把搜索拆成多个 source lane：
+
+免费/开放优先：
+OpenAlex
+Semantic Scholar
+Crossref
+CORE
+Europe PMC
+PubMed / PMC
+arXiv
+DOAJ
+Unpaywall
+可选增强：
+SerpAPI Google Scholar / Google Images
+Lens.org
+Dimensions / Scopus / Web of Science 如果以后有授权
+不要只做图片搜索，而是做：
+
+先找高相关论文 → 拉取 OA PDF/HTML → 抽取 Figure 和 Caption → 判断是否是 conceptual model / SEM / framework。
+
+这样比直接搜索网页图片稳定得多。
+
+2. 建立“模型图候选库”
+建议新增结构化对象：
+
+paperId
+figureUrl / thumbnailUrl
+figureNumber，例如 Fig. 1
+caption
+page
+sourceUrl
+extractedText/OCR
+detectedConstructs
+figureType：conceptual_model / sem_path / framework / process_flow / other
+topicRelevanceScore
+constructOverlapScore
+confidence
+这样系统不再只是“搜图片”，而是逐步积累自己的“研究模型图数据库”。
+
+3. 强化筛选评分
+建议每个结果给出综合评分：
+
+总分 =
+主题相似度
++ 变量重合度
++ 图像类型置信度
++ 论文质量分
++ 是否有可访问全文/PDF
++ 是否包含 hypothesis/model/framework/SEM 等信号
+- 噪音惩罚
+并在界面展示：
+
+为什么匹配？
+匹配了哪些变量？
+哪些变量没有匹配？
+是概念模型、SEM 路径图还是理论框架？
+推荐程度：高/中/低
+4. 加用户反馈学习
+用户应该能对搜索结果标记：
+
+相关
+不相关
+主题对但不是模型图
+是模型图但变量不对
+领域不对
+方法不对
+这些反馈进入数据库，后续用于调整筛选规则和 query expansion。
+
+二、模型组合逻辑优化建议
+当前主要问题
+变量关系容易被“角色组合”误导
+
+variable-graph 里会按类型自动连：
+independent → mediator
+independent → dependent
+mediator → dependent
+这只是启发式，不等于论文真实假设关系。
+模型生成靠 prompt 约束，但程序校验不够强
+
+当前生成 prompt 已经要求操作符、理论骨架、至少 3 篇论文、证据引用。
+但 validator 主要检查：
+节点数
+边数
+来源论文数
+evidenceCitationText 非空
+没有严格验证：
+IV/Mediator/Moderator/DV 的角色语法
+moderator 到底调节哪一条路径
+evidence 是否真的支持该边
+这条边是否来自历史模型或理论类比
+调节变量表达不够学术化
+
+现在 edge 是 fromVariableId → toVariableId。
+但调节变量在论文中通常不是简单 M → Y，而是：
+Moderator M moderates the relationship between X and Y
+也就是调节的是“一条关系”，不是单纯指向一个变量。
+
+强制“两个操作符 + 三篇论文”可能导致硬拼
+如果材料不够，系统仍倾向生成模型。
+更适合让系统判断“证据不足，需要补充哪些文献”。
+建议改造
+1. 建立“历史关系知识图谱”
+不要只存变量，要存论文真实关系：
+
+Paper A:
+Trust → Purchase Intention
+Evidence: H1 / 原文句子 / 页码 / 图号
+Role: hypothesized / tested
+Sign: positive
+Method: SEM
+建议新增或抽象出：
+
+constructs / variables
+construct aliases
+extracted_relations
+relation_evidence
+paper_models
+theory_backbone_matches
+每条关系都应该是知识图谱的一条边，而不是生成时临时猜。
+
+2. 做变量标准化与同义词归并
+现在变量按字符串 name 匹配，容易出现：
+
+trust
+perceived trust
+consumer trust
+trust in AI streamer
+建议引入 construct canonicalization：
+
+canonicalConstruct: Trust
+aliases:
+- perceived trust
+- consumer trust
+- trust in AI anchor
+context:
+- live commerce
+- AI streamer
+roleHistory:
+- mediator in P1
+- independent in P3
+- dependent in P7
+这样模型组合时能知道一个变量在历史研究中常见角色是什么。
+
+3. 增加“模型语法 validator”
+建议在生成后增加程序化校验：
+
+dependent 不能指向 independent
+mediator 必须处于 X → M → Y 路径中
+moderator 必须绑定到一条 base edge：moderatesEdgeId
+同一个模型不能出现无解释的循环
+每条边必须有：
+direct evidence，或
+analogy evidence，或
+theory backbone evidence
+如果是类比关系，必须说明类比依据
+建议把边关系分为三类：
+
+direct: 论文中明确出现过这条关系
+analogical: 历史关系中存在相似构念关系，当前做理论类比
+theory_graft: 来自 TAM/SOR/TPB/UTAUT 等经典理论骨架
+4. 把生成过程改成多阶段
+不要让 LLM 一步生成完整模型。建议流程：
+
+识别研究目标
+
+研究主题
+目标因变量
+研究情境
+目标理论视角
+检索候选历史关系
+
+找与目标因变量相关的历史路径
+找常见前因变量
+找常见中介
+找常见调节
+选择理论骨架
+
+S-O-R
+TAM
+TPB
+UTAUT
+ELM
+Parasocial
+Trust Transfer
+Flow
+组装候选模型
+
+串联中介
+并联中介
+调节中介
+理论嫁接
+规则校验
+
+角色顺序
+证据完整性
+历史合理性
+变量兼容性
+LLM 复审
+
+让 AI 作为 reviewer 判断是否像一篇论文里的模型，而不是乱拼图。
+5. 当证据不足时不要硬生成
+建议加一个“材料充分性检查”：
+
+当前文献不足以支持：
+- X → M
+- M → Y
+- W moderates X → Y
+建议补充搜索：
+- AI streamer trust purchase intention SEM
+- virtual influencer parasocial interaction purchase intention
+这比强行生成一个看起来完整但没有论文依据的模型更符合博士论文研究场景。
+
+三、参考依据与展示优化建议
+当前主要问题
+证据只有 citationText，不够论文写作
+
+缺 DOI
+缺页码
+缺 hypothesis 编号
+缺 figure 编号
+缺是否来自理论、实证结果还是作者假设
+模型列表页只展示前 3 条 evidence
+
+详情页有完整边证据，但整体模型依据不够一眼清晰。
+手工添加的 live model edge 可以没有来源
+
+UI 会标“无出处”，但还没有完整的补证据流程。
+用户编辑 evidence 后缺少再验证
+
+详情页可编辑 edge evidence，但后端没有验证 citation 是否来自原文。
+建议改造
+1. 建立统一 provenance 数据结构
+每条模型边建议包含：
+
+relation:
+  fromConstruct
+  toConstruct
+  relationshipType
+  sign
+  roleType
+evidence:
+  evidenceType: direct / analogical / theory_backbone
+  paperId
+  paperTitle
+  authors
+  year
+  doi
+  url
+  hypothesisId
+  figureNumber
+  page
+  quote
+  quoteLocation
+  explanation
+  confidence
+2. 每条边显示“依据卡片”
+模型详情页建议改成：
+
+感知拟人化 → 信任
+关系类型：positive
+证据类型：direct
+来源论文：Zhang et al. (2023)
+依据句："..."
+图号/假设：H2 / Fig. 1
+为什么支持：该论文明确提出感知拟人化正向影响消费者信任。
+置信度：高
+如果是类比关系：
+
+证据类型：analogical
+历史关系：source credibility → trust
+当前类比：AI streamer anthropomorphism → trust
+类比依据：二者都属于 source cue / social presence cue
+风险：中，需要补充 AI streamer 语境文献
+3. 增加“模型依据总览表”
+博士论文写作非常需要表格。建议每个新模型自动生成：
+
+模型路径	关系类型	来源论文	证据句	证据类型	置信度
+X → M	positive	Paper A	quote	direct	high
+M → Y	positive	Paper B	quote	direct	high
+W moderates X → Y	moderates	Paper C	quote	analogical	medium
+并支持导出：
+
+Markdown
+Word
+BibTeX
+RIS
+APA / GB/T 7714 参考文献格式
+4. 图上直接可点击证据
+模型图上的每条边建议可点击，打开右侧 drawer：
+
+来源论文
+原文句子
+图号/页码
+该关系为什么成立
+是否是直接证据
+证据风险
+这样用户能清楚看到“这个关系来自哪篇文章”。
+
+四、我建议的优先级
+P0：先修正低成本但影响大的问题
+model-assistant 图片搜索上下文接入 sessions.topic
+搜索结果增加主题/变量匹配原因
+图片搜索不要把未通过 AI gate 的 fallback 混在一起，至少清晰标“未验证”
+文献搜索页增加基础过滤：
+年份
+期刊/会议
+引用量
+是否有 PDF
+是否可能包含模型图
+修正学习统计/反馈可能跨 session 混用的问题
+P1：增强搜索数据库与模型图抽取
+多数据源检索
+PDF/HTML figure caption 抽取
+模型图 OCR
+figure 类型分类
+收藏结果入库，而不是只放 localStorage
+P2：重构模型生成逻辑
+先抽取论文真实关系图谱
+建立变量同义词/构念归并
+增加模型语法 validator
+调节关系改成绑定到“边”
+生成前先做材料充分性判断
+P3：强化证据展示和论文写作输出
+每条边的 provenance 卡片
+模型依据总览表
+图上点击边查看证据
+一键导出论文模型说明与参考文献
+最核心的一句话建议
+这个系统下一步不要只优化 prompt，而应该把“论文里的历史模型关系”结构化成知识图谱，再让新模型生成基于这些历史关系和理论骨架做受约束的组合；同时每条新关系都必须带 direct / analogical / theory_backbone 级别的证据说明。这样生成结果才会像博士论文里的研究模型，而不是变量随机拼接。
+
+代码更新了  请你帮我重新审核  优化下一个版本能力
+
+
+Worked for 3m 42s
+已重新拉取并审核最新代码，当前版本在 b6f4d04。这轮我没有改代码。
+
+这版已经明显增强的地方
+新增了 paper_hypotheses：开始抽取论文中的正式假设。
+变量新增了：
+canonicalConstructId
+constructLayer
+模型生成新增了：
+construct-layer 顺序校验
+moderator justification
+formal hypotheses pool
+更多理论骨架，8 个扩展到 17 个
+图片搜索新增了：
+session 级 image blocklist
+前端一键屏蔽图片
+模型详情页新增展示：
+hypothesis id
+effect size
+evidence location
+moderator justification
+APA reference 导出
+整体方向是对的，已经从“纯 prompt 生成”往“结构化证据 + 规则约束”进了一步。
+
+主要审核问题
+1. 高优先级：模型学习数据跨 session 混用
+位置：artifacts/api-server/src/routes/models.ts
+
+问题在这里：
+
+const pastFeedback = await db
+  .select()
+  .from(generationFeedbackTable)
+  .where(isNotNull(generationFeedbackTable.selectedModelSnapshot))
+它没有按 sessionId 过滤。
+
+影响：
+
+A 项目的模型选择会影响 B 项目的生成。
+不同研究主题之间会互相污染。
+如果未来有用户体系，这是隐私和研究严谨性问题。
+同类问题还在：
+
+GET /sessions/:id/learning-stats
+当前也是全库统计，不是当前 session 统计。
+
+建议下一版首先修：
+
+.where(and(
+  eq(generationFeedbackTable.sessionId, sessionId),
+  isNotNull(generationFeedbackTable.selectedModelSnapshot)
+))
+2. 高优先级：正式假设已经抽取，但模型边没有强校验
+位置：artifacts/api-server/src/routes/models.ts
+
+现在 prompt 要求：
+
+evidenceHypothesisId
+effectSize
+evidenceLocation
+但 validator 只检查：
+
+edge 是否连到已有 node
+evidenceCitationText 是否非空
+evidencePaperId 是否存在
+没有检查：
+
+evidenceHypothesisId 是否真的存在于 paper_hypotheses
+该 hypothesis 是否属于这个 evidencePaperId
+evidenceCitationText 是否等于该 hypothesis 的 statement
+edge 的 from/to 是否匹配 hypothesis 的 from/to
+relationship 是否匹配 hypothesis relationship
+影响：
+
+AI 仍可能生成“看起来有 H1/H2a”的证据，但实际上没有绑定数据库中的真实假设。
+
+下一版建议加一个 hypothesisByKey 校验：
+
+evidencePaperId + evidenceHypothesisId
+必须能查到对应 row，并校验：
+
+edge.fromVariableName ~= hypothesis.fromVariable
+edge.toVariableName ~= hypothesis.toVariable
+edge.relationship == hypothesis.relationship
+edge.evidenceCitationText == hypothesis.statement
+如果只是类比关系，应该明确标为：
+
+evidenceType: analogical
+不要伪装成 formal hypothesis。
+
+3. 高优先级：图片搜索仍没有真正使用 session topic
+位置：artifacts/api-server/src/routes/model-assistant.ts
+
+当前：
+
+return {
+  topic: null,
+  variableNames: ...
+}
+但是 sessionsTable 已经有 topic 字段。
+
+影响：
+
+图片搜索 query expansion 和 AI relevance gate 主要靠用户输入、变量名、论文标题，缺少当前项目主题 grounding。
+
+建议下一版：
+
+在 loadSessionImageCtx() 同时读取 sessionsTable.topic
+用 session topic 参与：
+query expansion
+image relevance filter
+paper model likelihood rating
+这是低成本高收益优化。
+
+4. 中高优先级：AI 图片筛选后又回填未验证结果
+位置：artifacts/api-server/src/routes/model-assistant.ts
+
+逻辑是：
+
+if (approved.length < count) {
+  finalList = [...approved, ...fallbacks];
+}
+问题：
+
+AI gate 已经判断哪些是模型图，但如果数量不足，又把未通过 AI gate 的候选补回去。
+
+影响：
+
+用户看到的结果仍可能混入不相关图，只是没有 category badge。对用户来说仍然是“筛选不准”。
+
+建议下一版增加模式：
+
+strict: 只返回 AI-approved
+balanced: 返回 approved + fallback，但 fallback 明确标记
+raw: 完全不筛
+并在 UI 明确显示：
+
+已验证模型图
+未验证候选
+用户可一键屏蔽
+5. 中高优先级：变量图仍然按变量类型自动连线，没用正式假设
+位置：artifacts/api-server/src/routes/variables.ts
+
+当前 /variable-graph 还是：
+
+independent → dependent
+independent → mediator
+mediator → dependent
+但现在系统已经有 paper_hypotheses 了。
+
+影响：
+
+变量页显示的关系图仍可能暗示不存在的论文关系。
+
+建议下一版：
+
+优先用 paper_hypotheses 构图：
+
+hypothesis.fromVariable → hypothesis.toVariable
+没有 hypotheses 的论文才 fallback 到类型启发式，并在 UI 标注：
+
+推断关系 / 正式假设关系
+6. 中优先级：新增理论骨架很多，但 prompt 输出格式仍只列旧骨架
+位置：artifacts/api-server/src/routes/models.ts
+
+你现在有 17 个 backbones，但输出格式里仍写：
+
+"backbone": "SOR|TAM|UTAUT|ELM|TPB|TRUST_TRANSFER|PARASOCIAL|FLOW|NONE"
+影响：
+
+虽然 validator 允许 17 个，但 LLM 看到输出格式可能仍只用旧 8 个，导致新增骨架利用率低。
+
+建议改成动态生成：
+
+THEORY_BACKBONES.map(b => b.id).join("|")
+7. 中优先级：手工编辑模型时无法绑定正式假设
+位置：artifacts/research-model/src/pages/sessions/model-detail.tsx
+
+现在手工新增 edge 只能填：
+
+from
+to
+relationship
+evidence text
+不能选择：
+
+hypothesisId
+effectSize
+evidenceLocation
+source hypothesis statement
+moderatorJustification
+影响：
+
+AI 生成的边证据越来越结构化，但用户手动改模型时会把证据结构退化成普通文本。
+
+建议下一版：
+
+在“添加关系”里增加：
+
+选择来源论文
+选择该论文中的 hypothesis
+自动填充 statement / effectSize / location
+8. 中优先级：image blocklist 可屏蔽，但没有管理和撤销入口
+位置：
+
+artifacts/research-model/src/components/model-assistant-chat.tsx
+artifacts/api-server/src/routes/model-assistant.ts
+当前：
+
+点 X 后会加入 blocklist
+但是失败无提示
+前端没有 blocklist 管理页
+lightbox 里不能屏蔽
+URL 是精确匹配，URL 参数不同可能绕过屏蔽
+建议下一版：
+
+屏蔽失败 toast
+已屏蔽列表
+撤销屏蔽
+lightbox 也能屏蔽
+规范化 URL：
+去掉 tracking query
+统一 trailing slash
+http/https 统一
+可选按 articleKey 屏蔽，而不是只按 sourceUrl
+9. 中优先级：中文变量 canonicalize 风险
+位置：artifacts/api-server/src/routes/variables.ts
+
+当前：
+
+.replace(/[^\w\s-]/g, "")
+JS 的 \w 主要是 ASCII，中文构念可能被清掉。
+
+影响：
+
+如果 AI 返回中文 canonicalConstruct，例如“信任”“购买意愿”，可能变空或严重碰撞。
+
+建议：
+
+要求 canonicalConstruct 始终英文
+或 canonicalize 支持 Unicode letters
+如果结果为空，fallback 到原始变量名或重新请求模型规范化
+下一版本能力建议
+P0：先修稳定性和研究严谨性
+修复 generationFeedbackTable 跨 session 污染。
+修复 /learning-stats 全局统计问题。
+图片搜索接入 session topic。
+模型边强校验 formal hypothesis。
+/variable-graph 优先用正式假设构图。
+这几项会直接影响生成模型的可靠性。
+
+P1：把证据体系做成闭环
+建议新增 evidenceType：
+
+direct_hypothesis
+direct_statement
+analogical
+theory_backbone
+user_added
+每条 edge 都要清楚说明：
+
+这个关系是：
+1. 某篇论文明确假设过？
+2. 某篇论文结果支持过？
+3. 理论骨架推导？
+4. 相似构念类比？
+5. 用户手工添加？
+这样用户写博士论文时可以直接解释模型来源。
+
+P2：把“模型生成”拆成多阶段
+现在虽然 validator 增强了，但还是一次性让 AI 生成完整模型。
+
+建议下一版改成：
+
+先选目标 DV。
+找历史前因变量。
+找历史中介变量。
+找可作为调节变量的边界条件。
+选择理论骨架。
+组装模型。
+程序校验。
+AI reviewer 复审。
+输出模型 + 证据表。
+这样比一次 prompt 稳定很多。
+
+P3：模型图片搜索升级成“模型图抽取库”
+现在还是网页图片搜索。下一版建议做：
+
+论文搜索 → PDF/HTML 获取 → figure caption 抽取 → OCR → 模型图分类 → 构念识别 → 入库
+最终形成自己的：
+
+model_figures
+figure_constructs
+figure_edges
+figure_evidence
+这会显著改善“搜到的模型图不对题”的问题。
+
+P4：前端增强博士论文写作输出
+建议增加：
+
+模型依据总表：
+路径	关系	来源	假设编号	原文依据	证据类型	置信度
+一键导出：
+
+Markdown
+Word
+APA
+GB/T 7714
+BibTeX / RIS
+图上点击边，右侧展示证据卡片。
+
+验证限制
+我尝试运行：
+
+pnpm run typecheck
+但当前 Cloud 环境没有 pnpm 命令，所以没有完成静态类型检查。工作区保持干净，没有代码改动。
+
+总结
+这版方向很好，已经开始从“随机组合变量”升级到“变量层级 + 正式假设 + 理论骨架 + 证据展示”。下一版最重要的是把这些新增结构真正闭环起来：session 隔离、正式假设强绑定、变量图基于真实 hypothesis、图片搜索使用 session topic、证据类型分级。这样模型生成才会更像博士论文中的理论模型，而不是仅仅看起来结构完整。
+
+代码更新了 ，请你重新检查下  我得业务场景是 我先输入研究方向和主题  然后系统搜索和收集文献， 然后读取文献的模型图和搜索模型图 给我找出多重变量模型  然后从我的研究方向基础上  进行重组和重组后给参考依据  然后我可以自定义的修改和重组模型中的变量和关系 系统可以再次帮我匹配搜索对应的论文 ，另外有ai助手可以交互式和探讨式的一起帮我优化我得模型图  。请你检查我目前的代码功能是否能支持这些场景功能  并且请你走一下代码每个功能流程  出一个测试报告
+
+
+Worked for 3m 50s
+已同步最新代码并重新检查，当前版本：main @ 35fb4a6。本次没有改代码。
+
+测试报告：业务场景支持度
+结论
+你的核心业务闭环目前已经基本具备：
+
+输入研究主题 → 搜索/收集文献 → 抽取变量与关系 → 搜索模型图/论文模型图 → 生成多变量组合模型 → 展示证据 → 用户编辑模型变量和关系 → 系统再匹配证据论文 → AI 助手交互优化
+
+但有几个关键缺口：
+
+没有真正“读取 PDF 内部模型图”，目前是“基于论文标题/主题搜索模型图”，不是从 PDF 页面中检测 Figure。
+AI 助手能讨论和生成建议，但不能直接修改模型图，仍需用户点击生成/编辑。
+证据匹配主要基于摘要，不充分使用上传 PDF 的 fullText。
+部分状态/前端流程有 bug，比如 onboarding 选中模型状态、详情页选用模型缺少覆盖提醒等。
+当前环境缺少 node/npm/pnpm，无法运行构建或自动化测试。
+1. 研究主题输入与 Session 创建
+支持情况：支持
+代码路径：
+
+前端：artifacts/research-model/src/pages/sessions/new.tsx
+后端：artifacts/api-server/src/routes/sessions.ts
+数据表：sessions.topic
+用户可以创建研究项目，填写研究方向/主题。Session 页面会显示 topic。
+
+发现问题
+模型图搜索上下文仍没有真正使用 session topic。
+
+位置：
+
+artifacts/api-server/src/routes/model-assistant.ts
+loadSessionImageCtx() 中：
+
+topic: null
+所以你的“研究方向和主题”没有完全参与模型图搜索的 query expansion。
+
+建议
+下一版应把 sessions.topic 注入：
+
+模型图搜索
+模型图 AI 筛选
+evidence matching
+assistant system prompt
+model generation prompt
+2. 搜索和收集文献
+支持情况：支持
+功能覆盖：
+
+功能	状态
+OpenAlex 文献搜索	支持
+DOI/URL 查找论文	支持
+添加论文到 session	支持
+BibTeX/RIS 批量导入	支持
+PDF 上传	支持
+OpenAlex 超时/重试	支持
+搜索错误中文提示	支持
+关键代码：
+
+artifacts/api-server/src/routes/papers.ts
+artifacts/research-model/src/pages/sessions/papers.tsx
+新版已经加入 OpenAlex timeout + retry：
+
+fetchOpenAlexWithRetry
+这是明显进步。
+
+发现问题
+2.1 PDF 上传接口没有进入 OpenAPI
+后端有：
+
+POST /sessions/:id/papers/upload-pdf
+但 OpenAPI 里没有对应 path。前端现在是手写 fetch() 调用，而不是生成 client hook。
+
+影响：
+
+API 文档不完整
+类型不统一
+以后维护容易漏
+2.2 DOI lookup 成功后可能出现双 toast
+位置：
+
+artifacts/research-model/src/pages/sessions/papers.tsx
+handleLookup() 调 handleAdd()，两边都 toast。
+
+3. 读取文献模型图与搜索模型图
+支持情况：部分支持
+系统现在有两类“模型图”能力：
+
+A. 按论文标题搜索模型图
+后端：
+
+GET /sessions/:sessionId/papers/:paperId/model-figures
+位置：
+
+artifacts/api-server/src/routes/papers.ts
+逻辑：
+
+用论文标题构造 SerpAPI Google Images 查询
+搜 conceptual model / framework figure
+缓存在 papers.figureResults
+前端在模型详情页按边展示相关论文模型图
+前端：
+
+PaperFigures
+位置：
+
+artifacts/research-model/src/pages/sessions/model-detail.tsx
+B. AI 助手中的模型图搜索
+后端：
+
+POST /sessions/:id/model-assistant/search-model-images
+前端：
+
+ModelAssistantChat
+支持：
+
+图片搜索
+论文搜索
+all 模式
+AI query expansion
+AI relevance filter
+category badge
+blocklist 屏蔽
+关键限制
+这还不是“读取 PDF 内部模型图”。
+
+目前没有做：
+
+PDF 页面图像解析
+Figure caption 抽取
+OCR
+从论文 HTML/PDF 里识别 Fig.1 / conceptual model / SEM path
+从模型图中识别变量和箭头
+所以更准确地说：
+
+当前系统支持“搜索论文相关模型图”和“搜索主题相关模型图”，不支持“自动读取文献 PDF 中的模型图结构”。
+
+这是你业务场景里最大的差距之一。
+
+4. 从文献中抽取多变量模型
+支持情况：支持，但主要基于文本，不是图像
+后端：
+
+POST /sessions/:id/papers/:paperId/extract
+位置：
+
+artifacts/api-server/src/routes/variables.ts
+现在抽取：
+
+variables
+canonicalConstruct
+constructLayer
+directional relationships
+formal hypotheses / derived relationships
+变量图也已经改成基于真实关系：
+
+paper_hypotheses
+而不是旧版那种 independent × dependent 的笛卡尔乱连。
+
+这是非常重要的进步。
+
+支持的多变量结构
+当前可抽：
+
+independent
+mediator
+moderator
+dependent
+positive
+negative
+mediates
+moderates
+变量图页面：
+
+artifacts/research-model/src/pages/sessions/variables.tsx
+已经支持：
+
+真实关系图
+关系类型样式
+focus mode
+无真实关系时提示重新提取
+仍然不足
+变量和关系目前无法单独人工编辑：
+
+不能改变量类型
+不能改 canonical construct
+不能合并同义变量
+不能手动修正一条 paper hypothesis
+只能重新抽取整篇论文。
+
+5. 基于研究方向进行模型重组
+支持情况：支持
+后端：
+
+POST /sessions/:id/models/generate
+位置：
+
+artifacts/api-server/src/routes/models.ts
+生成逻辑使用：
+
+paper research model cache
+extracted variables
+paper hypotheses
+theory backbones
+structural operators
+userPrompt
+focusVariableIds
+validator
+支持的结构操作符：
+
+EXTEND
+INSERT_MODERATOR
+PARALLEL_MEDIATORS
+SWAP_MEDIATOR
+THEORY_GRAFT
+并且加入了校验：
+
+节点数量
+边数量
+论文来源数量
+construct layer 顺序
+mediator chain 长度
+moderator justification
+canonical construct 不重复扮演不同角色
+前端：
+
+artifacts/research-model/src/pages/sessions/models.tsx
+支持：
+
+自定义 prompt
+生成 1-5 个模型
+AI 助手 suggestion 自动触发生成
+候选模型卡片
+选用模型
+作为我的模型基础
+发现问题
+5.1 学习反馈仍是全局污染
+位置：
+
+artifacts/api-server/src/routes/models.ts
+问题：
+
+.from(generationFeedbackTable)
+.where(isNotNull(generationFeedbackTable.selectedModelSnapshot))
+没有按 sessionId 过滤。
+
+影响：
+
+A 项目的选择会影响 B 项目的模型生成。
+
+这是高优先级问题。
+
+5.2 learning-stats 也是全局统计
+接口：
+
+GET /sessions/:id/learning-stats
+实现没有 where sessionId = id。
+
+影响：
+
+前端学习徽章显示的是全局数据，不是当前项目数据。
+
+5.3 输出格式仍偏旧骨架
+虽然理论骨架扩展到 17 个，但 prompt 输出格式里仍写：
+
+"SOR|TAM|UTAUT|ELM|TPB|TRUST_TRANSFER|PARASOCIAL|FLOW|NONE"
+会降低新增骨架使用率。
+
+6. 重组后参考依据展示
+支持情况：支持
+候选模型详情页支持：
+
+边证据 quote
+evidence paper title
+authors/year
+hypothesis id
+effect size
+evidence location
+moderator justification
+paper model figures
+APA references export
+literature review 生成
+quality report
+代码：
+
+artifacts/research-model/src/pages/sessions/model-detail.tsx
+后端支持：
+
+GET /models/:id/quality-report
+POST /models/:id/literature-review
+仍然不足
+正式假设和边没有强绑定校验。
+
+模型生成时 AI 可以输出：
+
+evidenceHypothesisId
+但 validator 没有强制检查：
+
+这个 hypothesis 是否真实存在
+是否属于该 evidencePaperId
+statement 是否一致
+from/to 是否一致
+relationship 是否一致
+也就是说，证据展示已经很好看，但“证据真实性绑定”还需要加强。
+
+7. 自定义修改和重组变量/关系
+支持情况：支持
+现在有两个层级：
+
+A. 候选模型详情页编辑
+位置：
+
+artifacts/research-model/src/pages/sessions/model-detail.tsx
+支持：
+
+编辑名称、描述、rationale
+添加变量
+删除变量
+添加关系
+删除关系
+拖拽节点
+画布连线
+保存到 candidate model
+使用组件：
+
+EditableModelGraph
+B. Live Model 我的研究模型
+位置：
+
+artifacts/research-model/src/pages/sessions/live-model.tsx
+支持：
+
+从候选模型导入
+添加变量
+删除变量
+添加关系
+删除关系
+拖拽保存位置
+手动关系标记为 unsupported
+对 unsupported 关系搜索证据
+moderator 拖到已有边上，表达“调节某条路径”
+这是非常贴近你业务场景的能力。
+
+发现问题
+7.1 详情页选用模型缺少覆盖提醒
+列表页选择模型时，如果 Live Model 有手工边，会弹出覆盖提醒。
+
+但详情页：
+
+model-detail.tsx handleSelect()
+直接：
+
+importLiveModel replace: true
+没有提醒。
+
+风险：
+
+用户在“我的模型”里手动改过的关系可能被直接覆盖。
+
+7.2 手动新增候选模型边时证据归因不准
+详情页手工添加边时：
+
+const evidenceFrom = fromN;
+也就是默认把证据归到 from 变量所在论文。
+
+如果用户粘贴的证据来自另一篇论文，就会显示错来源。
+
+8. 系统再次帮我匹配搜索对应论文
+支持情况：支持
+新增核心模块：
+
+artifacts/api-server/src/lib/evidence-matching.ts
+候选模型：
+
+POST /sessions/:id/models/:modelId/evidence-search
+POST /sessions/:id/models/:modelId/evidence-apply
+Live Model：
+
+POST /sessions/:id/live-model/evidence-search
+POST /sessions/:id/live-model/evidence-apply
+前端：
+
+artifacts/research-model/src/components/evidence-match-dialog.tsx
+支持：
+
+搜 session library
+搜 web/OpenAlex
+overall matching
+per-edge matching
+自定义搜索说明 instructions
+自动选择带 quote 的结果
+应用证据
+web 论文自动加入 session
+版本快照
+revert 回退
+这是你说的“我修改关系后，系统再帮我找论文依据”的关键闭环，目前已经实现。
+
+重要限制
+证据匹配主要基于摘要。
+
+evidence-matching.ts 中 library candidate 用的是：
+
+abstract: p.abstract ?? null
+没有优先用 fullText。
+
+所以如果上传了 PDF，证据匹配没有充分利用全文，这是下一版应加强的重点。
+
+9. AI 助手交互式优化模型图
+支持情况：部分支持
+后端：
+
+POST /sessions/:id/model-assistant
+GET /sessions/:id/model-assistant/messages
+DELETE /sessions/:id/model-assistant/messages
+前端：
+
+ModelAssistantChat
+支持：
+
+持久化聊天历史
+根据当前 papers/variables/models 给建议
+输出 suggestion
+输出 needs_more_papers
+图片搜索
+模型图搜索
+收藏 inspiration
+清空历史
+关键限制
+AI 助手不能直接执行模型图编辑。
+
+它可以：
+
+讨论方案
+建议变量
+建议操作符
+建议继续找文献
+一键套用生成模型
+但不能：
+
+直接在 live model 上添加/删除节点
+直接修改一条边
+直接调用 evidence matching
+直接把用户自然语言转为 graph patch
+如果你的目标是“像协作导师一样一起改图”，下一步要加：
+
+assistant tool actions / graph patch proposal
+例如：
+
+{
+  "action": "add_edge",
+  "fromVariableId": 1,
+  "toVariableId": 3,
+  "relationship": "mediates",
+  "reason": "...",
+  "needsEvidence": true
+}
+前端让用户确认后应用。
+
+关键测试结果
+环境验证
+已执行：
+
+git pull origin main
+git status --short
+git rev-parse --short HEAD
+结果：
+
+当前 commit: 35fb4a6
+工作区干净
+自动化测试/构建
+无法执行。
+
+原因：
+
+当前环境没有：
+
+node
+npm
+pnpm
+node_modules
+检查结果：
+
+node: command not found
+npm: command not found
+未找到 pnpm
+未找到 node_modules
+未找到 *.test.ts / *.spec.ts
+所以本报告是：
+
+静态代码走查 + 功能链路审查 + 可执行测试用例设计
+不是运行时 E2E 测试。
+
+功能覆盖矩阵
+业务需求	当前支持度	说明
+输入研究方向和主题	支持	Session topic 已有
+搜索文献	支持	OpenAlex
+收集文献	支持	add / lookup / bulk / PDF
+读取文献文本	支持	abstract / fullText
+读取 PDF 内模型图	不完整	目前是搜索图，不是解析 PDF 图
+搜索模型图	支持	SerpAPI/Brave + AI gate
+找多变量模型	支持	variables + hypotheses + graph
+基于研究方向重组模型	支持	generate models + userPrompt
+给出参考依据	支持	edge evidence + paper + quote
+用户修改变量/关系	支持	editable graph + live model
+修改后再匹配论文	支持	evidence match dialog
+AI 助手交互优化	部分支持	能建议和生成，不能直接改图
+版本回退	支持	model_versions
+聊天历史持久化	支持	model_assistant_messages
+建议优先修复项
+P0：必须先修
+generationFeedbackTable 查询按 sessionId 隔离。
+/learning-stats 按 sessionId 统计。
+loadSessionImageCtx() 接入 sessions.topic。
+详情页选用模型前，如果 Live Model 有手工边，也弹覆盖确认。
+OpenAPI 补上 PDF upload 接口。
+P1：增强业务核心能力
+evidence matching 优先使用 fullText，不是只用 abstract。
+模型边的 evidenceHypothesisId 强绑定 paper_hypotheses。
+增加变量/关系/假设的手工编辑能力。
+AI 助手支持 graph patch proposal，用户确认后应用。
+P2：真正支持“读取模型图”
+建议新增 pipeline：
+
+PDF/HTML → 抽取 Figure → caption → OCR → 判断是否模型图 → 识别变量框和箭头 → 入库
+需要新增表：
+
+paper_figures
+figure_constructs
+figure_edges
+这会把“模型图搜索”升级成真正的“文献模型图读取”。
+
+推荐手工测试用例
+测试 1：完整基础流程
+新建 session，输入研究主题。
+搜索文献并添加 3 篇。
+上传 1 篇 PDF。
+点击一键提取变量。
+进入变量页，确认变量与关系图出现。
+进入模型页，生成 3 个候选模型。
+打开模型详情，确认每条边有证据。
+点击“作为我的研究模型基础”。
+进入 Live Model，手动添加一条关系。
+对未支持关系点击搜索证据。
+选择证据并应用。
+检查论文是否自动加入、边是否增加 additional evidence。
+测试 2：AI 助手流程
+进入模型页。
+向助手提问：“我的模型是否适合 S-O-R 框架？”
+检查是否返回具体变量和论文引用。
+点击“套用并生成”。
+检查生成模型是否使用 focus variables。
+刷新页面，确认聊天历史仍在。
+测试 3：模型图搜索流程
+在助手面板搜索模型图。
+检查是否显示 category badge。
+屏蔽一张不相关图。
+重新搜索，确认被屏蔽图不再出现。
+在模型详情页展开某条边的“论文模型图”，检查是否能看到图。
+测试 4：覆盖风险流程
+Live Model 手动添加一条关系。
+回模型列表页点击“选用”另一个模型，应弹覆盖确认。
+回模型详情页点击“选用”，当前代码预计不会弹确认，这是 bug。
