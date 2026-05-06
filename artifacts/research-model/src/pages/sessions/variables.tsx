@@ -16,7 +16,7 @@ import {
   getGetLiveModelQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Loader2, Database, ArrowRight, Quote, BookOpen, ChevronDown, ChevronRight as ChevronRightIcon, Layers, RotateCcw, Pencil, Trash2, Check, X as XIcon } from "lucide-react";
+import { Loader2, Database, ArrowRight, Quote, BookOpen, ChevronDown, ChevronRight as ChevronRightIcon, Layers, RotateCcw, Pencil, Trash2, Check, X as XIcon, ZoomIn, ZoomOut, Maximize2 } from "lucide-react";
 import { useT } from "@/lib/i18n";
 import { useToast } from "@/hooks/use-toast";
 import { NextStepHint, BigNextStep } from "@/components/onboarding-stepper";
@@ -149,6 +149,16 @@ function VariableGraph({ sessionId }: { sessionId: number }) {
   // so users can visually compare or chain together multiple variables.
   const [focusedIds, setFocusedIds] = useState<Set<string>>(() => new Set());
   const clearFocus = () => setFocusedIds(new Set());
+  // Zoom state for the SVG. We scale by changing the rendered width/height
+  // while keeping the viewBox fixed, so the inner overflow-auto container
+  // gives us scrollbars at higher zoom levels.
+  const [zoom, setZoom] = useState(1);
+  const ZOOM_MIN = 0.5;
+  const ZOOM_MAX = 3;
+  const ZOOM_STEP = 0.25;
+  const zoomIn = () => setZoom((z) => Math.min(ZOOM_MAX, Math.round((z + ZOOM_STEP) * 100) / 100));
+  const zoomOut = () => setZoom((z) => Math.max(ZOOM_MIN, Math.round((z - ZOOM_STEP) * 100) / 100));
+  const zoomReset = () => setZoom(1);
   const { data: graph, isLoading } = useGetVariableGraph(sessionId, {
     query: { enabled: !!sessionId, queryKey: getGetVariableGraphQueryKey(sessionId) },
   });
@@ -327,18 +337,63 @@ function VariableGraph({ sessionId }: { sessionId: number }) {
           <span className="text-[11px] text-muted-foreground">{t("vars.graph.focus.hint" as any)}</span>
         )}
       </div>
+      <div className="flex items-center gap-1 mb-2">
+        <button
+          type="button"
+          onClick={zoomOut}
+          disabled={zoom <= ZOOM_MIN + 1e-6}
+          className="inline-flex items-center justify-center w-7 h-7 rounded-md border border-border hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed"
+          title={t("vars.graph.zoom.out" as any)}
+          data-testid="btn-zoom-out"
+        >
+          <ZoomOut className="w-3.5 h-3.5" />
+        </button>
+        <button
+          type="button"
+          onClick={zoomReset}
+          className="inline-flex items-center justify-center h-7 px-2 rounded-md border border-border hover:bg-muted text-[11px] font-medium tabular-nums min-w-[3.5rem]"
+          title={t("vars.graph.zoom.reset" as any)}
+          data-testid="btn-zoom-reset"
+        >
+          {Math.round(zoom * 100)}%
+        </button>
+        <button
+          type="button"
+          onClick={zoomIn}
+          disabled={zoom >= ZOOM_MAX - 1e-6}
+          className="inline-flex items-center justify-center w-7 h-7 rounded-md border border-border hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed"
+          title={t("vars.graph.zoom.in" as any)}
+          data-testid="btn-zoom-in"
+        >
+          <ZoomIn className="w-3.5 h-3.5" />
+        </button>
+        <span className="text-[11px] text-muted-foreground ml-2 inline-flex items-center gap-1">
+          <Maximize2 className="w-3 h-3" />
+          {t("vars.graph.zoom.hint" as any)}
+        </span>
+      </div>
       {hasFocus && focusedEdges.length === 0 && (
         <div className="mb-3 rounded-md border border-amber-200 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/30 px-3 py-2 text-xs text-amber-900 dark:text-amber-200">
           {t("vars.graph.focus.empty" as any)}
         </div>
       )}
-      <div className="overflow-auto max-h-[640px]">
+      <div
+        className="overflow-auto max-h-[640px]"
+        onWheel={(e) => {
+          // Ctrl/Cmd + wheel zooms; plain wheel scrolls normally.
+          if (e.ctrlKey || e.metaKey) {
+            e.preventDefault();
+            if (e.deltaY < 0) zoomIn();
+            else zoomOut();
+          }
+        }}
+      >
         <svg
-          width={WIDTH}
-          height={HEIGHT}
+          width={WIDTH * zoom}
+          height={HEIGHT * zoom}
           viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
           className="text-foreground"
-          style={{ minWidth: WIDTH, minHeight: HEIGHT }}
+          style={{ minWidth: WIDTH * zoom, minHeight: HEIGHT * zoom }}
           onClick={(e) => {
             // Click on blank SVG area (not on a node/edge group) clears focus.
             if (e.target === e.currentTarget) clearFocus();
