@@ -419,6 +419,14 @@ export const GetVariableGraphResponse = zod.object({
       target: zod.string(),
       paperId: zod.number(),
       paperTitle: zod.string(),
+      relationship: zod
+        .enum(["positive", "negative", "moderates", "mediates"])
+        .describe(
+          "Kind of directional relationship the paper states between source and target.",
+        ),
+      statement: zod
+        .string()
+        .describe("Verbatim sentence from the paper supporting this edge."),
     }),
   ),
 });

@@ -1902,11 +1902,20 @@ components:
           type: integer
         paperTitle:
           type: string
+        relationship:
+          type: string
+          enum: [positive, negative, moderates, mediates]
+          description: Kind of directional relationship the paper states between source and target.
+        statement:
+          type: string
+          description: Verbatim sentence from the paper supporting this edge.
       required:
         - source
         - target
         - paperId
         - paperTitle
+        - relationship
+        - statement
 
     ResearchModel:
       type: object

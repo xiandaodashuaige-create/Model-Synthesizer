@@ -65,7 +65,7 @@ router.post("/sessions/:id/papers/:paperId/extract", async (req, res): Promise<v
     ? `${baseHeader}\nFull text (truncated to keep within token limits):\n${paper.fullText.slice(0, 30000)}`
     : `${baseHeader}\nAbstract: ${paper.abstract ?? "No abstract available"}`;
 
-  const prompt = `You are a research methodology expert. Analyze this academic paper and extract BOTH (a) the research variables AND (b) the formal hypotheses (H1, H2, ...).
+  const prompt = `You are a research methodology expert. Analyze this academic paper and extract BOTH (a) the research variables AND (b) every directional relationship the paper STATES between them.
 
 Paper:
 ${paperContext}
@@ -84,25 +84,32 @@ Return ONLY this JSON (no markdown, no commentary):
   ],
   "hypotheses": [
     {
-      "id": "H1",
+      "id": "H1 / R1 / A1 — use the paper's label if it has one (H1, H2a, ...); otherwise number them R1, R2, R3 for relationships you derived from the abstract/results.",
       "from": "<variable name as in 'variables'>",
       "to": "<variable name as in 'variables'>",
-      "via": "<mediator name if this is a mediated/moderated hypothesis, else null>",
+      "via": "<mediator name if this is a mediated/moderated relationship, else null>",
       "relationship": "positive|negative|moderates|mediates",
-      "statement": "Verbatim hypothesis sentence from the paper",
+      "statement": "Verbatim sentence from the paper supporting this relationship",
       "effectSize": "<reported coefficient/p-value/CI like 'β=.34, p<.001' or null if not stated>",
-      "pageOrSection": "<page number or section heading where the hypothesis is stated, or null>"
+      "pageOrSection": "<page number or section heading, or null>"
     }
   ]
 }
 
+What counts as a relationship (extract ALL of these — do NOT limit to formally labeled hypotheses):
+1. Formal hypotheses (H1, H2a, ...).
+2. Sentences in the abstract that assert a directional effect, e.g. "X positively predicts Y", "A increases B", "C reduces D", "E mediates the effect of F on G", "H moderates the relationship between I and J".
+3. Reported empirical findings stating a relationship between two of the extracted variables, e.g. "Trust significantly increased purchase intention (β = .42, p < .001)".
+4. Theoretical claims in the introduction/discussion that tie two of the extracted variables together with a stated direction.
+
 Strict rules:
-- Extract 3-8 variables and 0-12 hypotheses.
-- Every hypothesis "from"/"to"/"via" MUST exactly match a "name" in "variables".
+- Extract 3-8 variables and up to 20 relationships.
+- Every relationship's "from"/"to"/"via" MUST exactly match a "name" in "variables". If a sentence ties together a variable you didn't extract, either add that variable to "variables" or skip the relationship.
 - "constructLayer" is REQUIRED for every variable. If unclear, use the closest fit; never leave it blank.
 - "canonicalConstruct" is REQUIRED — use a short, generic, lowercased construct name (e.g. "trust", not "consumer trust in AI streamer").
-- "statement" / "citationText" must be COPIED verbatim from the paper.
-- If the paper states no formal hypotheses (e.g. exploratory paper), return "hypotheses": [] (do not invent).`;
+- "statement" / "citationText" must be COPIED verbatim from the paper — do NOT paraphrase or invent.
+- "relationship": use "moderates" when the source is a moderator on a path; "mediates" when the source is a mediator; "positive" / "negative" for direct effects with the stated sign. If the sign is unclear from the sentence, default to "positive".
+- If the paper genuinely states NO directional relationships between the extracted variables (e.g. a pure descriptive review with no claims), return "hypotheses": []. Otherwise extract them — do not return [] just because the paper lacks H1/H2 labels.`;
 
   try {
     const completion = await openai.chat.completions.create({
@@ -297,16 +304,19 @@ router.get("/sessions/:id/variable-graph", async (req, res): Promise<void> => {
     .where(eq(paperHypothesesTable.sessionId, params.data.id));
 
   const norm = (s: string) => s.toLowerCase().trim();
-  const edges: Array<{ source: string; target: string; paperId: number; paperTitle: string }> = [];
+  type EdgeRel = "positive" | "negative" | "moderates" | "mediates";
+  const edges: Array<{ source: string; target: string; paperId: number; paperTitle: string; relationship: EdgeRel; statement: string }> = [];
   const seen = new Set<string>();
-  const pushEdge = (src: string, tgt: string, paperId: number, paperTitle: string) => {
+  const pushEdge = (src: string, tgt: string, paperId: number, paperTitle: string, relationship: EdgeRel, statement: string) => {
     if (!src || !tgt || src === tgt) return;
     if (!nodeMap.has(src) || !nodeMap.has(tgt)) return; // skip if endpoint isn't a known variable
-    const k = `${src}->${tgt}|${paperId}`;
+    const k = `${src}->${tgt}|${relationship}|${paperId}`;
     if (seen.has(k)) return;
     seen.add(k);
-    edges.push({ source: src, target: tgt, paperId, paperTitle });
+    edges.push({ source: src, target: tgt, paperId, paperTitle, relationship, statement });
   };
+
+  const isRel = (r: string): r is EdgeRel => r === "positive" || r === "negative" || r === "moderates" || r === "mediates";
 
   for (const h of hypotheses) {
     const paper = paperMap.get(h.paperId);
@@ -314,12 +324,13 @@ router.get("/sessions/:id/variable-graph", async (req, res): Promise<void> => {
     const from = norm(h.fromVariable);
     const to = norm(h.toVariable);
     const via = h.viaVariable ? norm(h.viaVariable) : null;
+    const rel: EdgeRel = isRel(h.relationship) ? h.relationship : "positive";
     if (via && nodeMap.has(via)) {
-      // Mediation chain: from → via → to
-      pushEdge(from, via, h.paperId, paper.title);
-      pushEdge(via, to, h.paperId, paper.title);
+      // Mediation chain: from → via → to (label both legs as "mediates")
+      pushEdge(from, via, h.paperId, paper.title, "mediates", h.statement);
+      pushEdge(via, to, h.paperId, paper.title, "mediates", h.statement);
     } else {
-      pushEdge(from, to, h.paperId, paper.title);
+      pushEdge(from, to, h.paperId, paper.title, rel, h.statement);
     }
   }
 

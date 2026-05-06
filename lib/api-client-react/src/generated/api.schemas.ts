@@ -244,11 +244,28 @@ export interface GraphNode {
   paperCount: number;
 }
 
+/**
+ * Kind of directional relationship the paper states between source and target.
+ */
+export type GraphEdgeRelationship =
+  (typeof GraphEdgeRelationship)[keyof typeof GraphEdgeRelationship];
+
+export const GraphEdgeRelationship = {
+  positive: "positive",
+  negative: "negative",
+  moderates: "moderates",
+  mediates: "mediates",
+} as const;
+
 export interface GraphEdge {
   source: string;
   target: string;
   paperId: number;
   paperTitle: string;
+  /** Kind of directional relationship the paper states between source and target. */
+  relationship: GraphEdgeRelationship;
+  /** Verbatim sentence from the paper supporting this edge. */
+  statement: string;
 }
 
 export interface VariableGraph {

@@ -169,7 +169,27 @@ function VariableGraph({ sessionId }: { sessionId: number }) {
     return lines.slice(0, 2);
   };
 
-  const drawnEdges = new Set<string>();
+  // Aggregate edges across papers: same (source,target,relationship) → one edge with paper count.
+  type AggEdge = { source: string; target: string; relationship: string; paperCount: number; statements: string[] };
+  const edgeAgg = new Map<string, AggEdge>();
+  for (const e of graph.edges) {
+    const k = `${e.source}->${e.target}|${e.relationship}`;
+    const cur = edgeAgg.get(k);
+    if (cur) {
+      cur.paperCount++;
+      if (cur.statements.length < 3) cur.statements.push(`${e.paperTitle}: ${e.statement}`);
+    } else {
+      edgeAgg.set(k, { source: e.source, target: e.target, relationship: e.relationship, paperCount: 1, statements: [`${e.paperTitle}: ${e.statement}`] });
+    }
+  }
+  const aggEdges = [...edgeAgg.values()];
+
+  const REL_STYLE: Record<string, { color: string; dash?: string; symbol: string; labelKey: string }> = {
+    positive:  { color: "#16a34a", symbol: "+", labelKey: "vars.graph.rel.positive" },
+    negative:  { color: "#dc2626", symbol: "−", labelKey: "vars.graph.rel.negative" },
+    moderates: { color: "#7c3aed", symbol: "M", labelKey: "vars.graph.rel.moderates", dash: "5,4" },
+    mediates:  { color: "#d97706", symbol: "Med", labelKey: "vars.graph.rel.mediates" },
+  };
 
   return (
     <div className="bg-card border border-border rounded-lg p-5">
@@ -183,33 +203,66 @@ function VariableGraph({ sessionId }: { sessionId: number }) {
           style={{ minWidth: WIDTH, minHeight: HEIGHT }}
         >
           <defs>
-            <marker id="arrowhead" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
-              <path d="M0,0 L0,6 L8,3 z" fill="currentColor" opacity={0.5} />
-            </marker>
+            {Object.entries(REL_STYLE).map(([rel, s]) => (
+              <marker key={rel} id={`arrow-${rel}`} markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto">
+                <path d="M0,0 L0,6 L8,3 z" fill={s.color} opacity={0.85} />
+              </marker>
+            ))}
           </defs>
-          {graph.edges.map((edge, i) => {
-            const edgeKey = `${edge.source}->${edge.target}`;
-            if (drawnEdges.has(edgeKey)) return null;
-            drawnEdges.add(edgeKey);
+          {aggEdges.map((edge, i) => {
             const from = positions.get(edge.source);
             const to = positions.get(edge.target);
             if (!from || !to) return null;
+            const safeRel = REL_STYLE[edge.relationship] ? edge.relationship : "positive";
+            const style = REL_STYLE[safeRel];
             const fromX = from.x + NODE_W / 2;
             const toX = to.x - NODE_W / 2;
-            // Cubic bezier — horizontal-ish handles produce gentle curves and visibly fewer crossings.
             const dx = Math.max(40, (toX - fromX) * 0.5);
             const c1x = fromX + dx;
             const c2x = toX - dx;
+            // Approximate midpoint for the relationship label.
+            const rawMidX = (fromX + toX) / 2;
+            const midY = (from.y + to.y) / 2;
+            const labelText = edge.paperCount > 1 ? `${style.symbol} ×${edge.paperCount}` : style.symbol;
+            const labelW = labelText.length * 8 + 8;
+            // Clamp the label box so it never bleeds past the SVG horizontal edges.
+            const midX = Math.min(WIDTH - labelW / 2 - 2, Math.max(labelW / 2 + 2, rawMidX));
+            const tooltip = edge.statements.join("\n\n");
             return (
-              <path
-                key={i}
-                d={`M ${fromX} ${from.y} C ${c1x} ${from.y}, ${c2x} ${to.y}, ${toX} ${to.y}`}
-                fill="none"
-                stroke="currentColor"
-                strokeOpacity={0.28}
-                strokeWidth={1.4}
-                markerEnd="url(#arrowhead)"
-              />
+              <g key={i}>
+                <title>{tooltip}</title>
+                <path
+                  d={`M ${fromX} ${from.y} C ${c1x} ${from.y}, ${c2x} ${to.y}, ${toX} ${to.y}`}
+                  fill="none"
+                  stroke={style.color}
+                  strokeOpacity={0.7}
+                  strokeWidth={1.8}
+                  strokeDasharray={style.dash}
+                  markerEnd={`url(#arrow-${safeRel})`}
+                />
+                <rect
+                  x={midX - labelW / 2}
+                  y={midY - 9}
+                  width={labelW}
+                  height={18}
+                  rx={4}
+                  fill="white"
+                  fillOpacity={0.95}
+                  stroke={style.color}
+                  strokeOpacity={0.5}
+                  strokeWidth={1}
+                />
+                <text
+                  x={midX}
+                  y={midY + 4}
+                  textAnchor="middle"
+                  fontSize={11}
+                  fontWeight={700}
+                  fill={style.color}
+                >
+                  {labelText}
+                </text>
+              </g>
             );
           })}
           {graph.nodes.map((node) => {
@@ -243,16 +296,43 @@ function VariableGraph({ sessionId }: { sessionId: number }) {
           })}
         </svg>
       </div>
-      <div className="flex flex-wrap gap-3 mt-3">
-        {Object.entries(colorMap).map(([type, color]) =>
-          groups[type]?.length ? (
-            <div key={type} className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <span className="w-2.5 h-2.5 rounded-full inline-block" style={{ backgroundColor: color }} />
-              {TYPE_META[type]?.label}
+      <div className="flex flex-wrap gap-x-4 gap-y-2 mt-3 items-center">
+        <div className="flex flex-wrap gap-3">
+          {Object.entries(colorMap).map(([type, color]) =>
+            groups[type]?.length ? (
+              <div key={type} className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <span className="w-2.5 h-2.5 rounded-full inline-block" style={{ backgroundColor: color }} />
+                {TYPE_META[type]?.label}
+              </div>
+            ) : null
+          )}
+        </div>
+        {aggEdges.length > 0 && (
+          <>
+            <span className="text-xs text-muted-foreground/60">|</span>
+            <div className="flex flex-wrap gap-3">
+              {Object.entries(REL_STYLE).map(([rel, s]) =>
+                aggEdges.some((e) => e.relationship === rel) ? (
+                  <div key={rel} className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <span
+                      className="inline-flex items-center justify-center w-5 h-4 text-[10px] font-bold rounded border"
+                      style={{ color: s.color, borderColor: s.color, borderStyle: s.dash ? "dashed" : "solid" }}
+                    >
+                      {s.symbol}
+                    </span>
+                    {t(s.labelKey as any)}
+                  </div>
+                ) : null
+              )}
             </div>
-          ) : null
+          </>
         )}
       </div>
+      {aggEdges.length > 0 && (
+        <p className="mt-2 text-[11px] text-muted-foreground">
+          {t("vars.graph.edgesSummary" as any, { edges: aggEdges.length, raw: graph.edges.length })}
+        </p>
+      )}
     </div>
   );
 }
