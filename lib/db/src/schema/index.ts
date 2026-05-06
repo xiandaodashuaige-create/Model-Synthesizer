@@ -6,3 +6,4 @@ export * from "./live-models";
 export * from "./hypotheses";
 export * from "./image-blocklist";
 export * from "./model-versions";
+export * from "./model-assistant-messages";

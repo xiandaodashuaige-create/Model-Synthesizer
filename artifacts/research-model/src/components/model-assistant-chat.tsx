@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useChatModelAssistant, useSearchModelImages, useSearchModelPapers, useAddImageBlocklistEntry } from "@workspace/api-client-react";
+import { useChatModelAssistant, useSearchModelImages, useSearchModelPapers, useAddImageBlocklistEntry, useGetModelAssistantMessages, useClearModelAssistantMessages, getGetModelAssistantMessagesQueryKey } from "@workspace/api-client-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { BookOpen, BookPlus, ChevronDown, ChevronUp, Download, ExternalLink, FileText, Heart, Image as ImageIcon, LayoutGrid, Loader2, MessageSquare, Paperclip, RefreshCw, RotateCcw, Search, Send, Sparkles, Trash2, X } from "lucide-react";
 import { useT } from "@/lib/i18n";
 
@@ -52,10 +53,32 @@ export function ModelAssistantChat({
 }) {
   const { t } = useT();
   const chat = useChatModelAssistant();
+  const qc = useQueryClient();
+  const historyQ = useGetModelAssistantMessages(sessionId);
+  const clearHistoryMut = useClearModelAssistantMessages();
 
   const [messages, setMessages] = useState<ChatMsg[]>([
     { role: "assistant", content: t("models.assistant.greeting" as any) },
   ]);
+  // Hydrate from persisted history once it loads (or session changes).
+  // Race-safe: if the user already started typing/sending before the GET
+  // resolved, `messages` will have more than the initial greeting — skip the
+  // overwrite so we never lose their in-flight turn.
+  const lastHydratedRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!historyQ.data) return;
+    if (lastHydratedRef.current === sessionId) return;
+    const rows = historyQ.data.messages ?? [];
+    const userHasInteracted = messages.length > 1 || (messages[0]?.role === "user");
+    if (rows.length > 0 && !userHasInteracted) {
+      setMessages(rows.map((r) => ({
+        role: r.role as "user" | "assistant",
+        content: r.content,
+        attachments: (r.attachments ?? undefined) as Attachment[] | undefined,
+      })));
+    }
+    lastHydratedRef.current = sessionId;
+  }, [historyQ.data, sessionId, messages]);
   const [input, setInput] = useState("");
   const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([]);
   const [lastSuggestion, setLastSuggestion] = useState<Suggestion | null>(null);
@@ -351,6 +374,8 @@ export function ModelAssistantChat({
         if (resp.needsMorePapers && resp.needsMorePapers.reason) {
           setLastNeedsMore(resp.needsMorePapers as NeedsMore);
         }
+        // Refresh persisted history so refresh-after-send shows the new turn.
+        qc.invalidateQueries({ queryKey: getGetModelAssistantMessagesQueryKey(sessionId) });
       },
       onError: () => {
         setMessages((cur) => [...cur, { role: "assistant", content: t("models.assistant.failed" as any) }]);
@@ -363,6 +388,11 @@ export function ModelAssistantChat({
     setPendingAttachments([]);
     setLastSuggestion(null);
     setLastNeedsMore(null);
+    clearHistoryMut.mutate({ id: sessionId }, {
+      onSettled: () => {
+        qc.invalidateQueries({ queryKey: getGetModelAssistantMessagesQueryKey(sessionId) });
+      },
+    });
   };
 
   return (

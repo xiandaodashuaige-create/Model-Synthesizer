@@ -33,6 +33,7 @@ import type {
   GenerateModelLiteratureReview200,
   GenerateModelLiteratureReviewBody,
   GenerateModelsBody,
+  GetModelAssistantMessages200,
   GetModelQualityReport200,
   GetPaperModelFigures200,
   GetPaperModelFiguresParams,
@@ -1605,6 +1606,182 @@ export const useChatModelAssistant = <
   TContext
 > => {
   return useMutation(getChatModelAssistantMutationOptions(options));
+};
+
+/**
+ * @summary Get the persisted conversation history for the model assistant in this session.
+ */
+export const getGetModelAssistantMessagesUrl = (id: number) => {
+  return `/api/sessions/${id}/model-assistant/messages`;
+};
+
+export const getModelAssistantMessages = async (
+  id: number,
+  options?: RequestInit,
+): Promise<GetModelAssistantMessages200> => {
+  return customFetch<GetModelAssistantMessages200>(
+    getGetModelAssistantMessagesUrl(id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetModelAssistantMessagesQueryKey = (id: number) => {
+  return [`/api/sessions/${id}/model-assistant/messages`] as const;
+};
+
+export const getGetModelAssistantMessagesQueryOptions = <
+  TData = Awaited<ReturnType<typeof getModelAssistantMessages>>,
+  TError = ErrorType<unknown>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getModelAssistantMessages>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetModelAssistantMessagesQueryKey(id);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getModelAssistantMessages>>
+  > = ({ signal }) =>
+    getModelAssistantMessages(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getModelAssistantMessages>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetModelAssistantMessagesQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getModelAssistantMessages>>
+>;
+export type GetModelAssistantMessagesQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get the persisted conversation history for the model assistant in this session.
+ */
+
+export function useGetModelAssistantMessages<
+  TData = Awaited<ReturnType<typeof getModelAssistantMessages>>,
+  TError = ErrorType<unknown>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getModelAssistantMessages>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetModelAssistantMessagesQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Delete all persisted assistant messages for this session.
+ */
+export const getClearModelAssistantMessagesUrl = (id: number) => {
+  return `/api/sessions/${id}/model-assistant/messages`;
+};
+
+export const clearModelAssistantMessages = async (
+  id: number,
+  options?: RequestInit,
+): Promise<void> => {
+  return customFetch<void>(getClearModelAssistantMessagesUrl(id), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getClearModelAssistantMessagesMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof clearModelAssistantMessages>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof clearModelAssistantMessages>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  const mutationKey = ["clearModelAssistantMessages"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof clearModelAssistantMessages>>,
+    { id: number }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return clearModelAssistantMessages(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ClearModelAssistantMessagesMutationResult = NonNullable<
+  Awaited<ReturnType<typeof clearModelAssistantMessages>>
+>;
+
+export type ClearModelAssistantMessagesMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Delete all persisted assistant messages for this session.
+ */
+export const useClearModelAssistantMessages = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof clearModelAssistantMessages>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof clearModelAssistantMessages>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  return useMutation(getClearModelAssistantMessagesMutationOptions(options));
 };
 
 /**

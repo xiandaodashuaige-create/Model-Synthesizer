@@ -1,6 +1,7 @@
 import { Router, type IRouter } from "express";
 import { eq, and, desc } from "drizzle-orm";
-import { db, papersTable, variablesTable, researchModelsTable, imageBlocklistTable } from "@workspace/db";
+import { db, papersTable, variablesTable, researchModelsTable, imageBlocklistTable, modelAssistantMessagesTable } from "@workspace/db";
+import { asc } from "drizzle-orm";
 import { ChatModelAssistantParams, ChatModelAssistantBody } from "@workspace/api-zod";
 import { openai } from "@workspace/integrations-openai-ai-server";
 import { backbonesAsPromptBlock, operatorsAsPromptBlock } from "../lib/theoryTemplates.js";
@@ -194,11 +195,66 @@ Be specific. Reference variables and papers BY NAME. Never invent variables that
       }
     }
 
+    // Persist the latest user turn + the assistant reply so the conversation
+    // survives page reload. We strip attachment binary data — only `name` +
+    // `kind` are kept so the user still sees "I attached file X" in history.
+    try {
+      const lastUser = [...messages].reverse().find((mm) => mm.role === "user");
+      const rows: Array<{ sessionId: number; role: string; content: string; attachments: unknown }> = [];
+      if (lastUser) {
+        const slimAtts = (lastUser.attachments ?? []).map((a) => ({ name: a.name, kind: a.kind }));
+        rows.push({
+          sessionId,
+          role: "user",
+          content: lastUser.content ?? "",
+          attachments: slimAtts.length ? slimAtts : null,
+        });
+      }
+      rows.push({ sessionId, role: "assistant", content: reply, attachments: null });
+      if (rows.length) await db.insert(modelAssistantMessagesTable).values(rows);
+    } catch (err) {
+      req.log.warn({ err }, "Failed to persist model-assistant messages (non-fatal)");
+    }
+
     res.json({ reply, suggestion, needsMorePapers });
   } catch (err) {
     req.log.error({ err }, "Model assistant chat failed");
     res.status(500).json({ error: "Assistant failed to respond" });
   }
+});
+
+router.get("/sessions/:id/model-assistant/messages", async (req, res) => {
+  const params = ChatModelAssistantParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: "Invalid session id" });
+    return;
+  }
+  const sessionId = params.data.id;
+  const rows = await db
+    .select()
+    .from(modelAssistantMessagesTable)
+    .where(eq(modelAssistantMessagesTable.sessionId, sessionId))
+    .orderBy(asc(modelAssistantMessagesTable.id));
+  res.json({
+    messages: rows.map((r) => ({
+      id: r.id,
+      role: r.role,
+      content: r.content,
+      attachments: r.attachments ?? null,
+      createdAt: r.createdAt.toISOString(),
+    })),
+  });
+});
+
+router.delete("/sessions/:id/model-assistant/messages", async (req, res) => {
+  const params = ChatModelAssistantParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: "Invalid session id" });
+    return;
+  }
+  const sessionId = params.data.id;
+  await db.delete(modelAssistantMessagesTable).where(eq(modelAssistantMessagesTable.sessionId, sessionId));
+  res.status(204).end();
 });
 
 // ---------------------------------------------------------------------------

@@ -585,6 +585,41 @@ export type ChatModelAssistant200 = {
   needsMorePapers?: ChatModelAssistant200NeedsMorePapers;
 };
 
+export type GetModelAssistantMessages200MessagesItemRole =
+  (typeof GetModelAssistantMessages200MessagesItemRole)[keyof typeof GetModelAssistantMessages200MessagesItemRole];
+
+export const GetModelAssistantMessages200MessagesItemRole = {
+  user: "user",
+  assistant: "assistant",
+} as const;
+
+export type GetModelAssistantMessages200MessagesItemAttachmentsItemKind =
+  (typeof GetModelAssistantMessages200MessagesItemAttachmentsItemKind)[keyof typeof GetModelAssistantMessages200MessagesItemAttachmentsItemKind];
+
+export const GetModelAssistantMessages200MessagesItemAttachmentsItemKind = {
+  image: "image",
+  text: "text",
+} as const;
+
+export type GetModelAssistantMessages200MessagesItemAttachmentsItem = {
+  name: string;
+  kind: GetModelAssistantMessages200MessagesItemAttachmentsItemKind;
+};
+
+export type GetModelAssistantMessages200MessagesItem = {
+  id: number;
+  role: GetModelAssistantMessages200MessagesItemRole;
+  content: string;
+  attachments?:
+    | GetModelAssistantMessages200MessagesItemAttachmentsItem[]
+    | null;
+  createdAt: string;
+};
+
+export type GetModelAssistantMessages200 = {
+  messages: GetModelAssistantMessages200MessagesItem[];
+};
+
 export type SearchModelImagesBody = {
   /** Topic / construct to search for. The server will augment it with academic phrasing unless `raw` is true. */
   query: string;

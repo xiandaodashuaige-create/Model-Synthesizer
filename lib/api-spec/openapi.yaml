@@ -490,6 +490,68 @@ paths:
                         items:
                           type: string
 
+  /sessions/{id}/model-assistant/messages:
+    get:
+      operationId: getModelAssistantMessages
+      tags: [models]
+      summary: Get the persisted conversation history for the model assistant in this session.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Ordered list of past messages (oldest first).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [messages]
+                properties:
+                  messages:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, role, content, createdAt]
+                      properties:
+                        id:
+                          type: integer
+                        role:
+                          type: string
+                          enum: [user, assistant]
+                        content:
+                          type: string
+                        attachments:
+                          type: array
+                          nullable: true
+                          items:
+                            type: object
+                            required: [name, kind]
+                            properties:
+                              name:
+                                type: string
+                              kind:
+                                type: string
+                                enum: [image, text]
+                        createdAt:
+                          type: string
+                          format: date-time
+    delete:
+      operationId: clearModelAssistantMessages
+      tags: [models]
+      summary: Delete all persisted assistant messages for this session.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Cleared.
+
   /sessions/{id}/model-assistant/search-model-images:
     post:
       operationId: searchModelImages

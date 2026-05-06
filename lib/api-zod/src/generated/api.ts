@@ -420,6 +420,39 @@ export const ChatModelAssistantResponse = zod.object({
 });
 
 /**
+ * @summary Get the persisted conversation history for the model assistant in this session.
+ */
+export const GetModelAssistantMessagesParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const GetModelAssistantMessagesResponse = zod.object({
+  messages: zod.array(
+    zod.object({
+      id: zod.number(),
+      role: zod.enum(["user", "assistant"]),
+      content: zod.string(),
+      attachments: zod
+        .array(
+          zod.object({
+            name: zod.string(),
+            kind: zod.enum(["image", "text"]),
+          }),
+        )
+        .nullish(),
+      createdAt: zod.coerce.date(),
+    }),
+  ),
+});
+
+/**
+ * @summary Delete all persisted assistant messages for this session.
+ */
+export const ClearModelAssistantMessagesParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+/**
  * @summary Search the web for research model / conceptual framework figures matching a topic. Returns thumbnails plus original page URLs so the user can quickly find the source paper.
  */
 export const SearchModelImagesParams = zod.object({
