@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, Sparkles, Globe, BookOpen, Plus, History, Undo2, X, ExternalLink } from "lucide-react";
 import {
   useSearchModelEvidence,
@@ -102,12 +102,22 @@ export function EvidenceMatchDialog({
   mode,
   sessionId,
   modelId,
+  autoSearch = false,
+  focusEdgeKey,
+  focusEdgeLabel,
 }: {
   open: boolean;
   onClose: () => void;
   mode: Mode;
   sessionId: number;
   modelId?: number; // required for candidate
+  // When true, the dialog auto-runs the search the first time it opens.
+  // Used by the per-edge "Find sources" entry point in the live-model page.
+  autoSearch?: boolean;
+  // When provided, the matching per-edge result block is auto-scrolled into
+  // view and visually highlighted so the user finds it immediately.
+  focusEdgeKey?: string;
+  focusEdgeLabel?: { from: string; to: string };
 }) {
   const { t } = useT();
   const { toast } = useToast();
@@ -283,6 +293,35 @@ export function EvidenceMatchDialog({
   const overall = result?.overallMatches ?? [];
   const perEdge: EvidenceEdgeMatch[] = result?.perEdgeMatches ?? [];
 
+  // Auto-run a search the first time the dialog opens with autoSearch.
+  // Reset state on close so each open is a fresh cycle (no stale results
+  // from a previous focused-edge search bleeding into the next open).
+  const autoFiredRef = useRef(false);
+  useEffect(() => {
+    if (!open) {
+      autoFiredRef.current = false;
+      setResult(null);
+      setSelected(new Set());
+      return;
+    }
+    if (autoSearch && !autoFiredRef.current && !isSearching) {
+      autoFiredRef.current = true;
+      runSearch();
+    }
+    // We intentionally only react to open/autoSearch toggles.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, autoSearch]);
+
+  // Scroll the focused edge block into view + highlight it briefly when
+  // results land.
+  const focusBlockRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!focusEdgeKey || !result) return;
+    const el = focusBlockRef.current;
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [focusEdgeKey, result]);
+
   const newPaperCount = useMemo(() => {
     const s = new Set<string>();
     for (const k of selected) {
@@ -407,11 +446,24 @@ export function EvidenceMatchDialog({
                     </button>
                   </div>
 
+                  {focusEdgeKey && focusEdgeLabel && (
+                    <div className="text-xs bg-primary/5 border border-primary/30 text-foreground rounded-md px-3 py-2">
+                      {t("evidence.dialog.focusedHint" as any, { from: focusEdgeLabel.from, to: focusEdgeLabel.to })}
+                    </div>
+                  )}
+
                   {grPerEdge && perEdge.length > 0 && (
                     <div className="space-y-3">
                       <h3 className="text-xs font-semibold uppercase text-muted-foreground">{t("evidence.section.perEdge" as any)}</h3>
-                      {perEdge.map((em) => (
-                        <div key={em.edgeKey} className="border border-border rounded-md p-3 space-y-2" data-testid="evidence-edge-block">
+                      {perEdge.map((em) => {
+                        const isFocused = focusEdgeKey === em.edgeKey;
+                        return (
+                        <div
+                          key={em.edgeKey}
+                          ref={isFocused ? focusBlockRef : undefined}
+                          className={`border rounded-md p-3 space-y-2 transition-colors ${isFocused ? "border-primary bg-primary/5 ring-2 ring-primary/30" : "border-border"}`}
+                          data-testid="evidence-edge-block"
+                        >
                           <div className="text-sm font-medium text-foreground">
                             <span>{em.fromVariableName}</span>
                             <span className="mx-2 text-muted-foreground">— {em.relationship} →</span>
@@ -436,7 +488,8 @@ export function EvidenceMatchDialog({
                             })}
                           </div>
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
 

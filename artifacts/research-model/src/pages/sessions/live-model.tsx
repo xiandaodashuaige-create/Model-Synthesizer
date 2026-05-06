@@ -12,7 +12,7 @@ import {
   getListSessionVariablesQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Loader2, Plus, X, AlertTriangle, BookOpen, ArrowRight, Sparkles, GitBranch } from "lucide-react";
+import { Loader2, Plus, X, AlertTriangle, BookOpen, ArrowRight, Sparkles, GitBranch, Search } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useT } from "@/lib/i18n";
 import { EditableModelGraph, type CanvasNode, type CanvasEdge, type VariablePoolEntry } from "@/components/editable-model-graph";
@@ -47,6 +47,9 @@ export default function LiveModelPage({ params }: { params?: { id: string } }) {
   });
 
   const [evidenceOpen, setEvidenceOpen] = useState(false);
+  // When the user clicks "Find sources" on a specific edge row we pass these
+  // hints to the dialog so it auto-runs the search and scrolls to that edge.
+  const [evidenceFocus, setEvidenceFocus] = useState<{ edgeKey: string; from: string; to: string } | null>(null);
   const addNode = useAddLiveModelNode();
   const removeNode = useRemoveLiveModelNode();
   const addEdge = useAddLiveModelEdge();
@@ -437,13 +440,32 @@ export default function LiveModelPage({ params }: { params?: { id: string } }) {
                           <span className="text-muted-foreground">{REL_STYLE[e.relationship]?.label ?? e.relationship}</span>
                           <span className="font-medium text-foreground">{e.toVariableName}</span>
                           {!e.hasProvenance && (
-                            <span
-                              title={t("live.edge.unsupported.tip" as any)}
-                              className="inline-flex items-center gap-1 text-[10px] font-medium text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded"
-                            >
-                              <AlertTriangle className="w-2.5 h-2.5" />
-                              {t("live.edge.unsupported.badge" as any)}
-                            </span>
+                            <>
+                              <span
+                                title={t("live.edge.unsupported.tip" as any)}
+                                className="inline-flex items-center gap-1 text-[10px] font-medium text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded"
+                              >
+                                <AlertTriangle className="w-2.5 h-2.5" />
+                                {t("live.edge.unsupported.badge" as any)}
+                              </span>
+                              <button
+                                type="button"
+                                data-testid={`button-search-evidence-${e.id}`}
+                                onClick={() => {
+                                  setEvidenceFocus({
+                                    edgeKey: `${e.fromVariableId}-${e.toVariableId}-${e.relationship}`,
+                                    from: e.fromVariableName,
+                                    to: e.toVariableName,
+                                  });
+                                  setEvidenceOpen(true);
+                                }}
+                                title={t("live.edge.searchEvidenceTip" as any) as string}
+                                className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-1.5 py-0.5 rounded transition-colors"
+                              >
+                                <Search className="w-2.5 h-2.5" />
+                                {t("live.edge.searchEvidence" as any)}
+                              </button>
+                            </>
                           )}
                         </div>
                         {e.hasProvenance && e.provenanceCitationText && (
@@ -531,9 +553,12 @@ export default function LiveModelPage({ params }: { params?: { id: string } }) {
 
       <EvidenceMatchDialog
         open={evidenceOpen}
-        onClose={() => setEvidenceOpen(false)}
+        onClose={() => { setEvidenceOpen(false); setEvidenceFocus(null); }}
         mode="live"
         sessionId={sessionId}
+        autoSearch={!!evidenceFocus}
+        focusEdgeKey={evidenceFocus?.edgeKey}
+        focusEdgeLabel={evidenceFocus ? { from: evidenceFocus.from, to: evidenceFocus.to } : undefined}
       />
     </div>
   );
