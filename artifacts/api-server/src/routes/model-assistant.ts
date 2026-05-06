@@ -1071,6 +1071,21 @@ router.post("/sessions/:id/model-assistant/search-model-papers", async (req, res
     );
     const all = settled.flatMap((s) => (s.status === "fulfilled" ? s.value : []));
     if (all.length === 0) {
+      // For page 1, treat as a real failure so the user sees "search failed".
+      // For page > 1, this just means we've run off the end of OpenAlex's
+      // result set — return an empty page gracefully so the frontend can
+      // show its "no more results" state instead of an error toast.
+      if (page > 1) {
+        res.json({
+          query: expandedQueries.join(" | "),
+          rawQuery,
+          expandedQueries,
+          page,
+          hasMore: false,
+          papers: [],
+        });
+        return;
+      }
       res.status(502).json({ error: "OpenAlex returned no results" });
       return;
     }
@@ -1083,6 +1098,25 @@ router.post("/sessions/:id/model-assistant/search-model-papers", async (req, res
       if (!byId.has(w.id)) byId.set(w.id, w);
     }
     const deduped = Array.from(byId.values());
+
+    // If after junk-filtering everything is gone, treat the same way as
+    // "OpenAlex returned no results" — graceful end-of-pagination on page>1,
+    // soft error on page 1.
+    if (deduped.length === 0) {
+      if (page > 1) {
+        res.json({
+          query: expandedQueries.join(" | "),
+          rawQuery,
+          expandedQueries,
+          page,
+          hasMore: false,
+          papers: [],
+        });
+        return;
+      }
+      res.status(502).json({ error: "OpenAlex returned no usable results" });
+      return;
+    }
 
     // Sort by citation count desc as a quality prior, then trim to a working
     // set we'll send to the AI rater. Keep up to 2x the requested count so
