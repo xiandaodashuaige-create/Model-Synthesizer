@@ -144,7 +144,11 @@ function ReExtractAllButton({ sessionId }: { sessionId: number }) {
 function VariableGraph({ sessionId }: { sessionId: number }) {
   const { t } = useT();
   const TYPE_META = useTypeMeta();
-  const [focusNodeId, setFocusNodeId] = useState<string | null>(null);
+  // Multi-focus: clicking a node adds it to the focused set; clicking it
+  // again removes it. Edges/neighbors are the UNION across all focused nodes,
+  // so users can visually compare or chain together multiple variables.
+  const [focusedIds, setFocusedIds] = useState<Set<string>>(() => new Set());
+  const clearFocus = () => setFocusedIds(new Set());
   const { data: graph, isLoading } = useGetVariableGraph(sessionId, {
     query: { enabled: !!sessionId, queryKey: getGetVariableGraphQueryKey(sessionId) },
   });
@@ -256,41 +260,63 @@ function VariableGraph({ sessionId }: { sessionId: number }) {
     mediates:  { color: "#d97706", symbol: "Med", labelKey: "vars.graph.rel.mediates" },
   };
 
-  // Focus mode: when a node is selected, only edges touching it stay visible;
-  // the focused node and its neighbors stay full opacity, everything else dims.
-  const focusedNode = focusNodeId ? graph.nodes.find((n) => n.id === focusNodeId) ?? null : null;
-  const focusedEdges = focusedNode
-    ? aggEdges.filter((e) => e.source === focusedNode.id || e.target === focusedNode.id)
+  // Focus mode: when one or more nodes are selected, only edges touching ANY
+  // of them stay visible; the focused nodes plus their union of neighbors
+  // stay full opacity, everything else dims.
+  const hasFocus = focusedIds.size > 0;
+  const focusedNodes = hasFocus
+    ? graph.nodes.filter((n) => focusedIds.has(n.id))
+    : [];
+  const focusedEdges = hasFocus
+    ? aggEdges.filter((e) => focusedIds.has(e.source) || focusedIds.has(e.target))
     : aggEdges;
   const neighborIds = new Set<string>();
-  if (focusedNode) {
-    neighborIds.add(focusedNode.id);
+  if (hasFocus) {
+    for (const id of focusedIds) neighborIds.add(id);
     for (const e of focusedEdges) {
       neighborIds.add(e.source);
       neighborIds.add(e.target);
     }
   }
-  const isNodeDim = (nodeId: string) => focusedNode !== null && !neighborIds.has(nodeId);
+  const isNodeDim = (nodeId: string) => hasFocus && !neighborIds.has(nodeId);
+  const isEdgeFocused = (edge: AggEdge) =>
+    !hasFocus || focusedIds.has(edge.source) || focusedIds.has(edge.target);
   const handleNodeClick = (nodeId: string) => {
-    setFocusNodeId((cur) => (cur === nodeId ? null : nodeId));
+    setFocusedIds((cur) => {
+      const next = new Set(cur);
+      if (next.has(nodeId)) next.delete(nodeId);
+      else next.add(nodeId);
+      return next;
+    });
   };
+  // Comma-joined list of focused names, truncated for the header pill.
+  const focusedLabel = (() => {
+    if (focusedNodes.length === 0) return "";
+    if (focusedNodes.length <= 3) return focusedNodes.map((n) => n.label).join("、");
+    return focusedNodes.slice(0, 3).map((n) => n.label).join("、") + ` +${focusedNodes.length - 3}`;
+  })();
+  // Pick a representative color for the pill — first focused node's type color.
+  const focusedPillColor = focusedNodes[0] ? (colorMap[focusedNodes[0].type] ?? "#666") : "#666";
 
   return (
     <div className="bg-card border border-border rounded-lg p-5">
       <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
         <h3 className="text-sm font-semibold text-foreground">{t("vars.graph.title" as any)}</h3>
-        {focusedNode ? (
+        {hasFocus ? (
           <div className="inline-flex items-center gap-2 text-xs">
             <span
               className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full font-medium border"
-              style={{ color: colorMap[focusedNode.type] ?? "#666", borderColor: (colorMap[focusedNode.type] ?? "#666") + "66", backgroundColor: (colorMap[focusedNode.type] ?? "#666") + "14" }}
+              style={{ color: focusedPillColor, borderColor: focusedPillColor + "66", backgroundColor: focusedPillColor + "14" }}
+              title={focusedNodes.map((n) => n.label).join("、")}
             >
-              {t("vars.graph.focus.label" as any, { name: focusedNode.label })}
+              {focusedNodes.length === 1
+                ? t("vars.graph.focus.label" as any, { name: focusedLabel })
+                : t("vars.graph.focus.labelMulti" as any, { count: focusedNodes.length, names: focusedLabel })}
               <span className="text-muted-foreground font-normal">· {t("vars.graph.focus.count" as any, { n: focusedEdges.length })}</span>
             </span>
             <button
               type="button"
-              onClick={() => setFocusNodeId(null)}
+              onClick={clearFocus}
               className="text-xs text-primary hover:underline font-medium"
               data-testid="btn-clear-focus"
             >
@@ -301,7 +327,7 @@ function VariableGraph({ sessionId }: { sessionId: number }) {
           <span className="text-[11px] text-muted-foreground">{t("vars.graph.focus.hint" as any)}</span>
         )}
       </div>
-      {focusedNode && focusedEdges.length === 0 && (
+      {hasFocus && focusedEdges.length === 0 && (
         <div className="mb-3 rounded-md border border-amber-200 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/30 px-3 py-2 text-xs text-amber-900 dark:text-amber-200">
           {t("vars.graph.focus.empty" as any)}
         </div>
@@ -315,7 +341,7 @@ function VariableGraph({ sessionId }: { sessionId: number }) {
           style={{ minWidth: WIDTH, minHeight: HEIGHT }}
           onClick={(e) => {
             // Click on blank SVG area (not on a node/edge group) clears focus.
-            if (e.target === e.currentTarget) setFocusNodeId(null);
+            if (e.target === e.currentTarget) clearFocus();
           }}
         >
           <rect
@@ -324,7 +350,7 @@ function VariableGraph({ sessionId }: { sessionId: number }) {
             width={WIDTH}
             height={HEIGHT}
             fill="transparent"
-            onClick={() => setFocusNodeId(null)}
+            onClick={clearFocus}
           />
           <defs>
             {Object.entries(REL_STYLE).map(([rel, s]) => (
@@ -337,8 +363,8 @@ function VariableGraph({ sessionId }: { sessionId: number }) {
             const from = positions.get(edge.source);
             const to = positions.get(edge.target);
             if (!from || !to) return null;
-            const isFocusedEdge = !focusedNode || edge.source === focusedNode.id || edge.target === focusedNode.id;
-            const dimEdge = focusedNode !== null && !isFocusedEdge;
+            const isFocusedEdge = isEdgeFocused(edge);
+            const dimEdge = hasFocus && !isFocusedEdge;
             const safeRel = REL_STYLE[edge.relationship] ? edge.relationship : "positive";
             const style = REL_STYLE[safeRel];
             const fromX = from.x + NODE_W / 2;
@@ -362,7 +388,7 @@ function VariableGraph({ sessionId }: { sessionId: number }) {
                   fill="none"
                   stroke={style.color}
                   strokeOpacity={0.7}
-                  strokeWidth={isFocusedEdge && focusedNode ? 2.4 : 1.8}
+                  strokeWidth={isFocusedEdge && hasFocus ? 2.4 : 1.8}
                   strokeDasharray={style.dash}
                   markerEnd={`url(#arrow-${safeRel})`}
                 />
@@ -396,7 +422,7 @@ function VariableGraph({ sessionId }: { sessionId: number }) {
             if (!pos) return null;
             const color = colorMap[node.type] ?? "#888";
             const lines = wrapLabel(node.label);
-            const isFocused = focusedNode?.id === node.id;
+            const isFocused = focusedIds.has(node.id);
             const dim = isNodeDim(node.id);
             return (
               <g
