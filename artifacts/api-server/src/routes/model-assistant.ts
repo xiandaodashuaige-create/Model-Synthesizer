@@ -140,11 +140,16 @@ Be specific. Reference variables and papers BY NAME. Never invent variables that
   }
 
   try {
-    const completion = await openai.chat.completions.create({
-      model: "gpt-5.4",
-      max_completion_tokens: 2400,
-      messages: oaMessages as any,
-    });
+    // Abort before the 60s Autoscale Deployment proxy timeout so we can return
+    // a clean JSON error instead of a generic 502.
+    const completion = await openai.chat.completions.create(
+      {
+        model: "gpt-5.4",
+        max_completion_tokens: 2400,
+        messages: oaMessages as any,
+      },
+      { signal: AbortSignal.timeout(50_000) },
+    );
 
     const raw = completion.choices[0]?.message?.content ?? "";
 
@@ -217,7 +222,14 @@ Be specific. Reference variables and papers BY NAME. Never invent variables that
     }
 
     res.json({ reply, suggestion, needsMorePapers });
-  } catch (err) {
+  } catch (err: unknown) {
+    const e = err as { name?: string; message?: string };
+    const aborted = e?.name === "AbortError" || e?.name === "TimeoutError" || /aborted|timeout/i.test(e?.message ?? "");
+    if (aborted) {
+      req.log.warn({ err, sessionId }, "Model assistant timed out (>50s)");
+      res.status(504).json({ error: "AI 回复时间超过 50 秒。请把问题写得更短一些再试，或把部署切到 Reserved VM 以解除超时限制。" });
+      return;
+    }
     req.log.error({ err }, "Model assistant chat failed");
     res.status(500).json({ error: "Assistant failed to respond" });
   }

@@ -467,12 +467,37 @@ OUTPUT FORMAT — return ONLY a JSON array, no markdown:
   }
 ]`;
 
+  // Replit Autoscale Deployments terminate any HTTP request that takes longer
+  // than 60 seconds with a 502, regardless of what the server is doing. The
+  // model-generation OpenAI call can occasionally exceed this on cold starts
+  // or large prompts, which surfaces to the user as a generic "generation
+  // failed" with no actionable info. Abort at 55s so we still have time to
+  // return a clean JSON error explaining what happened (and suggesting the
+  // user retry with fewer papers or move the deployment to Reserved VM).
+  let completion;
   try {
-    const completion = await openai.chat.completions.create({
-      model: "gpt-5.4",
-      max_completion_tokens: 18000,
-      messages: [{ role: "user", content: prompt }],
-    });
+    completion = await openai.chat.completions.create(
+      {
+        model: "gpt-5.4",
+        max_completion_tokens: 12000,
+        messages: [{ role: "user", content: prompt }],
+      },
+      { signal: AbortSignal.timeout(55_000) },
+    );
+  } catch (err: unknown) {
+    const e = err as { name?: string; message?: string };
+    const aborted = e?.name === "AbortError" || e?.name === "TimeoutError" || /aborted|timeout/i.test(e?.message ?? "");
+    if (aborted) {
+      req.log.warn({ err, sessionId, papers: papers.length, vars: variables.length }, "AI model generation timed out (>55s)");
+      res.status(504).json({
+        error: "AI 生成模型时间超过 55 秒。线上部署对单次请求最长允许 60 秒。请尝试：(1) 减少本会话中的论文数量；(2) 在『自定义提示词』里写得更聚焦；(3) 把部署类型切到 Reserved VM 以解除超时限制。",
+      });
+      return;
+    }
+    throw err;
+  }
+
+  try {
 
     const content = completion.choices[0]?.message?.content ?? "[]";
     let generated: Array<{ operator?: string; secondaryOperator?: string; basePaperTags?: string[]; backbone?: string; name: string; description: string; rationale: string; nodes: ModelNode[]; edges: ModelEdge[] }> = [];
