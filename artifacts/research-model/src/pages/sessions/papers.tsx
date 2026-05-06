@@ -76,12 +76,18 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
       { data: { query: searchQuery, limit: 15 } },
       {
         onSuccess: (results) => setSearchResults(results),
-        onError: () =>
+        onError: (err: any) => {
+          // Surface the actual server-side reason (timeout / rate-limited /
+          // upstream / network) rather than a one-size-fits-all message.
+          const description = err?.data?.error
+            ?? err?.response?.data?.error
+            ?? t("papers.toast.searchFailedDesc" as any);
           toast({
             title: t("papers.toast.searchFailed" as any),
-            description: t("papers.toast.searchFailedDesc" as any),
+            description,
             variant: "destructive",
-          }),
+          });
+        },
       },
     );
   };
@@ -146,7 +152,7 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
         onError: (err: any) => {
           // Orval ApiError carries the parsed body on err.data
           const status = err?.status ?? err?.response?.status;
-          const description = err?.data?.error ?? err?.response?.data?.error ?? "";
+          const description = err?.data?.error ?? err?.response?.data?.error ?? t("common.tryAgain" as any);
           if (status === 404) {
             toast({
               title: t("papers.lookup.toast.notFound" as any),

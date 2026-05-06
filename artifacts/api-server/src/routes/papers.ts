@@ -103,6 +103,56 @@ function workToPaper(work: OpenAlexWork): PaperResult {
   };
 }
 
+// Network failure from OpenAlex (timeout, DNS, 5xx, 429). Carries a stable
+// `code` so the route handler can map it to the right HTTP status + message.
+class OpenAlexError extends Error {
+  code: "timeout" | "rate_limited" | "upstream" | "network";
+  status?: number;
+  constructor(code: OpenAlexError["code"], message: string, status?: number) {
+    super(message);
+    this.code = code;
+    this.status = status;
+  }
+}
+
+// Single fetch attempt with a hard 15s timeout via AbortController.
+async function fetchOpenAlexOnce(url: string): Promise<Response> {
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), 15_000);
+  try {
+    return await fetch(url, { headers: OPENALEX_HEADERS, signal: controller.signal });
+  } catch (err) {
+    if ((err as { name?: string })?.name === "AbortError") {
+      throw new OpenAlexError("timeout", "OpenAlex request timed out after 15s");
+    }
+    throw new OpenAlexError("network", `Network error reaching OpenAlex: ${(err as Error).message}`);
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+// Wraps fetchOpenAlexOnce with one retry on transient failures (timeout, 5xx,
+// network). 429 (rate-limited) is NOT retried — the cooldown would exceed our
+// budget and we want to surface it cleanly to the user.
+async function fetchOpenAlexWithRetry(url: string): Promise<Response> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const r = await fetchOpenAlexOnce(url);
+      if (r.status === 429) throw new OpenAlexError("rate_limited", "OpenAlex rate-limited", 429);
+      if (r.status >= 500) throw new OpenAlexError("upstream", `OpenAlex returned ${r.status}`, r.status);
+      return r;
+    } catch (err) {
+      const isLastAttempt = attempt === 1;
+      const isRetryable =
+        err instanceof OpenAlexError && (err.code === "timeout" || err.code === "upstream" || err.code === "network");
+      if (isLastAttempt || !isRetryable) throw err;
+      await new Promise((res) => setTimeout(res, 800));
+    }
+  }
+  // Unreachable; the loop either returns or throws.
+  throw new OpenAlexError("network", "Unreachable");
+}
+
 async function fetchFromOpenAlex(query: string, limit: number): Promise<PaperResult[]> {
   const url = new URL("https://api.openalex.org/works");
   // Use the dedicated full-text search filter on title+abstract for higher precision
@@ -117,9 +167,7 @@ async function fetchFromOpenAlex(query: string, limit: number): Promise<PaperRes
   url.searchParams.set("select", SELECT_FIELDS);
   url.searchParams.set("mailto", "research@researchmodelbuilder.app");
 
-  const response = await fetch(url.toString(), { headers: OPENALEX_HEADERS });
-  if (!response.ok) throw new Error(`OpenAlex API error: ${response.status}`);
-
+  const response = await fetchOpenAlexWithRetry(url.toString());
   const data = (await response.json()) as { results: OpenAlexWork[] };
   return (data.results ?? []).map(workToPaper);
 }
@@ -161,9 +209,10 @@ function buildLookupUrl(identifier: string): string | null {
   return null;
 }
 
-class RateLimitedError extends Error {
-  constructor() { super("OpenAlex rate-limited (429)"); }
-}
+// Backwards-compat alias: legacy call sites (e.g. bulk-import) check for
+// `RateLimitedError`; OpenAlexError with code "rate_limited" satisfies the same
+// contract via `instanceof` since RateLimitedError now refers to OpenAlexError.
+const RateLimitedError = OpenAlexError;
 
 async function lookupOnOpenAlex(identifier: string): Promise<PaperResult | null> {
   const lookupUrl = buildLookupUrl(identifier);
@@ -173,13 +222,32 @@ async function lookupOnOpenAlex(identifier: string): Promise<PaperResult | null>
   url.searchParams.set("select", SELECT_FIELDS);
   url.searchParams.set("mailto", "research@researchmodelbuilder.app");
 
-  const response = await fetch(url.toString(), { headers: OPENALEX_HEADERS });
+  // Single attempt with timeout — DOI lookup needs to detect 404 cleanly,
+  // and the bulk-import loop already iterates many DOIs so retrying each one
+  // would multiply the wall-clock unacceptably. The 15s timeout still bounds
+  // hangs; transient 5xx surfaces as `upstream` for the caller to handle.
+  const response = await fetchOpenAlexOnce(url.toString());
   if (response.status === 404) return null;
-  if (response.status === 429) throw new RateLimitedError();
-  if (!response.ok) throw new Error(`OpenAlex lookup error: ${response.status}`);
+  if (response.status === 429) throw new OpenAlexError("rate_limited", "OpenAlex rate-limited", 429);
+  if (response.status >= 500) {
+    throw new OpenAlexError("upstream", `OpenAlex returned ${response.status}`, response.status);
+  }
 
   const work = (await response.json()) as OpenAlexWork;
   return workToPaper(work);
+}
+
+// Map an OpenAlexError to an HTTP status + Chinese error body (shared by
+// /papers/search and /papers/lookup so users get the same vocabulary).
+function openAlexErrorResponse(err: OpenAlexError): { status: number; body: { error: string; code: string } } {
+  const map = {
+    timeout: { status: 504, msg: "学术数据库响应超时，请稍后再试。" },
+    rate_limited: { status: 429, msg: "学术数据库当前限流，请等几秒后再试。" },
+    upstream: { status: 502, msg: `学术数据库暂时不可用 (${err.status ?? "5xx"})，请稍后再试。` },
+    network: { status: 502, msg: "无法连接学术数据库，请检查网络后重试。" },
+  } as const;
+  const m = map[err.code];
+  return { status: m.status, body: { error: m.msg, code: err.code } };
 }
 
 /**
@@ -291,7 +359,12 @@ router.post("/papers/search", async (req, res): Promise<void> => {
     res.json(results);
   } catch (err) {
     req.log.error({ err }, "Error fetching papers from OpenAlex");
-    res.status(502).json({ error: "Failed to search papers. Please try again." });
+    if (err instanceof OpenAlexError) {
+      const { status, body } = openAlexErrorResponse(err);
+      res.status(status).json(body);
+      return;
+    }
+    res.status(502).json({ error: "搜索失败，请稍后再试。", code: "unknown" });
   }
 });
 
@@ -315,7 +388,12 @@ router.post("/papers/lookup", async (req, res): Promise<void> => {
     res.json(enriched);
   } catch (err) {
     req.log.error({ err }, "Error looking up paper");
-    res.status(502).json({ error: "Failed to look up paper. Please try again." });
+    if (err instanceof OpenAlexError) {
+      const { status, body } = openAlexErrorResponse(err);
+      res.status(status).json(body);
+      return;
+    }
+    res.status(502).json({ error: "查找论文失败，请稍后再试。", code: "unknown" });
   }
 });
 

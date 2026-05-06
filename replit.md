@@ -61,6 +61,7 @@ pnpm --filter @workspace/db run push
 _Populate as you build_
 
 ## Gotchas
+- **OpenAlex search resilience**: `routes/papers.ts` `fetchOpenAlexWithRetry` wraps `fetch` with a hard 15s `AbortController` timeout and one retry on transient failures (timeout / 5xx / network — but NOT 429). Errors map to differentiated HTTP codes (504 timeout / 429 rate-limited / 502 upstream/network) with Chinese error bodies. Frontend `papers.tsx` `handleSearch` `onError` surfaces `err.data.error` as the toast description, so users see the real reason (e.g. "学术数据库响应超时") instead of a generic "搜索失败". Don't add a 3rd retry without raising the upstream proxy timeout — total budget = 15s + 0.8s + 15s = ~31s, near the proxy ceiling.
 - Variable extraction via AI can take ~10 seconds per paper.
 - Model generation via AI can take ~20 seconds.
 - Search results are cached in-memory for 15 minutes to reduce redundant API calls.
