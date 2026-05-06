@@ -36,6 +36,7 @@ import { Loader2, Share2, Sparkles, CheckCircle, ArrowRight, BookOpen, Wand2, Gi
 import { useLocation } from "wouter";
 import { useToast } from "@/hooks/use-toast";
 import { useT } from "@/lib/i18n";
+import { loadFocusedClusterKeys, saveFocusedClusterKeys, expandToVariableIds } from "@/lib/focus-selection";
 
 // (ModelGraph + buildEdgeHTagMap + buildPaperTagMap moved to @/components/model-graph)
 function HypothesisLegend({ items }: { items: Array<{ tag: string; from: string; to: string; rel: string; paperTag: string }> }) {
@@ -120,6 +121,11 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
   const [userPrompt, setUserPrompt] = useState("");
   const [numModels, setNumModels] = useState(3);
   const [focusVariableIds, setFocusVariableIds] = useState<number[]>([]);
+  // Tracks whether `focusVariableIds` was pre-filled from the user's
+  // `/variables` page selection (vs. set by an AI chat suggestion or empty).
+  // Used to render a small banner so the user knows the generation form is
+  // already loaded with their picks and can clear them if needed.
+  const [focusFromVariablesPage, setFocusFromVariablesPage] = useState(false);
   const [pendingSelect, setPendingSelect] = useState<{ modelId: number; name: string } | null>(null);
   // Partial-pass: opt-in flow that lets the user generate models even when
   // some papers haven't been extracted yet. We surface a confirm dialog with
@@ -144,6 +150,7 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
   const handleApplySuggestion = (s: { userPrompt: string; focusVariableIds: number[] }) => {
     setUserPrompt(s.userPrompt);
     setFocusVariableIds(s.focusVariableIds);
+    setFocusFromVariablesPage(false);
     // Block AI-assistant-triggered generation through the same guard so
     // pending extractions can't be bypassed via the chat suggestion flow.
     if (generationBlocked) {
@@ -307,6 +314,34 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
 
   const learnedRounds = (learningStats?.withSelections ?? 0) + (learningStats?.withEdits ?? 0);
 
+  // ── Hydrate focus-variable selection from /variables page ─────────────
+  // The user can pin "must use" variable clusters on /variables; we restore
+  // those picks into focusVariableIds the first time the variables list
+  // loads, so the generation form (and the auto-recommendation below) both
+  // see the user's selection without an explicit "import picks" button.
+  // Re-running on every variables change would clobber chat-suggestion
+  // overrides — so we use a ref guard scoped to (sessionId, variables-ready).
+  // Hydration is SYNCHRONOUS so the auto-gen useEffect below (which lists
+  // `focusHydrated` in its deps) sees the picks in the same render pass and
+  // can't race ahead with an empty focus set.
+  const focusHydratedRef = useRef<number | null>(null);
+  const [focusHydrated, setFocusHydrated] = useState(false);
+  useEffect(() => {
+    if (!sessionId) return;
+    if (variables === undefined) return;
+    if (focusHydratedRef.current === sessionId) return;
+    focusHydratedRef.current = sessionId;
+    const keys = loadFocusedClusterKeys(sessionId);
+    if (keys.length > 0) {
+      const ids = expandToVariableIds(keys, variables);
+      if (ids.length > 0) {
+        setFocusVariableIds(ids);
+        setFocusFromVariablesPage(true);
+      }
+    }
+    setFocusHydrated(true);
+  }, [sessionId, variables]);
+
   // ── Auto initial recommendation ────────────────────────────────────────
   // Once per browser session per sessionId, when the user has done all the
   // upstream prep (≥3 papers extracted, has a topic, no models yet, never
@@ -333,14 +368,23 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
     // Standard generation preconditions.
     if (hasNoVariables) return;
     if (generationBlocked) return;
+    // Wait for the focus-selection hydration to finish — otherwise auto-gen
+    // can fire in the same tick that variables first becomes defined,
+    // dispatching with focusVariableIds=[] before the user's pinned picks
+    // from /variables have been loaded into state.
+    if (!focusHydrated) return;
     const extractedCount = (papersForGuard ?? []).filter((p) => p.extracted).length;
     if (extractedCount < 3) return;
 
     autoGenTriedRef.current = true;
     try { sessionStorage.setItem(storageKey, "1"); } catch { /* ignore */ }
     setAutoGenInFlight(true);
+    // If the user pinned focus variables on /variables, honor them in the
+    // auto-recommendation too — otherwise the auto-fired models would feel
+    // disconnected from what the user just hand-picked.
+    const autoFocusIds = focusVariableIds.length > 0 ? focusVariableIds : undefined;
     generateModels.mutate(
-      { id: sessionId, data: { numModels: 3 } },
+      { id: sessionId, data: { numModels: 3, focusVariableIds: autoFocusIds } },
       {
         onSuccess: (result) => {
           queryClient.invalidateQueries({ queryKey: getListSessionModelsQueryKey(sessionId) });
@@ -366,7 +410,7 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
     // deps — they're stable across renders and including them would risk
     // re-triggering. The `autoGenTriedRef` guard is the real safety net.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, isLoading, variables, papersForGuard, learningStats, models, hasNoVariables, generationBlocked]);
+  }, [sessionId, isLoading, variables, papersForGuard, learningStats, models, hasNoVariables, generationBlocked, focusHydrated]);
 
   return (
     <div className="space-y-6">
@@ -445,6 +489,35 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
               </button>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Banner: focus picks were carried over from the /variables page.
+          Tells the user the generation form is already pre-loaded so they
+          don't manually re-select, and offers a one-click clear. */}
+      {focusFromVariablesPage && focusVariableIds.length > 0 && (
+        <div
+          data-testid="banner-focus-prefilled"
+          className="rounded-lg border border-amber-300 bg-amber-50/60 dark:border-amber-800/60 dark:bg-amber-950/30 p-3 flex items-start gap-3"
+        >
+          <Sparkles className="w-4 h-4 mt-0.5 shrink-0 text-amber-600" />
+          <div className="flex-1 min-w-0 text-xs">
+            <p className="text-foreground leading-relaxed">
+              {t("models.focusPrefilled.body" as any, { count: focusVariableIds.length })}
+            </p>
+          </div>
+          <button
+            type="button"
+            data-testid="button-clear-prefilled-focus"
+            onClick={() => {
+              setFocusVariableIds([]);
+              setFocusFromVariablesPage(false);
+              saveFocusedClusterKeys(sessionId, []);
+            }}
+            className="shrink-0 text-xs text-primary hover:underline"
+          >
+            {t("models.focusPrefilled.clear" as any)}
+          </button>
         </div>
       )}
 

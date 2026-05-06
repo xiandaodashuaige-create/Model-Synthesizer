@@ -16,11 +16,12 @@ import {
   getGetLiveModelQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Loader2, Database, ArrowRight, Quote, BookOpen, ChevronDown, ChevronRight as ChevronRightIcon, Layers, RotateCcw, Pencil, Trash2, Check, X as XIcon, ZoomIn, ZoomOut, Maximize2 } from "lucide-react";
+import { Loader2, Database, ArrowRight, Quote, BookOpen, ChevronDown, ChevronRight as ChevronRightIcon, Layers, RotateCcw, Pencil, Trash2, Check, X as XIcon, ZoomIn, ZoomOut, Maximize2, Star, Pin } from "lucide-react";
 import { useT } from "@/lib/i18n";
 import { useToast } from "@/hooks/use-toast";
 import { NextStepHint, BigNextStep } from "@/components/onboarding-stepper";
 import { beginExtraction, updateExtraction, endExtraction, useExtractionProgress } from "@/lib/extraction-progress";
+import { clusterKey, loadFocusedClusterKeys, saveFocusedClusterKeys, countByType } from "@/lib/focus-selection";
 
 function useTypeMeta() {
   const { t } = useT();
@@ -583,6 +584,33 @@ export default function SessionVariables({ params: routeParams }: { params?: { i
   const pendingPapersCount = (papersForGuard ?? []).filter((p) => !p.extracted).length;
   const papersGuardBusy = papersForGuardLoading || papersForGuard === undefined;
 
+  // ── Focus-variable selection (optional) ──────────────────────────────
+  // The user can pin any cluster card to mark it as a "must use" variable
+  // for the next model-generation step. Selection is keyed by cluster key
+  // (type|normalizedName), persisted in localStorage per session, and
+  // hydrated on /models so the AI builds candidates around the picks.
+  const [focusedKeys, setFocusedKeys] = useState<string[]>(() => loadFocusedClusterKeys(sessionId));
+  useEffect(() => {
+    // Re-hydrate when navigating between sessions (sessionId may flip).
+    setFocusedKeys(loadFocusedClusterKeys(sessionId));
+  }, [sessionId]);
+  const focusedSet = React.useMemo(() => new Set(focusedKeys), [focusedKeys]);
+  const toggleFocus = (key: string) => {
+    setFocusedKeys((prev) => {
+      const next = prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key];
+      saveFocusedClusterKeys(sessionId, next);
+      return next;
+    });
+  };
+  const clearFocus = () => {
+    setFocusedKeys([]);
+    saveFocusedClusterKeys(sessionId, []);
+  };
+  const focusCounts = React.useMemo(
+    () => countByType(focusedKeys, variables ?? []),
+    [focusedKeys, variables],
+  );
+
   if (isLoading) return <div className="flex justify-center py-16"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
 
   if (!variables || variables.length === 0) {
@@ -646,6 +674,49 @@ export default function SessionVariables({ params: routeParams }: { params?: { i
         <span>{t("vars.cluster.hint" as any, { clusterCount: clusters.length, totalCount: variables.length })}</span>
       </div>
 
+      {/* Optional focus-selection guidance. Pinning is entirely optional — if
+          the user does nothing the next step generates models freely; if they
+          pin a few clusters those become the spine of every candidate model. */}
+      <div
+        data-testid="focus-selection-banner"
+        className={`rounded-lg border p-4 flex items-start gap-3 ${
+          focusCounts.total > 0
+            ? "border-amber-300 bg-amber-50/60 dark:border-amber-800/60 dark:bg-amber-950/30"
+            : "border-dashed border-border bg-muted/20"
+        }`}
+      >
+        <Star className={`w-4 h-4 mt-0.5 shrink-0 ${focusCounts.total > 0 ? "text-amber-600 fill-amber-400" : "text-muted-foreground"}`} />
+        <div className="flex-1 min-w-0">
+          <h3 className="text-sm font-semibold text-foreground mb-0.5">
+            {t("vars.focus.title" as any)}
+          </h3>
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            {t("vars.focus.body" as any)}
+          </p>
+          {focusCounts.total > 0 && (
+            <div className="mt-2 flex items-center gap-3 flex-wrap text-xs">
+              <span data-testid="focus-counts-summary" className="font-medium text-amber-800 dark:text-amber-200">
+                {t("vars.focus.summary" as any, {
+                  total: focusCounts.total,
+                  iv: focusCounts.independent,
+                  med: focusCounts.mediator,
+                  mod: focusCounts.moderator,
+                  dv: focusCounts.dependent,
+                })}
+              </span>
+              <button
+                type="button"
+                data-testid="button-clear-focus"
+                onClick={clearFocus}
+                className="text-primary hover:underline"
+              >
+                {t("vars.focus.clear" as any)}
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
       <div className="space-y-8">
         {typeOrder.filter((tp) => grouped[tp]?.length).map((type) => {
           const meta = TYPE_META[type]!;
@@ -665,13 +736,25 @@ export default function SessionVariables({ params: routeParams }: { params?: { i
               {primary.length > 0 && (
                 <div className="space-y-3 mb-3">
                   {primary.map((c) => (
-                    <ClusterCard key={c.key} cluster={c} meta={meta} primary />
+                    <ClusterCard
+                      key={c.key}
+                      cluster={c}
+                      meta={meta}
+                      primary
+                      pinned={focusedSet.has(c.key)}
+                      onTogglePin={() => toggleFocus(c.key)}
+                    />
                   ))}
                 </div>
               )}
 
               {secondary.length > 0 && (
-                <SecondaryGroup clusters={secondary} meta={meta} />
+                <SecondaryGroup
+                  clusters={secondary}
+                  meta={meta}
+                  focusedSet={focusedSet}
+                  onTogglePin={toggleFocus}
+                />
               )}
             </div>
           );
@@ -685,16 +768,25 @@ function ClusterCard({
   cluster,
   meta,
   primary,
+  pinned = false,
+  onTogglePin,
 }: {
   cluster: { key: string; type: string; name: string; sources: any[] };
   meta: { label: string; color: string; bg: string; border: string };
   primary?: boolean;
+  pinned?: boolean;
+  onTogglePin?: () => void;
 }) {
   const { t } = useT();
   const [expanded, setExpanded] = useState(false);
   const top = cluster.sources[0];
   return (
-    <div data-testid={`cluster-${cluster.key}`} className={`bg-card border rounded-lg p-5 ${meta.border}`}>
+    <div
+      data-testid={`cluster-${cluster.key}`}
+      className={`bg-card border rounded-lg p-5 transition-colors ${
+        pinned ? "border-amber-400 ring-1 ring-amber-300/60 dark:border-amber-700 dark:ring-amber-800/60" : meta.border
+      }`}
+    >
       <div className="flex items-start justify-between gap-4 mb-3">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
@@ -704,12 +796,36 @@ function ClusterCard({
                 {t("vars.cluster.fromN" as any, { n: cluster.sources.length })}
               </span>
             )}
+            {pinned && (
+              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-300 dark:bg-amber-900/40 dark:text-amber-200 dark:border-amber-700 inline-flex items-center gap-1">
+                <Pin className="w-2.5 h-2.5 fill-current" />
+                {t("vars.focus.pinned" as any)}
+              </span>
+            )}
           </div>
           <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{top.definition}</p>
         </div>
-        <span className={`shrink-0 text-xs font-medium px-2 py-0.5 rounded-full ${meta.bg} ${meta.color} border ${meta.border}`}>
-          {meta.label}
-        </span>
+        <div className="shrink-0 flex items-center gap-1.5">
+          <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${meta.bg} ${meta.color} border ${meta.border}`}>
+            {meta.label}
+          </span>
+          {onTogglePin && (
+            <button
+              type="button"
+              data-testid={`button-toggle-focus-${cluster.key}`}
+              onClick={onTogglePin}
+              title={pinned ? t("vars.focus.unpinTip" as any) as string : t("vars.focus.pinTip" as any) as string}
+              className={`inline-flex items-center gap-1 text-xs font-medium h-7 px-2 rounded border transition-colors ${
+                pinned
+                  ? "bg-amber-100 text-amber-800 border-amber-300 hover:bg-amber-200 dark:bg-amber-900/50 dark:text-amber-200 dark:border-amber-700"
+                  : "bg-background text-muted-foreground border-border hover:text-foreground hover:border-amber-300"
+              }`}
+            >
+              <Star className={`w-3.5 h-3.5 ${pinned ? "fill-amber-500 text-amber-600" : ""}`} />
+              {pinned ? t("vars.focus.pinnedShort" as any) : t("vars.focus.pinShort" as any)}
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Source paper chips */}
@@ -871,9 +987,13 @@ function SourceRow({
 function SecondaryGroup({
   clusters,
   meta,
+  focusedSet,
+  onTogglePin,
 }: {
   clusters: Array<{ key: string; type: string; name: string; sources: any[] }>;
   meta: { label: string; color: string; bg: string; border: string };
+  focusedSet?: Set<string>;
+  onTogglePin?: (key: string) => void;
 }) {
   const { t } = useT();
   const [open, setOpen] = useState(false);
@@ -889,7 +1009,13 @@ function SecondaryGroup({
       </summary>
       <div className="space-y-3 p-3 pt-0">
         {clusters.map((c) => (
-          <ClusterCard key={c.key} cluster={c} meta={meta} />
+          <ClusterCard
+            key={c.key}
+            cluster={c}
+            meta={meta}
+            pinned={focusedSet?.has(c.key) ?? false}
+            onTogglePin={onTogglePin ? () => onTogglePin(c.key) : undefined}
+          />
         ))}
       </div>
     </details>

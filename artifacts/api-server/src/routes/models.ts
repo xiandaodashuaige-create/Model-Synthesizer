@@ -446,8 +446,13 @@ router.post("/sessions/:id/models/generate", async (req, res): Promise<void> => 
     ? `\n\n================================================================\nRESEARCH TOPIC / USER'S STATED DIRECTION (TOP PRIORITY — every model MUST advance this exact topic; do not drift toward whatever variables happen to be most numerous):\nProject: "${sessionName || "(unnamed)"}"\nTopic: """\n${sessionTopic}\n"""\nIf some of the source papers below are tangential to this topic, prefer combinations that stay closer to the topic; only pull in tangential papers when they supply a missing mediator/moderator/boundary-condition that materially advances the topic.`
     : "";
   const userPersonalizationBlock = await buildUserPersonalizationContext(req.user?.id);
+  // The user explicitly hand-picked these variable clusters on /variables as
+  // the spine of the model they want. Treat them as MUCH stronger than the
+  // legacy "include in at least N/2 models" hint — every generated model
+  // should be built AROUND these picks, using them as the IV / key mediator /
+  // DV (not as decorative leaf nodes), and the rationale must say so.
   const focusBlock = focusVariableIds.length > 0
-    ? `\n\nUSER-PRIORITY variable IDs: ${focusVariableIds.join(", ")}. At least ${Math.ceil(numModels / 2)} of the ${numModels} models MUST include these.`
+    ? `\n\n================================================================\nUSER HAND-PICKED FOCUS VARIABLES (CRITICAL — these are the spine of the model the user wants):\nVariable IDs: ${focusVariableIds.join(", ")}\n\nMandatory rules for handling the focus set:\n- EVERY generated model MUST include AT LEAST ${Math.min(focusVariableIds.length, 2)} of these variables as STRUCTURAL nodes (IV, mediator, moderator, or DV — never as a passive label).\n- AT LEAST ${Math.ceil(numModels / 2)} of the ${numModels} models MUST include AT LEAST ${Math.min(focusVariableIds.length, 3)} of these variables, forming the model's spine.\n- The model's \`description\` MUST explicitly name the user-picked variables it builds on (e.g. "本模型以你选择的『X』为核心自变量,通过『Y』传导到『Z』").\n- The \`rationale\` MUST explain WHY the user's picks combine theoretically — do not silently swap one of the user's picks for a more convenient variable from the pool.\n- If a user-picked variable cannot be plausibly used in a given model, OMIT that model entirely rather than build a model that ignores the user's choice — return fewer than ${numModels} models if necessary, and surface the reason in the omitted model's slot rationale.`
     : "";
 
   // Synthesis prompt: explicit STRUCTURAL OPERATORS + theory backbones.
