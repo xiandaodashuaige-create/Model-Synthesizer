@@ -1194,28 +1194,6 @@ router.post("/sessions/:id/model-assistant/search-model-papers", async (req, res
 // the user can dismiss noisy hits and never see them again in this session.
 // =====================================================================
 
-router.get("/sessions/:id/image-blocklist", async (req, res) => {
-  const params = ChatModelAssistantParams.safeParse(req.params);
-  if (!params.success) {
-    res.status(400).json({ error: "Invalid session id" });
-    return;
-  }
-  const rows = await db
-    .select()
-    .from(imageBlocklistTable)
-    .where(eq(imageBlocklistTable.sessionId, params.data.id))
-    .orderBy(desc(imageBlocklistTable.createdAt));
-  res.json(rows.map((r) => ({
-    id: r.id,
-    sessionId: r.sessionId,
-    sourceUrl: r.sourceUrl,
-    sourceDomain: r.sourceDomain,
-    title: r.title,
-    reason: r.reason,
-    createdAt: r.createdAt.toISOString(),
-  })));
-});
-
 router.post("/sessions/:id/image-blocklist", async (req, res) => {
   const params = ChatModelAssistantParams.safeParse(req.params);
   if (!params.success) {
@@ -1258,23 +1236,6 @@ router.post("/sessions/:id/image-blocklist", async (req, res) => {
     sourceDomain: row.sourceDomain, title: row.title, reason: row.reason,
     createdAt: row.createdAt.toISOString(),
   });
-});
-
-router.delete("/sessions/:id/image-blocklist/:entryId", async (req, res) => {
-  const params = ChatModelAssistantParams.safeParse(req.params);
-  if (!params.success) {
-    res.status(400).json({ error: "Invalid session id" });
-    return;
-  }
-  const entryId = Number(req.params.entryId);
-  if (!Number.isInteger(entryId) || entryId <= 0) {
-    res.status(400).json({ error: "Invalid entry id" });
-    return;
-  }
-  await db
-    .delete(imageBlocklistTable)
-    .where(and(eq(imageBlocklistTable.id, entryId), eq(imageBlocklistTable.sessionId, params.data.id)));
-  res.status(204).end();
 });
 
 export default router;

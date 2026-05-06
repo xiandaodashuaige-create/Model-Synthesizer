@@ -191,40 +191,6 @@ export interface Variable {
   createdAt: string;
 }
 
-export type PaperHypothesisRelationship =
-  (typeof PaperHypothesisRelationship)[keyof typeof PaperHypothesisRelationship];
-
-export const PaperHypothesisRelationship = {
-  positive: "positive",
-  negative: "negative",
-  moderates: "moderates",
-  mediates: "mediates",
-} as const;
-
-export interface PaperHypothesis {
-  id: number;
-  sessionId: number;
-  paperId: number;
-  paperTitle?: string;
-  paperAuthors?: string[];
-  /** @nullable */
-  paperYear?: number | null;
-  /** Hypothesis label as printed in the paper (e.g. "H1", "H2a"). */
-  hypothesisId: string;
-  fromVariable: string;
-  toVariable: string;
-  /** @nullable */
-  viaVariable?: string | null;
-  relationship: PaperHypothesisRelationship;
-  /** Verbatim hypothesis sentence from the paper. */
-  statement: string;
-  /** @nullable */
-  effectSize?: string | null;
-  /** @nullable */
-  pageOrSection?: string | null;
-  createdAt: string;
-}
-
 export interface ImageBlocklistEntry {
   id: number;
   sessionId: number;

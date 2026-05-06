@@ -228,44 +228,6 @@ router.get("/sessions/:id/variables", async (req, res): Promise<void> => {
   );
 });
 
-router.get("/sessions/:id/hypotheses", async (req, res): Promise<void> => {
-  const params = ListSessionVariablesParams.safeParse(req.params);
-  if (!params.success) {
-    res.status(400).json({ error: params.error.message });
-    return;
-  }
-  const rows = await db
-    .select()
-    .from(paperHypothesesTable)
-    .where(eq(paperHypothesesTable.sessionId, params.data.id))
-    .orderBy(paperHypothesesTable.paperId, paperHypothesesTable.hypothesisId);
-  const paperIds = [...new Set(rows.map((r) => r.paperId))];
-  const papers = await Promise.all(
-    paperIds.map((id) => db.select().from(papersTable).where(eq(papersTable.id, id)).limit(1)),
-  );
-  const paperMap = new Map(papers.flat().map((p) => [p.id, p]));
-  res.json(rows.map((r) => {
-    const p = paperMap.get(r.paperId);
-    return {
-      id: r.id,
-      sessionId: r.sessionId,
-      paperId: r.paperId,
-      paperTitle: p?.title ?? "",
-      paperAuthors: p?.authors ?? [],
-      paperYear: p?.year ?? null,
-      hypothesisId: r.hypothesisId,
-      fromVariable: r.fromVariable,
-      toVariable: r.toVariable,
-      viaVariable: r.viaVariable,
-      relationship: r.relationship,
-      statement: r.statement,
-      effectSize: r.effectSize,
-      pageOrSection: r.pageOrSection,
-      createdAt: r.createdAt.toISOString(),
-    };
-  }));
-});
-
 router.get("/sessions/:id/variable-graph", async (req, res): Promise<void> => {
   const params = GetVariableGraphParams.safeParse(req.params);
   if (!params.success) {

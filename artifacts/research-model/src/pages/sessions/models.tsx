@@ -18,6 +18,16 @@ import {
 } from "@workspace/api-client-react";
 import { ModelAssistantChat } from "@/components/model-assistant-chat";
 import { NextStepHint } from "@/components/onboarding-stepper";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { Loader2, Share2, Sparkles, CheckCircle, ArrowRight, BookOpen, Wand2, GitBranch } from "lucide-react";
 import { useLocation } from "wouter";
@@ -93,6 +103,7 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
   const [userPrompt, setUserPrompt] = useState("");
   const [numModels, setNumModels] = useState(3);
   const [focusVariableIds, setFocusVariableIds] = useState<number[]>([]);
+  const [pendingSelect, setPendingSelect] = useState<{ modelId: number; name: string } | null>(null);
 
   const variableNameById = useMemo(() => {
     const m = new Map<number, string>();
@@ -188,11 +199,13 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
 
   const handleSelect = (modelId: number, name: string) => {
     if (manualEdgeCount > 0) {
-      const ok = window.confirm(
-        t("models.confirm.overwriteTitle" as any, { n: manualEdgeCount }),
-      );
-      if (!ok) return;
+      setPendingSelect({ modelId, name });
+      return;
     }
+    doSelect(modelId, name);
+  };
+
+  const doSelect = (modelId: number, name: string) => {
     selectModel.mutate({ id: modelId }, {
       onSuccess: () => {
         queryClient.invalidateQueries({ queryKey: getListSessionModelsQueryKey(sessionId) });
@@ -440,6 +453,27 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
           ))}
         </div>
       )}
+
+      <AlertDialog open={!!pendingSelect} onOpenChange={(open) => { if (!open) setPendingSelect(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("models.confirm.overwriteTitle" as any, { n: manualEdgeCount })}</AlertDialogTitle>
+            <AlertDialogDescription>{t("models.confirm.overwriteBody" as any)}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common.cancel" as any)}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                const p = pendingSelect;
+                setPendingSelect(null);
+                if (p) doSelect(p.modelId, p.name);
+              }}
+            >
+              {t("models.confirm.overwriteOk" as any)}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

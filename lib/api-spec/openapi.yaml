@@ -348,47 +348,7 @@ paths:
                 items:
                   $ref: "#/components/schemas/Variable"
 
-  /sessions/{id}/hypotheses:
-    get:
-      operationId: listSessionHypotheses
-      tags: [variables]
-      summary: List all formal hypotheses extracted from this session's papers.
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: integer
-      responses:
-        "200":
-          description: Hypotheses list
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/PaperHypothesis"
-
   /sessions/{id}/image-blocklist:
-    get:
-      operationId: listImageBlocklist
-      tags: [models]
-      summary: List images the user has dismissed for this session.
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: integer
-      responses:
-        "200":
-          description: Blocklist entries
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/ImageBlocklistEntry"
     post:
       operationId: addImageBlocklistEntry
       tags: [models]
@@ -428,26 +388,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ImageBlocklistEntry"
-
-  /sessions/{id}/image-blocklist/{entryId}:
-    delete:
-      operationId: removeImageBlocklistEntry
-      tags: [models]
-      summary: Remove an entry from this session's image blocklist.
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: integer
-        - name: entryId
-          in: path
-          required: true
-          schema:
-            type: integer
-      responses:
-        "204":
-          description: Removed
 
   /sessions/{id}/variable-graph:
     get:
@@ -1788,55 +1728,6 @@ components:
         - type
         - definition
         - citationText
-        - createdAt
-
-    PaperHypothesis:
-      type: object
-      properties:
-        id:
-          type: integer
-        sessionId:
-          type: integer
-        paperId:
-          type: integer
-        paperTitle:
-          type: string
-        paperAuthors:
-          type: array
-          items:
-            type: string
-        paperYear:
-          type: ["integer", "null"]
-        hypothesisId:
-          type: string
-          description: Hypothesis label as printed in the paper (e.g. "H1", "H2a").
-        fromVariable:
-          type: string
-        toVariable:
-          type: string
-        viaVariable:
-          type: ["string", "null"]
-        relationship:
-          type: string
-          enum: [positive, negative, moderates, mediates]
-        statement:
-          type: string
-          description: Verbatim hypothesis sentence from the paper.
-        effectSize:
-          type: ["string", "null"]
-        pageOrSection:
-          type: ["string", "null"]
-        createdAt:
-          type: string
-      required:
-        - id
-        - sessionId
-        - paperId
-        - hypothesisId
-        - fromVariable
-        - toVariable
-        - relationship
-        - statement
         - createdAt
 
     ImageBlocklistEntry:

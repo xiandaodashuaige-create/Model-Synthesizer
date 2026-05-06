@@ -312,60 +312,6 @@ export const ListSessionVariablesResponse = zod.array(
 );
 
 /**
- * @summary List all formal hypotheses extracted from this session's papers.
- */
-export const ListSessionHypothesesParams = zod.object({
-  id: zod.coerce.number(),
-});
-
-export const ListSessionHypothesesResponseItem = zod.object({
-  id: zod.number(),
-  sessionId: zod.number(),
-  paperId: zod.number(),
-  paperTitle: zod.string().optional(),
-  paperAuthors: zod.array(zod.string()).optional(),
-  paperYear: zod.number().nullish(),
-  hypothesisId: zod
-    .string()
-    .describe(
-      'Hypothesis label as printed in the paper (e.g. \"H1\", \"H2a\").',
-    ),
-  fromVariable: zod.string(),
-  toVariable: zod.string(),
-  viaVariable: zod.string().nullish(),
-  relationship: zod.enum(["positive", "negative", "moderates", "mediates"]),
-  statement: zod
-    .string()
-    .describe("Verbatim hypothesis sentence from the paper."),
-  effectSize: zod.string().nullish(),
-  pageOrSection: zod.string().nullish(),
-  createdAt: zod.string(),
-});
-export const ListSessionHypothesesResponse = zod.array(
-  ListSessionHypothesesResponseItem,
-);
-
-/**
- * @summary List images the user has dismissed for this session.
- */
-export const ListImageBlocklistParams = zod.object({
-  id: zod.coerce.number(),
-});
-
-export const ListImageBlocklistResponseItem = zod.object({
-  id: zod.number(),
-  sessionId: zod.number(),
-  sourceUrl: zod.string(),
-  sourceDomain: zod.string(),
-  title: zod.string().nullish(),
-  reason: zod.string().nullish(),
-  createdAt: zod.string(),
-});
-export const ListImageBlocklistResponse = zod.array(
-  ListImageBlocklistResponseItem,
-);
-
-/**
  * @summary Block an image (by sourceUrl) from future searches in this session.
  */
 export const AddImageBlocklistEntryParams = zod.object({
@@ -387,14 +333,6 @@ export const AddImageBlocklistEntryResponse = zod.object({
   title: zod.string().nullish(),
   reason: zod.string().nullish(),
   createdAt: zod.string(),
-});
-
-/**
- * @summary Remove an entry from this session's image blocklist.
- */
-export const RemoveImageBlocklistEntryParams = zod.object({
-  id: zod.coerce.number(),
-  entryId: zod.coerce.number(),
 });
 
 /**
