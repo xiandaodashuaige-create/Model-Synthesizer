@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useParams, Link } from "wouter";
 import {
   useListSessionVariables,
@@ -36,6 +36,23 @@ function ReExtractAllButton({ sessionId }: { sessionId: number }) {
   });
   const extractVariables = useExtractVariables();
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+
+  // Block accidental tab close / refresh / navigation while extraction is in
+  // flight. The browser shows a generic "Leave site?" dialog (the custom
+  // message string is ignored by modern browsers for security reasons) and
+  // gives the user a chance to cancel. Note: backend AI calls already in
+  // flight will complete and persist regardless — the dialog is purely a UX
+  // safeguard to keep the progress UI alive so users see what finished.
+  useEffect(() => {
+    if (!progress) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+      return "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [progress]);
 
   const handleClick = async () => {
     const all = papers ?? [];
