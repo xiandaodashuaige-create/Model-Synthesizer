@@ -8,6 +8,7 @@ import {
   useGetModelQualityReport,
   useGenerateModelLiteratureReview,
   useGetPaperModelFigures,
+  useImportLiveModelFromModel,
   getGetModelQueryKey,
   getListSessionModelsQueryKey,
   getListSessionVariablesQueryKey,
@@ -15,6 +16,7 @@ import {
   getGetSessionLearningStatsQueryKey,
   getGetModelQualityReportQueryKey,
   getGetPaperModelFiguresQueryKey,
+  getGetLiveModelQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Loader2, ArrowLeft, CheckCircle, BookOpen, Quote, Share2, Pencil, Save, X, Trash2, Plus, Download, Hash, BarChart3, MapPin, Info, FileText, AlertTriangle, Copy as CopyIcon, GitBranch, Image as ImageIcon, ChevronDown, ChevronUp, ExternalLink, Sparkles } from "lucide-react";
@@ -234,6 +236,7 @@ export default function SessionModelDetail({ params: routeParams }: { params?: {
 
   const selectModel = useSelectModel();
   const updateModel = useUpdateModel();
+  const importLiveModel = useImportLiveModelFromModel();
   const { data: model, isLoading } = useGetModel(modelId, {
     query: { enabled: !!modelId, queryKey: getGetModelQueryKey(modelId) },
   });
@@ -315,10 +318,30 @@ export default function SessionModelDetail({ params: routeParams }: { params?: {
         queryClient.invalidateQueries({ queryKey: getListSessionModelsQueryKey(sessionId) });
         queryClient.invalidateQueries({ queryKey: getGetSessionSummaryQueryKey(sessionId) });
         queryClient.invalidateQueries({ queryKey: getGetSessionLearningStatsQueryKey(sessionId) });
-        toast({
-          title: t("models.toast.selected" as any),
-          description: t("models.toast.selectedDesc" as any, { name: model.name }),
-        });
+        // Promote to live model so "我的研究模型" actually reflects the user's choice.
+        importLiveModel.mutate(
+          { id: sessionId, data: { modelId, replace: true } },
+          {
+            onSuccess: (detail) => {
+              queryClient.invalidateQueries({ queryKey: getGetLiveModelQueryKey(sessionId) });
+              toast({
+                title: t("models.toast.selected" as any),
+                description: t("live.toast.importedDesc" as any, {
+                  name: model.name,
+                  vars: detail.nodes.length,
+                  edges: detail.edges.length,
+                }),
+              });
+            },
+            onError: () => {
+              toast({
+                title: t("models.toast.selected" as any),
+                description: t("live.toast.failed" as any),
+                variant: "destructive",
+              });
+            },
+          },
+        );
       },
     });
   };

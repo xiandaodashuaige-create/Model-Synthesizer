@@ -170,10 +170,32 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
       onSuccess: () => {
         queryClient.invalidateQueries({ queryKey: getListSessionModelsQueryKey(sessionId) });
         queryClient.invalidateQueries({ queryKey: getGetSessionSummaryQueryKey(sessionId) });
-        toast({
-          title: t("models.toast.selected" as any),
-          description: t("models.toast.selectedDesc" as any, { name }),
-        });
+        // "选用" semantically promotes this model to be the user's working model — also
+        // import its nodes/edges into the live model (replacing previous content) so the
+        // "我的研究模型" page actually reflects the choice.
+        importLiveModel.mutate(
+          { id: sessionId, data: { modelId, replace: true } },
+          {
+            onSuccess: (detail) => {
+              queryClient.invalidateQueries({ queryKey: getGetLiveModelQueryKey(sessionId) });
+              toast({
+                title: t("models.toast.selected" as any),
+                description: t("live.toast.importedDesc" as any, {
+                  name,
+                  vars: detail.nodes.length,
+                  edges: detail.edges.length,
+                }),
+              });
+            },
+            onError: () => {
+              toast({
+                title: t("models.toast.selected" as any),
+                description: t("live.toast.failed" as any),
+                variant: "destructive",
+              });
+            },
+          },
+        );
       },
     });
   };
