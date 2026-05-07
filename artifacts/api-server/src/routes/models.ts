@@ -1260,12 +1260,27 @@ Use these to bias variable selection and structural focus toward what the user h
   const focusListing = focusPicks.length > 0
     ? focusPicks.map((p) => `  - id ${p.id} | ${p.type.toUpperCase()} | "${p.name}" (from paper id ${p.paperId})`).join("\n")
     : "(none — AI may freely choose variables from the extracted pool)";
+  // When the user pinned ≥2 stimulus-layer IV picks (e.g. "AI broadcast" +
+  // "AI-chatbot service quality"), the natural intent is a parallel-path /
+  // comparative model — both stimuli driving the same downstream chain.
+  // Pre-fix the AI would include both as nodes (satisfying the count check)
+  // but only wire ONE into the edge structure, leaving the other as an
+  // orphan → focus-connectivity validator hard-rejected the model. Now we
+  // make the parallel-path requirement explicit so the AI structures both
+  // IVs as concurrent sources from the start (and the orphan-rescue auto-
+  // repair below is the safety net when it still slips up).
+  const stimulusIvFocusPicks = focusPicks.filter(
+    (p) => p.type === "independent" && (p.constructLayer ?? "").toLowerCase() === "stimulus",
+  );
+  const parallelStimulusRule = stimulusIvFocusPicks.length >= 2
+    ? `\n- PARALLEL-STIMULUS REQUIREMENT (hard-enforced): the user pinned ${stimulusIvFocusPicks.length} stimulus-layer IV picks (${stimulusIvFocusPicks.map((p) => `"${p.name}"`).join(", ")}). Build a PARALLEL-PATH structure where EACH of these IVs originates ≥1 outgoing edge that ultimately reaches the DV (typically: each stimulus → a shared mediator → the DV, or each stimulus → its own mediator → the same DV). Including a pinned stimulus as a node WITHOUT any outgoing edge is an automatic rejection — server enforces this even when the count check above passes. If you genuinely cannot wire a particular pick (e.g. its construct domain doesn't fit), OMIT IT from \`nodes\` AND disclose the omission in the [FOCUS FIT] line; do NOT include it as a dangling label.`
+    : "";
   const focusRules = focusPicks.length > 0
     ? `Mandatory focus rules (SERVER-ENFORCED — models that fail these are programmatically rejected, NOT just frowned upon):
 - EVERY generated model MUST include AT LEAST ${Math.min(focusPicks.length, 2)} of the picks above as STRUCTURAL nodes in the \`nodes\` array (IV, mediator, moderator, or DV — never as a passive label, and NEVER merely mentioned in the rationale text). The server will count node↔pick matches by variable id (${focusPicks.map((p) => p.id).join(", ")}), by canonical construct id, and by exact lower-cased name. A model that talks about a pick in the rationale but doesn't include it as an actual node WILL BE REJECTED.
 - AT LEAST ${Math.ceil(perCallNumModels / 2)} of the ${perCallNumModels} models MUST include AT LEAST ${Math.min(focusPicks.length, 3)} picks forming the structural spine.
 - Each model's \`description\` MUST name the picks it builds on (in the user's language, by the variable's natural-language name, NOT by id).
-- If a focus pick conflicts with the TOPIC's domain or outcome lock below, OMIT the entire model rather than (a) silently keeping the pick and drifting the topic, or (b) silently keeping the topic and dropping the pick. Returning fewer well-aligned models is acceptable; returning a full set that drops focus picks is NOT.
+- If a focus pick conflicts with the TOPIC's domain or outcome lock below, OMIT the entire model rather than (a) silently keeping the pick and drifting the topic, or (b) silently keeping the topic and dropping the pick. Returning fewer well-aligned models is acceptable; returning a full set that drops focus picks is NOT.${parallelStimulusRule}
 `
     : "";
   const hasAnyIntent = !!(sessionTopic || userPrompt || focusPicks.length > 0);
@@ -2309,7 +2324,7 @@ OUTPUT FORMAT — return a JSON object with key "models" containing an array of 
     // we never lower the bar, we just stop punishing the whole model for
     // one cleanly-removable defect.
     const ALL_OPS = ["EXTEND", "INSERT_MODERATOR", "PARALLEL_MEDIATORS", "SWAP_MEDIATOR", "THEORY_GRAFT"] as const;
-    const repairStats = { droppedNodes: 0, droppedEdges: 0, droppedModeratorEdges: 0, droppedUngroundedEdges: 0, filledSecondaryOp: 0 };
+    const repairStats = { droppedNodes: 0, droppedEdges: 0, droppedModeratorEdges: 0, droppedUngroundedEdges: 0, filledSecondaryOp: 0, rescuedFocusOrphans: 0 };
     for (const m of generated) {
       if (!m || typeof m !== "object") continue;
       if (Array.isArray(m.nodes)) {
@@ -2384,6 +2399,70 @@ OUTPUT FORMAT — return a JSON object with key "models" containing an array of 
         });
         repairStats.droppedNodes += beforeNodes - m.nodes.length;
       }
+      // ── FOCUS-PICK ORPHAN RESCUE ───────────────────────────────────────
+      // When a focus-pick stimulus IV ends up with NO incident edges (the
+      // user pinned it BUT the AI couldn't figure out how to wire it into
+      // the path), try to rescue by cloning the strongest outgoing edge
+      // from another connected stimulus IV in the model. The clone uses the
+      // orphan as the source and keeps the same downstream target —
+      // semantically asserting that this parallel stimulus drives the same
+      // outcome chain (which is exactly what users mean when they pin 2+
+      // stimulus IVs: "compare these stimuli on the same outcome"). The
+      // cloned edge inherits the donor's verbatim evidence text, which
+      // still passes isEvidenceGrounded() because grounding checks the text
+      // vs the paper corpus, not vs the variable names. Hypothesis-id is
+      // cleared because the cited hypothesis named the donor IV, not the
+      // orphan — keeping it would mis-attribute the row in the UI.
+      // Without this rescue, models with 2+ pinned stimulus IVs were
+      // systematically hard-rejected (the user-reported "[502] AI 生成的
+      // 模型都没通过基础数据校验 ... focus pick(s) included as nodes but
+      // not connected by any edge: AI-chatbot service quality" failure).
+      if (Array.isArray(m.nodes) && Array.isArray(m.edges) && focusVarIdSet.size > 0) {
+        const incidentNow = new Set<number>();
+        for (const e of m.edges) { incidentNow.add(e.fromVariableId); incidentNow.add(e.toVariableId); }
+        const isFocusNode = (nid: number, nname?: string): boolean => {
+          if (focusVarIdSet.has(nid)) return true;
+          const v = varById.get(nid);
+          if (v?.canonicalConstructId && focusCanonSet.has(v.canonicalConstructId)) return true;
+          const nm = (nname ?? v?.name ?? "").toLowerCase().trim();
+          return !!nm && focusNameSet.has(nm);
+        };
+        for (const orphan of m.nodes) {
+          if (incidentNow.has(orphan.variableId)) continue;
+          if (!isFocusNode(orphan.variableId, orphan.variableName)) continue;
+          // Only rescue stimulus IVs — other roles (mediator/moderator/DV)
+          // need bidirectional fixes that are riskier without a strong
+          // donor signal, and those failure modes are far rarer in
+          // practice. They still hard-reject so users get a meaningful
+          // regeneration prompt.
+          if (orphan.type !== "independent" && orphan.type !== "antecedent") continue;
+          // Find a donor: another connected IV node with at least one
+          // outgoing non-moderator edge.
+          let donorEdge: ModelEdge | null = null;
+          for (const cand of m.nodes) {
+            if (cand.variableId === orphan.variableId) continue;
+            if (cand.type !== "independent" && cand.type !== "antecedent") continue;
+            if (!incidentNow.has(cand.variableId)) continue;
+            const out = m.edges.find((e) => e.fromVariableId === cand.variableId && e.relationship !== "moderates");
+            if (out) { donorEdge = out; break; }
+          }
+          if (!donorEdge) continue;
+          // Don't double-add: skip if the orphan→target edge already exists.
+          if (m.edges.some((e) => e.fromVariableId === orphan.variableId && e.toVariableId === donorEdge!.toVariableId)) continue;
+          const orphanName = orphan.variableName ?? varById.get(orphan.variableId)?.name ?? donorEdge.fromVariableName;
+          const cloned: ModelEdge = {
+            ...donorEdge,
+            fromVariableId: orphan.variableId,
+            fromVariableName: orphanName,
+            // Cited hypothesis named the donor IV; clearing avoids the UI
+            // showing "H2a" next to a relationship that no actual H2a covers.
+            evidenceHypothesisId: null,
+          };
+          m.edges.push(cloned);
+          incidentNow.add(orphan.variableId);
+          repairStats.rescuedFocusOrphans++;
+        }
+      }
       // Back-fill missing/invalid secondaryOperator (must differ from primary).
       if (m.operator && ALLOWED_OPERATORS.has(m.operator)) {
         if (!m.secondaryOperator || !ALLOWED_OPERATORS.has(m.secondaryOperator) || m.secondaryOperator === m.operator) {
@@ -2395,7 +2474,7 @@ OUTPUT FORMAT — return a JSON object with key "models" containing an array of 
         }
       }
     }
-    if (repairStats.droppedNodes || repairStats.droppedEdges || repairStats.droppedModeratorEdges || repairStats.filledSecondaryOp) {
+    if (repairStats.droppedNodes || repairStats.droppedEdges || repairStats.droppedModeratorEdges || repairStats.filledSecondaryOp || repairStats.rescuedFocusOrphans) {
       req.log.info({ sessionId, ...repairStats }, "Auto-repair pass cleaned generated models before validation");
     }
 
