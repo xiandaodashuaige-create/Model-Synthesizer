@@ -19,40 +19,15 @@ const KEY_V1 = (sessionId: number) => `focusVarSelection:v1:${sessionId}`;
 
 export type VarLite = { id: number; type: string; name: string };
 
-// Single source of truth for construct-name normalization across the client.
-// MUST stay in lock-step with the server-side canonicalize() in
-// artifacts/api-server/src/routes/variables.ts — any divergence means a name
-// produces different cluster keys client-side vs different canonicalConstructIds
-// server-side, and downstream focus-pick / role-binding matching breaks.
-//
-// Rules (same on both sides):
-//   1. NFKC normalize (collapse fullwidth/halfwidth, decomposed CJK, etc).
-//   2. Lowercase.
-//   3. Rewrite hyphens / em-dashes / en-dashes / underscores / slashes to a
-//      single space — these are punctuation noise across different papers'
-//      wording conventions (e.g. "AI-chatbot service quality" vs "AI chatbot
-//      service quality" used to mint two pinnable cards; the user's reported
-//      "重复举例变量" bug).
-//   4. Strip leading "perceived" / "the" / "a" / "an" — measurement-frame
-//      prefixes that don't change construct identity ("perceived value" and
-//      "value" are the same construct).
-//   5. Drop residual punctuation (anything that isn't a letter / digit /
-//      whitespace from any script).
-//   6. Collapse whitespace runs to a single space and trim.
-export function normalizeName(name: string): string {
-  return name
-    .normalize("NFKC")
-    .toLowerCase()
-    .replace(/[\u2010-\u2015\-_/]+/g, " ")
-    .replace(/^(perceived|the|a|an)\s+/g, "")
-    .replace(/[^\p{L}\p{N}\s]/gu, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
+// Construct-name normalization is owned by @workspace/canonicalize so client
+// and server can never drift again. See lib/canonicalize/src/index.ts for the
+// 6-step normalizer + 3-layer canonicalize() spec. The thin re-exports below
+// keep every existing call-site (clusterKey / normalizeName) working
+// unchanged.
+export { normalizeName, clusterKey, canonicalize, aggregationKey, aggregationKeyOf } from "@workspace/canonicalize";
+export type { CanonicalName } from "@workspace/canonicalize";
 
-export function clusterKey(type: string, name: string): string {
-  return `${type}|${normalizeName(name)}`;
-}
+import { normalizeName } from "@workspace/canonicalize";
 
 // Re-normalize the name half of a stored cluster key. Used on v1 → v2
 // migration so users don't lose pre-existing focus picks when the

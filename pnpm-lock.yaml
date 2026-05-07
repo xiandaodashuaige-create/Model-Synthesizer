@@ -169,6 +169,9 @@ importers:
       '@workspace/api-zod':
         specifier: workspace:*
         version: link:../../lib/api-zod
+      '@workspace/canonicalize':
+        specifier: workspace:*
+        version: link:../../lib/canonicalize
       '@workspace/db':
         specifier: workspace:*
         version: link:../../lib/db
@@ -546,6 +549,9 @@ importers:
       '@workspace/api-client-react':
         specifier: workspace:*
         version: link:../../lib/api-client-react
+      '@workspace/canonicalize':
+        specifier: workspace:*
+        version: link:../../lib/canonicalize
       '@workspace/replit-auth-web':
         specifier: workspace:*
         version: link:../../lib/replit-auth-web
@@ -642,6 +648,8 @@ importers:
       zod:
         specifier: 'catalog:'
         version: 3.25.76
+
+  lib/canonicalize: {}
 
   lib/db:
     dependencies:

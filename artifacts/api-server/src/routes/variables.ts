@@ -7,6 +7,7 @@ import {
   GetVariableGraphParams,
 } from "@workspace/api-zod";
 import { openai } from "@workspace/integrations-openai-ai-server";
+import { normalizeName } from "@workspace/canonicalize";
 import { logAiUsageFromOpenAI } from "../lib/ai-usage";
 import { CONSTRUCT_LAYERS } from "../lib/theoryTemplates.js";
 
@@ -30,33 +31,14 @@ function formatVariable(v: typeof variablesTable.$inferSelect, paper: typeof pap
   };
 }
 
-// Lightweight canonicalization: strip whitespace, lowercase, remove "perceived/the/a/...".
-// Two variables across papers that normalize to the same string get the SAME canonical id.
-// (For now we use a string-equality scheme; embedding-based merging is a follow-up.)
+// Legacy wrapper preserved so existing call-sites that wrote
+// `canonicalize(name)` and stored the result in `variables.canonicalConstructId`
+// keep producing the same string. Construct-name normalization itself lives in
+// @workspace/canonicalize (single source of truth, shared with the client).
+// New Innovation Layer code should import `canonicalize` directly from
+// @workspace/canonicalize to get the 3-layer object form.
 function canonicalize(name: string): string {
-  // Unicode-aware: keep letters/numbers from any script (incl. CJK) plus
-  // whitespace. The previous `\w` was ASCII-only, so Chinese construct names
-  // like "感知信任" got stripped to empty — every Chinese variable then
-  // collapsed to the SAME canonical id and the variable graph showed false
-  // "shared variable" overlaps across papers.
-  // NFKC normalization first so visually-identical CJK characters with
-  // different code-point compositions (e.g. composed vs decomposed, fullwidth
-  // vs halfwidth latin) collapse to the same canonical form.
-  // PUNCTUATION-AS-NOISE: hyphens, em/en dashes, underscores, and slashes
-  // are normalized to spaces BEFORE the strip step so trivially-different
-  // paper wordings collapse into ONE canonical id (the user-reported
-  // "重复举例变量" bug — "AI-chatbot service quality" vs "AI chatbot service
-  // quality" used to mint two separate canonical ids and rendered as two
-  // independent pinnable cards). Must mirror clusterKey() in
-  // artifacts/research-model/src/lib/focus-selection.ts.
-  return name
-    .normalize("NFKC")
-    .toLowerCase()
-    .replace(/[\u2010-\u2015\-_/]+/g, " ")
-    .replace(/^(perceived|the|a|an)\s+/g, "")
-    .replace(/[^\p{L}\p{N}\s]/gu, "")
-    .replace(/\s+/g, " ")
-    .trim();
+  return normalizeName(name);
 }
 
 const VALID_LAYERS = new Set<string>(CONSTRUCT_LAYERS as readonly string[]);

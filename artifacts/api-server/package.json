@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@workspace/api-zod": "workspace:*",
+    "@workspace/canonicalize": "workspace:*",
     "@workspace/db": "workspace:*",
     "@workspace/integrations-openai-ai-server": "workspace:*",
     "cookie-parser": "^1.4.7",

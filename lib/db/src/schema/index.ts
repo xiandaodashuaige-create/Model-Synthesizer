@@ -10,3 +10,4 @@ export * from "./image-blocklist";
 export * from "./model-versions";
 export * from "./model-assistant-messages";
 export * from "./personalization";
+export * from "./construct-relationships";
