@@ -276,10 +276,16 @@ export const GetSessionSummaryResponse = zod.object({
 /**
  * @summary Search papers by topic from OpenAlex
  */
+export const searchPapersBodyLimitMax = 50;
 
 export const SearchPapersBody = zod.object({
   query: zod.string(),
-  limit: zod.number().optional(),
+  limit: zod
+    .number()
+    .min(1)
+    .max(searchPapersBodyLimitMax)
+    .optional()
+    .describe("Page size, capped at the OpenAlex per-page max of 50."),
   sort: zod
     .enum(["relevance", "year", "citations"])
     .optional()

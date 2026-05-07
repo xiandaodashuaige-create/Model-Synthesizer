@@ -2098,6 +2098,9 @@ components:
           type: string
         limit:
           type: integer
+          minimum: 1
+          maximum: 50
+          description: Page size, capped at the OpenAlex per-page max of 50.
         sort:
           type: string
           enum: [relevance, year, citations]

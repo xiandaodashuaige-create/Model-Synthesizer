@@ -176,6 +176,11 @@ export const SearchPapersBodySort = {
 
 export interface SearchPapersBody {
   query: string;
+  /**
+   * Page size, capped at the OpenAlex per-page max of 50.
+   * @minimum 1
+   * @maximum 50
+   */
   limit?: number;
   /** Result ordering (default relevance) */
   sort?: SearchPapersBodySort;

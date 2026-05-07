@@ -39,11 +39,20 @@ import {
 const router: IRouter = Router();
 
 // Simple in-memory search cache (TTL: 15 minutes)
-const searchCache = new Map<string, { results: unknown[]; expiresAt: number }>();
+// Relevance pool cache: keyed by (query, page) ONLY — NOT by sort or limit.
+// Every search now fetches the same top-50 relevance-sorted pool, then resorts
+// in memory for the user's chosen sort. That means switching the 排序 tabs
+// (相关度 / 最新发表 / 高引用) never re-hits OpenAlex, eliminating the 429-rate-
+// limit failures users were seeing as "搜索失败 / 无法连接学术资料库" toasts
+// when toggling sort tabs quickly.
+const searchCache = new Map<string, { pool: PaperResult[]; expiresAt: number }>();
 const CACHE_TTL_MS = 15 * 60 * 1000;
+// Always pull a generous relevance pool so in-memory resort by year /
+// citations stays inside the topic. 50 is OpenAlex's per-page max.
+const RELEVANCE_POOL_SIZE = 50;
 
-function getCacheKey(query: string, limit: number, sort: string, page: number) {
-  return `${query.toLowerCase().trim()}:${limit}:${sort}:${page}`;
+function getPoolCacheKey(query: string, page: number) {
+  return `${query.toLowerCase().trim()}::p${page}`;
 }
 
 /** Reconstruct abstract from OpenAlex inverted index format */
@@ -156,32 +165,62 @@ async function fetchOpenAlexWithRetry(url: string): Promise<Response> {
 
 type SortMode = "relevance" | "year" | "citations";
 
-async function fetchFromOpenAlex(
-  query: string,
-  limit: number,
-  sort: SortMode = "relevance",
-  page = 1,
-): Promise<PaperResult[]> {
+// Fetch the relevance-sorted pool of up to 50 results for (query, page).
+// Always sorted by relevance_score:desc so the pool stays topically focused;
+// the caller resorts in memory for year / citations modes. This is the ONLY
+// function that hits OpenAlex for the search route.
+//
+// Why pool-by-relevance instead of sort-at-API-side: a query like
+// "AI broadcast" matches tens of thousands of works (OpenAlex tokenizes and
+// stems, so "AI" alone matches almost any modern paper). When the user picks
+// 最新发表 (sort=publication_year:desc), the API returns the NEWEST among the
+// entire matching set — typically completely off-topic papers that happen to
+// mention "AI" or "broadcast" (e.g. "Real Time Collaborative Code Editor"
+// from 2026). 高引用 has the same failure mode (e.g. a 2010 social-media paper
+// with 579 citations). Oversampling by relevance and resorting client-side
+// keeps the universe topically constrained while still honoring the user's
+// "I want recent" / "I want cited" preference.
+async function fetchRelevancePool(query: string, page: number): Promise<PaperResult[]> {
   const url = new URL("https://api.openalex.org/works");
-  // Use the dedicated full-text search filter on title+abstract for higher precision
-  // than the default `search` param (which also matches body text and is much noisier).
-  // Strip OpenAlex filter delimiters (`,` `:` `|`) and surrounding quotes from the user
-  // query so they can't break the filter grammar.
+  // title_and_abstract.search performs AND across whitespace-separated terms
+  // (stop words removed, basic stemming). We strip OpenAlex filter delimiters
+  // (`,` `:` `|`) and quotes so they can't break the filter grammar.
   const safeQuery = query.replace(/["',:|]+/g, " ").replace(/\s+/g, " ").trim();
   url.searchParams.set("filter", "title_and_abstract.search:" + safeQuery + ",is_paratext:false,has_abstract:true");
-  url.searchParams.set("per-page", String(Math.min(limit, 50)));
+  url.searchParams.set("per-page", String(RELEVANCE_POOL_SIZE));
   url.searchParams.set("page", String(Math.max(1, Math.floor(page))));
-  const sortParam =
-    sort === "year" ? "publication_year:desc"
-    : sort === "citations" ? "cited_by_count:desc"
-    : "relevance_score:desc";
-  url.searchParams.set("sort", sortParam);
+  url.searchParams.set("sort", "relevance_score:desc");
   url.searchParams.set("select", SELECT_FIELDS);
   url.searchParams.set("mailto", "research@researchmodelbuilder.app");
 
   const response = await fetchOpenAlexWithRetry(url.toString());
   const data = (await response.json()) as { results: OpenAlexWork[] };
   return (data.results ?? []).map(workToPaper);
+}
+
+// In-memory resort. Stable sort: when two papers tie on the chosen criterion
+// we preserve OpenAlex's relevance order so the more-relevant paper wins —
+// e.g. two papers both from 2024 keep the higher-relevance one on top.
+function resortPool(pool: PaperResult[], sort: SortMode): PaperResult[] {
+  if (sort === "relevance") return pool;
+  // Decorate-sort-undecorate to preserve original index for stable ordering.
+  const indexed = pool.map((p, i) => ({ p, i }));
+  if (sort === "year") {
+    indexed.sort((a, b) => {
+      const ya = a.p.year ?? -Infinity;
+      const yb = b.p.year ?? -Infinity;
+      if (yb !== ya) return yb - ya;
+      return a.i - b.i;
+    });
+  } else {
+    indexed.sort((a, b) => {
+      const ca = a.p.citationCount ?? -Infinity;
+      const cb = b.p.citationCount ?? -Infinity;
+      if (cb !== ca) return cb - ca;
+      return a.i - b.i;
+    });
+  }
+  return indexed.map((x) => x.p);
 }
 
 /**
@@ -354,21 +393,27 @@ router.post("/papers/search", async (req, res): Promise<void> => {
     return;
   }
 
-  const { query, limit = 20, sort = "relevance", page = 1 } = parsed.data;
-  const cacheKey = getCacheKey(query, limit, sort, page);
+  const { query, limit: rawLimit = 20, sort = "relevance", page: rawPage = 1 } = parsed.data;
+  // Normalize BEFORE building the cache key so equivalent inputs (e.g. page=1
+  // vs page=1.4) hit the same cache bucket.
+  const page = Math.max(1, Math.floor(rawPage));
+  const limit = Math.max(1, Math.min(50, Math.floor(rawLimit)));
+  const poolKey = getPoolCacheKey(query, page);
 
-  // Return cached results if fresh
-  const cached = searchCache.get(cacheKey);
+  // Try cached pool first. Sort tab toggles always hit this path (we never
+  // re-fetch from OpenAlex for a sort change), which is the whole point of
+  // pool caching.
+  const cached = searchCache.get(poolKey);
   if (cached && Date.now() < cached.expiresAt) {
-    req.log.info({ cacheKey }, "Returning cached search results");
-    res.json(cached.results);
+    req.log.info({ poolKey, sort }, "Serving search from cached relevance pool");
+    res.json(resortPool(cached.pool, sort).slice(0, limit));
     return;
   }
 
   try {
-    const results = await fetchFromOpenAlex(query, limit, sort, page);
-    searchCache.set(cacheKey, { results, expiresAt: Date.now() + CACHE_TTL_MS });
-    res.json(results);
+    const pool = await fetchRelevancePool(query, page);
+    searchCache.set(poolKey, { pool, expiresAt: Date.now() + CACHE_TTL_MS });
+    res.json(resortPool(pool, sort).slice(0, limit));
   } catch (err) {
     req.log.error({ err }, "Error fetching papers from OpenAlex");
     if (err instanceof OpenAlexError) {
