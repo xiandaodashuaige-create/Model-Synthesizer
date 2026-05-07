@@ -151,6 +151,7 @@ export function BigNextStep({
   cta,
   disabled,
   disabledReason,
+  warning,
 }: {
   eyebrow: string;
   title: string;
@@ -159,6 +160,7 @@ export function BigNextStep({
   cta: string;
   disabled?: boolean;
   disabledReason?: string;
+  warning?: string;
 }) {
   const sharedBtnClass =
     "shrink-0 inline-flex items-center justify-center gap-2 rounded-lg text-base font-semibold h-14 px-8 shadow-md transition-colors";
@@ -171,6 +173,9 @@ export function BigNextStep({
           <p className="text-sm text-muted-foreground leading-relaxed max-w-2xl">{body}</p>
           {disabled && disabledReason ? (
             <p className="mt-3 text-xs font-medium text-amber-700 dark:text-amber-400">{disabledReason}</p>
+          ) : null}
+          {!disabled && warning ? (
+            <p className="mt-3 text-xs font-medium text-amber-700 dark:text-amber-400">{warning}</p>
           ) : null}
         </div>
         {disabled ? (

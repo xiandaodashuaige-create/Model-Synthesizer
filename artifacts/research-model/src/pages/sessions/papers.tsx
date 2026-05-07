@@ -982,19 +982,29 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
       </div>
 
       {/* Prominent bottom CTA — appears once at least one paper is extracted.
-          Disabled while bulk extraction is running OR while any paper is still
-          unextracted, so users don't accidentally generate models on a partial
-          variable set and silently miss evidence from the remaining papers. */}
+          Disabled only while bulk extraction is actively running. When some
+          papers stayed pending (e.g. AI returned no variables for a non-
+          empirical paper), we let the user proceed and surface a warning;
+          the /models page has its own partial-generation confirm dialog as
+          the safety net. Previously this hard-blocked navigation, leaving
+          users stuck whenever a single paper failed extraction. */}
       {someExtracted && (() => {
         const pendingCount = (sessionPapers ?? []).filter((p) => !p.extracted).length;
         const isExtracting = !!extractAllProgress;
-        const hasPending = pendingCount > 0;
-        const disabled = isExtracting || hasPending;
+        // Only block navigation while bulk extraction is actively running.
+        // When extraction is idle but some papers stayed pending (e.g. AI
+        // returned no variables for a non-empirical paper), let the user
+        // proceed — /variables and /models surface their own warnings and the
+        // models page already supports a "partial generation" confirm flow.
+        // Forcing the user to either retry forever or hand-delete every
+        // stuck paper to advance is what was getting them stuck.
+        const disabled = isExtracting;
         const disabledReason = isExtracting
           ? t("nextstep.disabled.extracting" as any, { done: extractAllProgress!.done, total: extractAllProgress!.total })
-          : hasPending
-            ? t("nextstep.disabled.pending" as any, { count: pendingCount })
-            : undefined;
+          : undefined;
+        const warning = !isExtracting && pendingCount > 0
+          ? t("nextstep.warn.pending" as any, { count: pendingCount })
+          : undefined;
         return (
           <BigNextStep
             eyebrow={t("nextstep.eyebrow" as any)}
@@ -1004,6 +1014,7 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
             cta={t("nextstep.papers.cta" as any)}
             disabled={disabled}
             disabledReason={disabledReason}
+            warning={warning}
           />
         );
       })()}

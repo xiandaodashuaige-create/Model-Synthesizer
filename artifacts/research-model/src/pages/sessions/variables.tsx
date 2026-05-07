@@ -719,13 +719,16 @@ export default function SessionVariables({ params: routeParams }: { params?: { i
         body={t("nextstep.vars.body" as any)}
         href={`/sessions/${sessionId}/models`}
         cta={t("nextstep.vars.cta" as any)}
-        disabled={!!extractionProgress || pendingPapersCount > 0 || papersGuardBusy}
+        disabled={!!extractionProgress || papersGuardBusy}
         disabledReason={
           extractionProgress
             ? t("nextstep.disabled.extracting" as any, { done: extractionProgress.done, total: extractionProgress.total })
-            : pendingPapersCount > 0
-              ? t("nextstep.disabled.pending" as any, { count: pendingPapersCount })
-              : undefined
+            : undefined
+        }
+        warning={
+          !extractionProgress && pendingPapersCount > 0
+            ? t("nextstep.warn.pending" as any, { count: pendingPapersCount })
+            : undefined
         }
       />
 
