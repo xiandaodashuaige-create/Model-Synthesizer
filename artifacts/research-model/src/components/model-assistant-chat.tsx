@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useChatModelAssistant, useSearchModelImages, useSearchModelPapers, useAddImageBlocklistEntry, useListImageBlocklist, useDeleteImageBlocklistEntry, useGetModelAssistantMessages, useClearModelAssistantMessages, useGetSession, getGetModelAssistantMessagesQueryKey, getListImageBlocklistQueryKey, getGetLiveModelQueryKey } from "@workspace/api-client-react";
+import { useChatModelAssistant, useSearchModelImages, useSearchModelPapers, useAddImageBlocklistEntry, useListImageBlocklist, useDeleteImageBlocklistEntry, useGetModelAssistantMessages, useClearModelAssistantMessages, useGetSession, useDistillNudgeQueries, getGetModelAssistantMessagesQueryKey, getListImageBlocklistQueryKey, getGetLiveModelQueryKey } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { BookOpen, BookPlus, ChevronDown, ChevronUp, Download, ExternalLink, FileText, Heart, Image as ImageIcon, LayoutGrid, Loader2, MessageSquare, Paperclip, RefreshCw, RotateCcw, Search, Send, Sparkles, Trash2, X } from "lucide-react";
 import { useT } from "@/lib/i18n";
@@ -102,14 +102,53 @@ export function ModelAssistantChat({
   };
   const sessionTopic = sessionQ.data?.topic ?? "";
   const sessionPaperCount = sessionQ.data?.paperCount ?? 0;
-  const nudgeQueries = useMemo<string[]>(() => {
-    const topic = sessionTopic.trim();
-    if (!topic) return [];
-    const varNames = Array.from(variableNameById.values()).slice(0, 4);
-    const out = [`${topic} conceptual model`, `${topic} theoretical framework`];
-    if (varNames.length >= 2) out.push(`${topic} ${varNames[0]} ${varNames[1]}`);
-    return out.slice(0, 3);
-  }, [sessionTopic, variableNameById]);
+  // AI-distilled short search angles for the opening nudge. Replaces the old
+  // `${topic} conceptual model` template that produced 30+ word queries when
+  // the user named their session with the full thesis title — which matched
+  // every keyword loosely on Google Images and returned irrelevant noise.
+  // Fired lazily on a one-shot useEffect per (session, eligibility) pair.
+  const distillMut = useDistillNudgeQueries();
+  const [nudgeQueries, setNudgeQueries] = useState<Array<{ label: string; query: string }>>([]);
+  // Tracks which session we last KICKED OFF a request for, plus a request token
+  // so a late-arriving response from a previous session can't overwrite the
+  // current session's queries (the user may switch sessions while in-flight).
+  const nudgeFetchedRef = useRef<number | null>(null);
+  const nudgeReqIdRef = useRef<number>(0);
+  const nudgeRetryRef = useRef<number>(0);
+  const nudgeEligible = !!sessionTopic && sessionPaperCount >= 3 && !nudgeDismissed && !imgPanelEverOpened;
+  useEffect(() => {
+    if (!nudgeEligible) return;
+    if (nudgeFetchedRef.current === sessionId) return;
+    nudgeFetchedRef.current = sessionId;
+    const myReqId = ++nudgeReqIdRef.current;
+    const mySessionId = sessionId;
+    distillMut.mutate({ id: sessionId }, {
+      onSuccess: (data) => {
+        if (nudgeReqIdRef.current !== myReqId || sessionId !== mySessionId) return;
+        setNudgeQueries(data.queries ?? []);
+      },
+      onError: () => {
+        if (nudgeReqIdRef.current !== myReqId || sessionId !== mySessionId) return;
+        // Allow one retry on transient failure before suppressing the nudge.
+        if (nudgeRetryRef.current < 1) {
+          nudgeRetryRef.current += 1;
+          nudgeFetchedRef.current = null;
+        } else {
+          setNudgeQueries([]);
+        }
+      },
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nudgeEligible, sessionId]);
+  // Reset on session switch — clears stale queries AND the per-session retry
+  // counter so a fresh session gets its own one-shot retry budget.
+  useEffect(() => {
+    setNudgeQueries([]);
+    nudgeFetchedRef.current = null;
+    nudgeRetryRef.current = 0;
+    nudgeReqIdRef.current += 1;
+  }, [sessionId]);
+  const nudgeLoading = nudgeEligible && distillMut.isPending && nudgeQueries.length === 0;
 
   const [messages, setMessages] = useState<ChatMsg[]>([
     { role: "assistant", content: t("models.assistant.greeting" as any) },
@@ -617,7 +656,7 @@ export function ModelAssistantChat({
         </div>
       )}
 
-      {!imgPanelOpen && !imgPanelEverOpened && !nudgeDismissed && sessionTopic && sessionPaperCount >= 3 && nudgeQueries.length > 0 && (
+      {nudgeEligible && (nudgeLoading || nudgeQueries.length > 0) && (
         <div className="border-t border-sky-200 bg-sky-50/80 px-4 py-3 space-y-2" data-testid="panel-image-search-nudge">
           <div className="flex items-start justify-between gap-2">
             <div className="flex items-center gap-1.5 text-xs font-semibold text-sky-900">
@@ -638,19 +677,27 @@ export function ModelAssistantChat({
             {t("models.assistant.openingNudge.body" as any, { count: sessionPaperCount })}
           </p>
           <div className="text-[11px] font-medium text-sky-800">{t("models.assistant.openingNudge.suggested" as any)}</div>
-          <div className="flex flex-wrap gap-1.5">
-            {nudgeQueries.map((q, i) => (
-              <button
-                key={i}
-                type="button"
-                data-testid={`button-nudge-query-${i}`}
-                onClick={() => { runImageSearch(q); dismissNudge(); }}
-                className="inline-flex items-center gap-1.5 rounded-md border border-sky-400 bg-white hover:bg-sky-100 text-sky-800 text-xs font-medium px-2.5 py-1"
-              >
-                <Search className="w-3 h-3" /> {q}
-              </button>
-            ))}
-          </div>
+          {nudgeLoading ? (
+            <div className="flex items-center gap-2 text-xs text-sky-800" data-testid="nudge-loading">
+              <Loader2 className="w-3 h-3 animate-spin" />
+              {t("models.assistant.openingNudge.distilling" as any)}
+            </div>
+          ) : (
+            <div className="flex flex-wrap gap-1.5">
+              {nudgeQueries.map((q, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  data-testid={`button-nudge-query-${i}`}
+                  onClick={() => { runImageSearch(q.query); dismissNudge(); }}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-sky-400 bg-white hover:bg-sky-100 text-sky-800 text-xs font-medium px-2.5 py-1"
+                  title={q.query}
+                >
+                  <Search className="w-3 h-3" /> {q.label}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

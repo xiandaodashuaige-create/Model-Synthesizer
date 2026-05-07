@@ -892,6 +892,30 @@ export const SearchModelImagesResponse = zod.object({
 });
 
 /**
+ * @summary AI-distill the session's topic + variables into 2-3 short English search queries (with friendly Chinese button labels) for the chat opening nudge that points users at image search.
+ */
+export const DistillNudgeQueriesParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const DistillNudgeQueriesResponse = zod.object({
+  queries: zod.array(
+    zod.object({
+      label: zod
+        .string()
+        .describe(
+          "Short, user-facing button label (zh-CN preferred, ≤14 chars).",
+        ),
+      query: zod
+        .string()
+        .describe(
+          "4-8 word English academic search query that gets passed to the image search backend.",
+        ),
+    }),
+  ),
+});
+
+/**
  * @summary Find model / framework figures for a single paper. Cached on the paper row after the first call.
  */
 export const GetPaperModelFiguresParams = zod.object({

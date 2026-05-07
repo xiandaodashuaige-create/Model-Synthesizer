@@ -328,6 +328,7 @@ const dict = {
     "models.assistant.openingNudge.body": "你已经传了 {count} 篇文献。建模之前，可以先快速看看本主题相关的已发表论文里画的概念模型图，找找灵感和常见的变量结构。",
     "models.assistant.openingNudge.dismiss": "不需要",
     "models.assistant.openingNudge.suggested": "试试这些搜索词：",
+    "models.assistant.openingNudge.distilling": "正在为你提炼搜索关键词…",
 
     "models.assistant.tab.images": "模型图（图片）",
     "models.assistant.tab.papers": "相关论文（含模型图）",
@@ -1029,6 +1030,7 @@ const dict = {
     "models.assistant.openingNudge.body": "You've uploaded {count} papers. Before building your model, take a quick look at conceptual model figures from published papers on this topic to spot common variable structures.",
     "models.assistant.openingNudge.dismiss": "No thanks",
     "models.assistant.openingNudge.suggested": "Try these searches:",
+    "models.assistant.openingNudge.distilling": "Distilling search keywords for you…",
 
     "models.assistant.tab.images": "Model figures (images)",
     "models.assistant.tab.papers": "Related papers (with model figure)",

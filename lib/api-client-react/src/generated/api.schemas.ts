@@ -961,6 +961,17 @@ export type SearchModelImages200 = {
   results: SearchModelImages200ResultsItem[];
 };
 
+export type DistillNudgeQueries200QueriesItem = {
+  /** Short, user-facing button label (zh-CN preferred, ≤14 chars). */
+  label: string;
+  /** 4-8 word English academic search query that gets passed to the image search backend. */
+  query: string;
+};
+
+export type DistillNudgeQueries200 = {
+  queries: DistillNudgeQueries200QueriesItem[];
+};
+
 export type GetPaperModelFiguresParams = {
   /**
    * When true, ignores cache and re-runs the upstream search.

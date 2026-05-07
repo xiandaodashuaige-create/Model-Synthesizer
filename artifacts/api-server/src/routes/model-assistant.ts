@@ -1714,4 +1714,118 @@ router.post("/sessions/:id/image-blocklist", async (req, res) => {
   });
 });
 
+// ----------------------------------------------------------------------------
+// Distill nudge queries
+// ----------------------------------------------------------------------------
+// Powers the chat opening nudge: takes the session's topic + variable names
+// and asks gpt-5-mini to return 2-3 SHORT English search queries (4-8 words)
+// with friendly Chinese button labels. Replaces the old client-side
+// `${topic} conceptual model` template that produced 30+ word queries when
+// users named their session with the full thesis title.
+//
+// Anti-abuse + determinism: results cached in-process for 30 minutes keyed by
+// (sessionId, topic, top-12 var names). Server enforces word-count contract
+// AFTER the AI returns — ungrounded model output gets truncated to the first
+// 8 lowercase words, guaranteeing the long-query bug cannot reappear even if
+// the AI ignores its instructions.
+type NudgeCacheEntry = { ts: number; queries: Array<{ label: string; query: string }> };
+const nudgeCache = new Map<string, NudgeCacheEntry>();
+const NUDGE_CACHE_TTL_MS = 30 * 60 * 1000;
+const NUDGE_CACHE_MAX = 500;
+function nudgeCacheKey(sessionId: number, ctx: { topic: string | null; variableNames: string[] }) {
+  return `${sessionId}|${ctx.topic ?? ""}|${ctx.variableNames.slice(0, 12).join(",")}`;
+}
+// Hard contract enforcement: lowercase, strip quotes/punctuation noise, cap
+// to 8 words, drop banned padding terms. Returns null if compaction fails.
+function compactDistilledQuery(raw: string): string | null {
+  if (typeof raw !== "string") return null;
+  const banned = new Set(["research", "figure", "diagram", "study", "paper"]);
+  const words = raw
+    .toLowerCase()
+    .replace(/["'`]/g, " ")
+    .replace(/[^\p{L}\p{N}\s-]/gu, " ")
+    .split(/\s+/)
+    .map((w) => w.trim())
+    .filter((w) => w.length > 0 && !banned.has(w));
+  if (words.length < 2) return null;
+  return words.slice(0, 8).join(" ");
+}
+router.post("/sessions/:id/model-assistant/distill-nudge-queries", async (req, res) => {
+  const params = ChatModelAssistantParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: "Invalid session id" });
+    return;
+  }
+  const ctx = await loadSessionImageCtx(params.data.id);
+  if (!ctx || !ctx.topic) {
+    res.json({ queries: [] });
+    return;
+  }
+  // Cache lookup BEFORE any AI spend.
+  const cacheKey = nudgeCacheKey(params.data.id, ctx);
+  const now = Date.now();
+  const cached = nudgeCache.get(cacheKey);
+  if (cached && now - cached.ts < NUDGE_CACHE_TTL_MS) {
+    res.json({ queries: cached.queries, cached: true });
+    return;
+  }
+  try {
+    const completion: any = await openai.chat.completions.create({
+      model: "gpt-5-mini",
+      max_completion_tokens: 400,
+      messages: [
+        {
+          role: "system",
+          content: `You distill a research session into 2-3 SHORT search angles for finding conceptual model / theoretical framework figures on Google Images.
+Output ONLY: {"queries":[{"label":"...","query":"..."}, ...]}
+Rules:
+- 2 to 3 items, each a DIFFERENT angle (e.g. one core construct relationship, one broader theory family, one method-specific figure type).
+- "query": 4-8 words, lowercase English, canonical academic terminology, NO quotes, NO site: filters, NO words like "research"/"figure"/"diagram".
+- "label": Chinese (zh-CN) button label ≤14 characters, plain text, NO emojis, NO punctuation; should hint at what the user will see (e.g. "概念模型图" / "SOR 框架图" / "中介模型示例").
+- Translate Chinese constructs (直播/主播/冲动消费/信任) to standard English (live streaming, streamer, impulse buying, trust).
+- At least one query MUST combine the topic with the user's actual variables when variables are listed.`,
+        },
+        {
+          role: "user",
+          content: `Topic: ${ctx.topic}
+Variables: ${ctx.variableNames.slice(0, 12).join(", ") || "(none)"}
+Sample paper titles: ${ctx.paperTitles.slice(0, 4).join(" | ") || "(none)"}`,
+        },
+      ],
+    });
+    logAiUsageFromOpenAI(completion, { route: "model-assistant/distill-nudge-queries", sessionId: params.data.id, userId: req.user?.id ?? null });
+    const txt = completion.choices[0]?.message?.content ?? "";
+    const match = txt.match(/\{[\s\S]*\}/);
+    if (!match) { res.json({ queries: [] }); return; }
+    let parsed: { queries?: unknown };
+    try { parsed = JSON.parse(match[0]); } catch { res.json({ queries: [] }); return; }
+    if (!Array.isArray(parsed.queries)) { res.json({ queries: [] }); return; }
+    const out: Array<{ label: string; query: string }> = [];
+    const seenQueries = new Set<string>();
+    for (const item of parsed.queries) {
+      if (!item || typeof item !== "object") continue;
+      const label = typeof (item as any).label === "string" ? (item as any).label.trim().slice(0, 14) : "";
+      const rawQuery = typeof (item as any).query === "string" ? (item as any).query : "";
+      const query = compactDistilledQuery(rawQuery);
+      if (label.length === 0 || !query) continue;
+      if (seenQueries.has(query)) continue;
+      seenQueries.add(query);
+      out.push({ label, query });
+      if (out.length >= 3) break;
+    }
+    // Persist to cache (even empty arrays — avoids hammering the model with
+    // retries on a topic it can't usefully distill).
+    if (nudgeCache.size >= NUDGE_CACHE_MAX) {
+      // Cheap eviction: drop oldest entry.
+      const first = nudgeCache.keys().next().value;
+      if (first !== undefined) nudgeCache.delete(first);
+    }
+    nudgeCache.set(cacheKey, { ts: now, queries: out });
+    res.json({ queries: out, cached: false });
+  } catch (err) {
+    req.log.warn({ err }, "distill-nudge-queries failed");
+    res.json({ queries: [] });
+  }
+});
+
 export default router;

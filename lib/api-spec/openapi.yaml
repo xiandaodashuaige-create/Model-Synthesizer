@@ -1024,6 +1024,45 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /sessions/{id}/model-assistant/distill-nudge-queries:
+    post:
+      operationId: distillNudgeQueries
+      tags: [models]
+      summary: AI-distill the session's topic + variables into 2-3 short English search queries (with friendly Chinese button labels) for the chat opening nudge that points users at image search.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: 0-3 short search angles. Empty array means the session has no topic or AI returned nothing usable.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [queries]
+                properties:
+                  queries:
+                    type: array
+                    items:
+                      type: object
+                      required: [label, query]
+                      properties:
+                        label:
+                          type: string
+                          description: Short, user-facing button label (zh-CN preferred, ≤14 chars).
+                        query:
+                          type: string
+                          description: 4-8 word English academic search query that gets passed to the image search backend.
+        "404":
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /sessions/{sessionId}/papers/{paperId}/model-figures:
     get:
       operationId: getPaperModelFigures

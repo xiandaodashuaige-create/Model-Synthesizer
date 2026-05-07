@@ -31,6 +31,7 @@ import type {
   CreateSessionVariableBody,
   DeleteImageBlocklistEntry200,
   DeleteSessionVariable200,
+  DistillNudgeQueries200,
   ErrorResponse,
   EvidenceApplyRequest,
   EvidenceSearchRequest,
@@ -2944,6 +2945,90 @@ export const useSearchModelImages = <
   TContext
 > => {
   return useMutation(getSearchModelImagesMutationOptions(options));
+};
+
+/**
+ * @summary AI-distill the session's topic + variables into 2-3 short English search queries (with friendly Chinese button labels) for the chat opening nudge that points users at image search.
+ */
+export const getDistillNudgeQueriesUrl = (id: number) => {
+  return `/api/sessions/${id}/model-assistant/distill-nudge-queries`;
+};
+
+export const distillNudgeQueries = async (
+  id: number,
+  options?: RequestInit,
+): Promise<DistillNudgeQueries200> => {
+  return customFetch<DistillNudgeQueries200>(getDistillNudgeQueriesUrl(id), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getDistillNudgeQueriesMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof distillNudgeQueries>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof distillNudgeQueries>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  const mutationKey = ["distillNudgeQueries"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof distillNudgeQueries>>,
+    { id: number }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return distillNudgeQueries(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DistillNudgeQueriesMutationResult = NonNullable<
+  Awaited<ReturnType<typeof distillNudgeQueries>>
+>;
+
+export type DistillNudgeQueriesMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary AI-distill the session's topic + variables into 2-3 short English search queries (with friendly Chinese button labels) for the chat opening nudge that points users at image search.
+ */
+export const useDistillNudgeQueries = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof distillNudgeQueries>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof distillNudgeQueries>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  return useMutation(getDistillNudgeQueriesMutationOptions(options));
 };
 
 /**
