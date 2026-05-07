@@ -237,6 +237,134 @@ interface PartialPassMeta {
   qualityWarnings?: string[];
 }
 
+// Extract user-named structural role bindings from the directive prompt.
+// Example: user types "我想要 consumer engagement 作为中介,social overload 作为
+// 调节" — we parse out (consumer engagement → mediator) and (social overload
+// → moderator), then bilingual-fuzzy-match each against the variable pool.
+// When a match exists, validate() HARD-REJECTS any model that ignores it.
+//
+// This is the server-side backstop for the prompt's USER-NAMED ROLE BINDING
+// rules. The prompt asks the AI to honor user-named roles, but with a 30k-
+// token prompt the AI sometimes silently drops them (the exact failure the
+// user reported in production: directive named "consumer engagement as
+// mediator" but generated model contained neither the construct nor any
+// mediator at all). Without a server check, the AI's mistake reaches the UI.
+type RoleBindingRole = "independent" | "mediator" | "moderator" | "dependent";
+type RequiredRoleBinding = { variableId: number; role: RoleBindingRole; userTerm: string };
+function extractRequiredRoleBindings(
+  prompt: string,
+  variables: Array<{ id: number; name: string; canonicalConstructId: string | null }>,
+): RequiredRoleBinding[] {
+  if (!prompt || !prompt.trim()) return [];
+  const out: RequiredRoleBinding[] = [];
+  const seen = new Set<string>();
+  const norm = (s: string) => s.toLowerCase().replace(/[\s_\-]+/g, "");
+  const varIndex = variables.map((v) => ({ v, k: norm(v.name) }));
+
+  // Tiny seed dictionary for the most common Chinese constructs that pop up
+  // in research-model directives. We don't aim for full coverage — the AI
+  // expansion handles long-tail. This dictionary just covers the ones we've
+  // seen production users type so the SERVER ENFORCEMENT works on those.
+  const zh2en: Record<string, string[]> = {
+    "消费者粘性": ["customer engagement", "consumer engagement", "user engagement"],
+    "消费者投入": ["customer engagement", "consumer engagement"],
+    "消费者参与": ["customer engagement", "consumer engagement", "consumer involvement"],
+    "用户粘性": ["customer engagement", "user engagement"],
+    "用户参与": ["user engagement", "user involvement"],
+    "信任": ["trust", "consumer trust", "system trust", "brand trust"],
+    "感知有用性": ["perceived usefulness"],
+    "感知易用性": ["perceived ease of use"],
+    "购买意愿": ["purchase intention", "buying intention"],
+    "冲动购买": ["impulse buying", "impulse purchase", "impulsive consumption", "impulsive buying"],
+    "冲动消费": ["impulse buying", "impulse purchase", "impulsive consumption"],
+    "社交超载": ["social overload"],
+    "信息过载": ["information overload"],
+    "拟人化": ["anthropomorphism", "perceived anthropomorphism", "humanlike"],
+    "心流": ["flow", "flow experience"],
+    "感知价值": ["perceived value"],
+    "满意度": ["satisfaction", "user satisfaction", "customer satisfaction"],
+    "忠诚度": ["loyalty", "customer loyalty", "brand loyalty"],
+    "持续使用意愿": ["continuance intention", "continued use intention"],
+    "感知风险": ["perceived risk"],
+    "情感投入": ["affective engagement", "emotional engagement"],
+    "认知投入": ["cognitive engagement"],
+  };
+
+  // Stop list for English-pattern false positives — terms that often appear
+  // before "as mediator" / "as moderator" but are not real construct names.
+  const STOP = new Set(["it", "this", "that", "the", "a", "an", "such", "any", "some", "which", "who", "what"]);
+
+  const patterns: Array<{ re: RegExp; role: RoleBindingRole }> = [
+    // Chinese — capture name token then role keyword. Use a non-greedy CJK+
+    // word-char run capped at 30 chars; stop at common punctuation.
+    { re: /([^\s,，。.;；:：?？!！()（）"'「」『』]{2,30})\s*作为\s*(?:核心\s*)?(?:中介|mediator|mediating)/g, role: "mediator" },
+    { re: /([^\s,，。.;；:：?？!！()（）"'「」『』]{2,30})\s*作为\s*(?:核心\s*)?(?:调节|moderator|moderating)/g, role: "moderator" },
+    { re: /([^\s,，。.;；:：?？!！()（）"'「」『』]{2,30})\s*作为\s*(?:核心\s*)?(?:自变量|独立变量|independent|IV)/g, role: "independent" },
+    { re: /([^\s,，。.;；:：?？!！()（）"'「」『』]{2,30})\s*作为\s*(?:核心\s*)?(?:因变量|dependent|DV|结果变量)/g, role: "dependent" },
+    { re: /([^\s,，。.;；:：?？!！()（）"'「」『』]{2,30})\s*的\s*中介(?:作用|效应|角色)?/g, role: "mediator" },
+    { re: /([^\s,，。.;；:：?？!！()（）"'「」『』]{2,30})\s*的\s*调节(?:作用|效应|角色)?/g, role: "moderator" },
+    // English patterns (case-insensitive)
+    { re: /mediating\s+(?:role|effect)\s+of\s+([a-z][a-z0-9 \-_]{1,40}?)(?=[,.;:!?\n]|\s+and\s+|\s+moderating|\s+with\s+|$)/gi, role: "mediator" },
+    { re: /moderating\s+(?:role|effect)\s+of\s+([a-z][a-z0-9 \-_]{1,40}?)(?=[,.;:!?\n]|\s+and\s+|\s+mediating|\s+with\s+|$)/gi, role: "moderator" },
+    { re: /\b([a-z][a-z0-9 \-_]{2,40}?)\s+as\s+(?:a|the)\s+mediator/gi, role: "mediator" },
+    { re: /\b([a-z][a-z0-9 \-_]{2,40}?)\s+as\s+(?:a|the)\s+moderator/gi, role: "moderator" },
+  ];
+
+  for (const { re, role } of patterns) {
+    re.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(prompt)) !== null) {
+      const term = m[1].trim().replace(/^[『「"']+|[』」"']+$/g, "").trim();
+      if (!term || term.length < 2) continue;
+      // Strip leading filler words like "用 X 作为...", "把 X 加为..."
+      const cleaned = term.replace(/^(?:用|把|将|让|想要|wants?|use|treat)\s+/i, "").trim();
+      if (!cleaned || cleaned.length < 2 || STOP.has(cleaned.toLowerCase())) continue;
+      const candidates = new Set<string>([norm(cleaned)]);
+      for (const [zh, ens] of Object.entries(zh2en)) {
+        if (cleaned.includes(zh)) for (const en of ens) candidates.add(norm(en));
+      }
+      // Match against variables in two passes to avoid over-matching:
+      //   PASS 1 — exact normalized equality (the safest signal). Wins if any.
+      //   PASS 2 — substring fallback ONLY when both strings are long enough
+      //            AND the shorter is ≥ 60% of the longer's length. Without
+      //            the length-ratio gate, "user 作为中介" would match
+      //            "perceived usefulness" (k.includes("user")) — a Medium-
+      //            severity false-positive flagged in code review. Threshold
+      //            tuned so "consumer engagement" still matches "customer
+      //            engagement" (19/20 ≈ 95%) but "user" no longer captures
+      //            "perceived usefulness" (4/19 ≈ 21%).
+      let hit: { id: number; name: string } | null = null;
+      for (const { v, k } of varIndex) {
+        for (const c of candidates) {
+          if (c && k === c) { hit = v; break; }
+        }
+        if (hit) break;
+      }
+      if (!hit) {
+        for (const { v, k } of varIndex) {
+          for (const c of candidates) {
+            if (!c || c.length < 6) continue;
+            const longer = k.length >= c.length ? k : c;
+            const shorter = k.length >= c.length ? c : k;
+            if (!longer.includes(shorter)) continue;
+            if (shorter.length / longer.length < 0.6) continue;
+            hit = v; break;
+          }
+          if (hit) break;
+        }
+      }
+      if (hit) {
+        const key = `${hit.id}:${role}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          out.push({ variableId: hit.id, role, userTerm: cleaned });
+        }
+      }
+    }
+  }
+  return out;
+}
+
 function formatModel(model: typeof researchModelsTable.$inferSelect) {
   return {
     id: model.id,
@@ -920,6 +1048,21 @@ Use these to bias variable selection and structural focus toward what the user h
   const focusPicks = focusVariableIds
     .map((id) => focusVarLookup.get(id))
     .filter((v): v is (typeof variables)[number] => !!v);
+
+  // Server-side parse of user-named role bindings (e.g. "consumer engagement
+  // as mediator", "social overload 作为调节"). Computed once here so both the
+  // prompt builder (can show the AI exactly what we'll enforce) and validate()
+  // (HARD-rejects models that drop these) share the same source of truth.
+  // Critical: this fixes the failure mode where the AI silently drops a
+  // user-named construct and the model still passes validation because the
+  // prompt-only contract had no server backstop.
+  const requiredRoleBindings = extractRequiredRoleBindings(userPrompt, variables);
+  if (requiredRoleBindings.length > 0) {
+    req.log.info(
+      { sessionId, bindings: requiredRoleBindings.map((b) => ({ varId: b.variableId, role: b.role, term: b.userTerm })) },
+      "Parsed user-named role bindings from directive — these will be HARD-enforced by validate()",
+    );
+  }
   const focusListing = focusPicks.length > 0
     ? focusPicks.map((p) => `  - id ${p.id} | ${p.type.toUpperCase()} | "${p.name}" (from paper id ${p.paperId})`).join("\n")
     : "(none — AI may freely choose variables from the extracted pool)";
@@ -976,6 +1119,10 @@ USER-NAMED ROLE BINDING (CRITICAL — anti "用户指定的变量没出现"): wh
   STEP B — scan the EXTRACTED VARIABLES POOL below for an exact or near-exact match against ANY candidate (compare on variable name, alternate names, definition keywords, AND canonical construct id). A 70%-meaning match is a hit. If found → USE THAT VARIABLE LITERALLY in the role the user named, in EVERY model you emit (or reject the model). Do NOT silently substitute its sub-dimensions or proxies — the user pinned this construct by name, so it MUST appear by name.
   STEP C — if NO direct match exists in the pool, the named construct is likely a STIMULUS CONTEXT (e.g. "AI broadcaster", "virtual streamer", "metaverse retail") rather than a measurable variable. In that case ONLY, you may operationalize it via its perceived dimensions present in the pool (e.g. perceived anthropomorphism, perceived responsiveness, perceived trust). When you do this, the [USER PROMPT FIT] line MUST EXPLICITLY disclose the substitution in the user's language using this exact pattern: "用户指定『<原始名>』作为<角色>；变量库中无统一的『<原始名>』构念，故以其感知维度『<dim1>』『<dim2>』... 作为<角色>的操作化"; without this disclosure the model is REJECTED. NEVER silently swap a user-named construct for its dimensions and pretend nothing happened — that's the failure mode the user complained about.
   STEP D — if the construct can be matched in STEP B AND ALSO has dimensions you'd add in STEP C, prefer STEP B (use the exact match) and treat dimensions as enrichment nodes, not substitutes.
+${requiredRoleBindings.length > 0
+  ? `\nSERVER-PARSED ROLE BINDINGS (THE SERVER HAS ALREADY PARSED THE DIRECTIVE BELOW AND WILL HARD-REJECT any model that violates these — there is NO rescue path for these violations. You MUST emit each listed variable as a node with EXACTLY the role shown):
+${requiredRoleBindings.map((b) => `  - variable id ${b.variableId} (matched user term『${b.userTerm}』) → role: ${b.role}`).join("\n")}`
+  : ""}
 """
 ${userPrompt}
 """
@@ -1782,6 +1929,41 @@ OUTPUT FORMAT — return a JSON object with key "models" containing an array of 
       }
       if (m.nodes.length < minNodes || m.nodes.length > 8) return { ok: false, reason: `node count out of range (${m.nodes.length}, need ≥${minNodes})` };
       if (m.edges.length < 4 || m.edges.length > 8) return { ok: false, reason: `edge count out of range (${m.edges.length}, need ≥4)` };
+
+      // HARD: user-named role bindings parsed from the directive prompt.
+      // E.g. user typed "consumer engagement 作为中介": the model MUST contain
+      // that variable AS A NODE AND it MUST have type=mediator. Without this
+      // check the AI silently dropped user-explicit constructs (the exact bug
+      // reported: directive named consumer engagement + social overload, model
+      // shipped with neither). Not in SOFT_FAIL — rescue MUST NOT pass these.
+      if (requiredRoleBindings.length > 0) {
+        const nodeByVarId = new Map(m.nodes.map((n) => [n.variableId, n]));
+        const nodeByCanon = new Map<string, ModelNode>();
+        for (const n of m.nodes) {
+          const v = varById.get(n.variableId);
+          if (v?.canonicalConstructId) nodeByCanon.set(v.canonicalConstructId, n);
+        }
+        const missing: string[] = [];
+        for (const req of requiredRoleBindings) {
+          // Direct id match first; canonical-construct match as fallback so
+          // the AI can substitute a sibling variable that maps to the same
+          // canonical construct (e.g. picked "consumer engagement (P3)" but
+          // used "customer engagement (P5)" — same canonical, fine).
+          let node = nodeByVarId.get(req.variableId);
+          if (!node) {
+            const v = varById.get(req.variableId);
+            if (v?.canonicalConstructId) node = nodeByCanon.get(v.canonicalConstructId);
+          }
+          if (!node) {
+            missing.push(`『${req.userTerm}』(应作为${req.role}) 完全缺席`);
+          } else if (node.type !== req.role) {
+            missing.push(`『${req.userTerm}』被错放为 ${node.type}(应为 ${req.role})`);
+          }
+        }
+        if (missing.length > 0) {
+          return { ok: false, reason: `用户明确指定的角色未兑现: ${missing.join("；")}` };
+        }
+      }
       // cross-paper synthesis: ≥ N distinct source papers in nodes
       const distinctPapers = new Set(m.nodes.map((n) => n.paperId));
       if (distinctPapers.size < minDistinctPapers) return { ok: false, reason: `requires nodes from ≥ ${minDistinctPapers} different papers (got ${distinctPapers.size})` };
@@ -1901,13 +2083,19 @@ OUTPUT FORMAT — return a JSON object with key "models" containing an array of 
       /2-step layer jump/i,
       /backward layer edge/i,
       /mediator chain too long/i,
-      /node count out of range/i,
-      /edge count out of range/i,
+      // node/edge count are NO LONGER soft: a model with 3 edges (the screenshot
+      // bug) used to be rescued, shipping a thin 3-hypothesis model that the
+      // user complained about. Forcing regeneration on count violations is
+      // strictly better than salvaging a structurally-weak model.
       /requires nodes from/i,
       /alignment contract violated/i,
       /focus-pick contract violated/i,
       /focus-pick connectivity too weak/i,
-      /focus pick.*not connected by any edge/i,
+      // `focus pick … not connected by any edge` is NO LONGER soft. Pre-fix the
+      // rescue path would pass through a model whose user-pinned focus pick
+      // floats with zero edges (the exact "service agent type 孤立" failure
+      // the user reported). The "no floating nodes" rule documented in the
+      // prompt was being silently undermined here. Hard-fail now → regeneration.
       /enrichment missing/i,
       /backbone .* not evidenced/i,
     ];
