@@ -1300,6 +1300,52 @@ OUTPUT FORMAT — return a JSON object with key "models" containing an array of 
       return null;
     }
 
+    // === Evidence-grounding corpus per paper ===
+    // Build a per-paper "what the AI is allowed to cite" corpus so we can
+    // verify each edge's `evidenceCitationText` actually appears in the cited
+    // paper. Pre-fix the AI sometimes invented plausible-sounding sentences
+    // and tagged them with a real paperId — the model looked well-cited but
+    // wasn't. Sources we trust: paper full text + abstract, every variable's
+    // citationText (from the extraction step), every formal hypothesis
+    // statement, and every per-paper-graph edge evidence sentence.
+    const normEv = (s: string) =>
+      (s ?? "").toLowerCase().normalize("NFKC").replace(/[^\p{L}\p{N}\s]+/gu, " ").replace(/\s+/g, " ").trim();
+    const evidenceCorpusByPaper = new Map<number, string>();
+    const appendCorpus = (paperId: number, chunk: string) => {
+      if (!chunk) return;
+      const cur = evidenceCorpusByPaper.get(paperId) ?? "";
+      evidenceCorpusByPaper.set(paperId, cur + " " + normEv(chunk));
+    };
+    for (const p of papersWithVars) {
+      appendCorpus(p.id, p.fullText ?? "");
+      appendCorpus(p.id, p.abstract ?? "");
+    }
+    for (const v of variables) appendCorpus(v.paperId, v.citationText ?? "");
+    for (const h of allHyps) appendCorpus(h.paperId, h.statement ?? "");
+    for (const { paper, model } of perPaperModels) {
+      if (!model) continue;
+      for (const e of model.graph.edges) appendCorpus(paper.id, e.evidence ?? "");
+    }
+    function isEvidenceGrounded(citationText: string, paperId: number): boolean {
+      const corpus = evidenceCorpusByPaper.get(paperId);
+      if (!corpus) return false;
+      const claim = normEv(citationText);
+      if (claim.length < 16) return false;
+      // Direct verbatim match — the prompt asks for this.
+      if (corpus.includes(claim)) return true;
+      // Fuzzy: any 6-consecutive-word window of the claim appears in the
+      // corpus. Tolerates the AI re-wording one or two ends of the sentence
+      // (common mode) while still rejecting fabricated sentences with no
+      // contiguous overlap. 6 words ≈ a phrase that's hard to invent by
+      // accident; lower would let too many false positives through.
+      const words = claim.split(" ").filter((w) => w.length > 1);
+      if (words.length < 6) return false;
+      for (let i = 0; i + 6 <= words.length; i++) {
+        if (corpus.includes(words.slice(i, i + 6).join(" "))) return true;
+      }
+      return false;
+    }
+
     // Focus-pick enforcement (structural, not just "asked nicely in the prompt").
     // The unified-intent block REQUIRES every model to include ≥ N of the user's
     // hand-picked focus variables as STRUCTURAL nodes. Pre-fix the AI would
@@ -1345,6 +1391,43 @@ OUTPUT FORMAT — return a JSON object with key "models" containing an array of 
             ok: false,
             reason: `focus-pick contract violated — model includes only ${hits} of the user's hand-picked focus variables as structural nodes (need ≥ ${requiredFocusHits})`,
           };
+        }
+        // Focus picks must be CONNECTED to the rest of the model — not just
+        // dropped in as orphan nodes. Pre-fix the AI would technically include
+        // a pick to satisfy the count check, but never wire any edge to it,
+        // making it visually present but theoretically inert. Now we require
+        // every focus-pick node to have ≥1 incident edge, AND ≥1 edge in the
+        // model must connect two non-control nodes where at least one side is
+        // a focus pick (so the picks are part of the structural spine, not
+        // just hanging off as a label).
+        const focusNodeIds = new Set<number>();
+        for (const n of m.nodes) {
+          const v = varById.get(n.variableId);
+          if (focusVarIdSet.has(n.variableId)) { focusNodeIds.add(n.variableId); continue; }
+          if (v?.canonicalConstructId && focusCanonSet.has(v.canonicalConstructId)) { focusNodeIds.add(n.variableId); continue; }
+          const nm = (n.variableName ?? v?.name ?? "").toLowerCase().trim();
+          if (nm && focusNameSet.has(nm)) focusNodeIds.add(n.variableId);
+        }
+        const incidentByNode = new Map<number, number>();
+        let edgesTouchingFocus = 0;
+        for (const e of m.edges) {
+          incidentByNode.set(e.fromVariableId, (incidentByNode.get(e.fromVariableId) ?? 0) + 1);
+          incidentByNode.set(e.toVariableId, (incidentByNode.get(e.toVariableId) ?? 0) + 1);
+          if (focusNodeIds.has(e.fromVariableId) || focusNodeIds.has(e.toVariableId)) edgesTouchingFocus++;
+        }
+        const orphanFocus: string[] = [];
+        for (const fid of focusNodeIds) {
+          if ((incidentByNode.get(fid) ?? 0) === 0) {
+            const v = varById.get(fid);
+            orphanFocus.push(v?.name ?? `id:${fid}`);
+          }
+        }
+        if (orphanFocus.length > 0) {
+          return { ok: false, reason: `focus pick(s) included as nodes but not connected by any edge: ${orphanFocus.join(", ")}` };
+        }
+        const requiredFocusEdges = Math.min(focusPicks.length, 2);
+        if (edgesTouchingFocus < requiredFocusEdges) {
+          return { ok: false, reason: `focus-pick connectivity too weak — only ${edgesTouchingFocus} edge(s) touch a focus variable (need ≥ ${requiredFocusEdges})` };
         }
       }
       if (!m.operator || !ALLOWED_OPERATORS.has(m.operator)) return { ok: false, reason: `invalid operator: ${m.operator}` };
@@ -1459,6 +1542,8 @@ OUTPUT FORMAT — return a JSON object with key "models" containing an array of 
       /requires nodes from/i,
       /alignment contract violated/i,
       /focus-pick contract violated/i,
+      /focus-pick connectivity too weak/i,
+      /focus pick.*not connected by any edge/i,
     ];
     const isSoftFail = (reason: string) => SOFT_FAIL_PATTERNS.some((re) => re.test(reason));
 
@@ -1476,7 +1561,7 @@ OUTPUT FORMAT — return a JSON object with key "models" containing an array of 
     // we never lower the bar, we just stop punishing the whole model for
     // one cleanly-removable defect.
     const ALL_OPS = ["EXTEND", "INSERT_MODERATOR", "PARALLEL_MEDIATORS", "SWAP_MEDIATOR", "THEORY_GRAFT"] as const;
-    const repairStats = { droppedNodes: 0, droppedEdges: 0, droppedModeratorEdges: 0, filledSecondaryOp: 0 };
+    const repairStats = { droppedNodes: 0, droppedEdges: 0, droppedModeratorEdges: 0, droppedUngroundedEdges: 0, filledSecondaryOp: 0 };
     for (const m of generated) {
       if (!m || typeof m !== "object") continue;
       if (Array.isArray(m.nodes)) {
@@ -1491,6 +1576,15 @@ OUTPUT FORMAT — return a JSON object with key "models" containing an array of 
           if (!nodeIdSet.has(e.fromVariableId) || !nodeIdSet.has(e.toVariableId)) return false;
           if (!validPaperIds.has(e.evidencePaperId)) return false;
           if (!e.evidenceCitationText || e.evidenceCitationText.trim().length < 12) return false;
+          // Reject edges whose citation text doesn't actually appear in the
+          // cited paper. This catches AI-fabricated "evidence" that pre-fix
+          // slipped through length/paperId checks. The drop happens BEFORE
+          // validate(), so a model with one fabricated edge can still survive
+          // (with that edge cleanly removed) instead of being hard-rejected.
+          if (!isEvidenceGrounded(e.evidenceCitationText, e.evidencePaperId)) {
+            repairStats.droppedUngroundedEdges++;
+            return false;
+          }
           if (e.relationship === "moderates") {
             const just = (e as { moderatorJustification?: string | null }).moderatorJustification;
             if (!just || String(just).trim().length < 12) {
