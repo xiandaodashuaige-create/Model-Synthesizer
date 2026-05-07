@@ -1039,6 +1039,8 @@ HARD RULES (violations = invalid output):
 14. **Topic alignment (enforced by the UNIFIED USER INTENT block at the top)**: every generated model MUST visibly advance the user's stated research topic and respect the DOMAIN LOCK + OUTCOME LOCK rules. The model's \`description\` MUST open with one sentence in the user's language that explicitly names BOTH the topic's domain (e.g. "AI 客服机器人") AND its outcome family (e.g. "消费者冲动购买"), and states how this model preserves both. Drifting the domain (e.g. swapping "AI chatbot" for "AI streamer") OR the outcome family (e.g. swapping "impulse purchase" for "purchase intention") is INVALID and the model will be REJECTED. If the topic is so narrow that only 2 papers are clearly relevant, override Hard Rule #4's "≥3 papers" requirement and prefer a topically-tight 2-paper combination over a topically-loose 3-paper one — call this out in [TOPIC FIT].
 15. **Enrichment beyond focus picks (CRITICAL — the user explicitly asked for this)**: focus picks are the SPINE of the model, NOT the entire skeleton. Every model MUST add AT LEAST ONE non-pick variable drawn from the EXTRACTED VARIABLES POOL (above) that the literature evidences as theoretically relevant — typically a mediator that explains HOW the picked IV reaches the picked DV, or a moderator that conditions WHEN it does. The added variable MUST come from a different paper than the focus picks when possible (this is what gives the model its cross-paper synthesis value). A model whose nodes consist of focus picks ONLY (no enrichment) is a copy of what the user already chose, not a synthesized model — REJECTED. The added variable MUST appear in the FOCUS FIT line of the rationale labeled as "[ENRICHMENT]" (e.g. "[ENRICHMENT] 在用户选择的『拟人化感知 → 冲动购买』之上，从 P3 引入『心流体验』作为情感中介，因为 P3 显示该构念是冲动行为的重要前置因子").
 16. **Backbone instantiation (must match what the source papers actually use)**: the chosen \`backbone\` value MUST come from the BACKBONES ALREADY EVIDENCED block above whenever that block is non-empty — do not invent a framework the literature here doesn't support. The rationale's [BACKBONE: ...] header must match the \`backbone\` field. If the model's structure visibly violates the backbone's shape (e.g. claims SOR but has no organism/cognitive layer between the stimulus IV and the behavior DV; claims TAM but has no perceived-usefulness/ease-of-use mediator), REJECTED — pick the backbone whose canonical shape your nodes actually instantiate. Different models in the same batch SHOULD prefer different evidenced backbones when more than one is available, so the user sees real theoretical variety (e.g. one SOR model + one TAM model) rather than three slight variations of the same framework.
+17. **NO FLOATING NODES + TITLE-GRAPH CONSISTENCY (CRITICAL — anti "片段化")**: every variable listed in \`nodes[]\` MUST be the \`fromVariableId\` OR \`toVariableId\` of AT LEAST ONE edge in \`edges[]\`. A node that is declared but never participates in any edge renders as a floating box on the canvas — this is the #1 user complaint and will be HARD-REJECTED (no rescue). Before you finalize, walk every node and ask "which edge wires this in?" — if the answer is "none", DELETE the node from \`nodes[]\` (do not silently leave it in). Conversely: every construct you mention by NAME inside the model's \`name\` or \`description\` (e.g. "consumer engagement as mediator", "social overload as moderator") MUST appear as an actual node in \`nodes[]\` AND be wired into the spine via \`edges[]\`. Promising "X mediates Y → Z" in the description and not putting X in the graph is a title-vs-graph LIE and will be REJECTED. If you can't wire a construct in (because the source papers don't support that edge), drop the claim from the description rather than leaving the node floating.
+18. **Tangential-paper exclusion (CRITICAL when DOMAIN LOCK applies)**: the source-paper pool may contain papers whose context is tangential to the user's topic (e.g. a metaverse-tourism paper in an AI-broadcaster project). NEVER use such a tangential paper as the source of a moderator, mediator, or any structural node. Tangential-paper variables drag the model into the wrong domain and create the "我的主题是 AI 主播但模型里出现了 tourist involvement" failure mode. Heuristic for "tangential": the paper's title/abstract names a stimulus context (tourism, gaming, healthcare, education, etc.) that is DIFFERENT from the topic's domain. If a tangential paper's abstract DOES contain a construct that's also independently evidenced in an in-domain paper, prefer to cite the in-domain paper instead. When in doubt, fewer in-domain nodes beat more cross-domain nodes — Hard Rule #4's ≥3-paper minimum is OVERRIDDEN by this rule when honoring it would force a tangential paper in.
 
 OUTPUT FORMAT — return ONLY a JSON object (NOT a bare array) whose single top-level key is "models" and whose value is an array of model objects. This is REQUIRED by the API's JSON-mode constraint. Do NOT wrap in markdown.
 {
@@ -1689,13 +1691,32 @@ OUTPUT FORMAT — return a JSON object with key "models" containing an array of 
       if (!m.secondaryOperator || !ALLOWED_OPERATORS.has(m.secondaryOperator)) return { ok: false, reason: `missing/invalid secondaryOperator: ${m.secondaryOperator}` };
       if (m.secondaryOperator === m.operator) return { ok: false, reason: "secondaryOperator must differ from primary operator" };
       if (m.backbone && !ALLOWED_BACKBONES.has(m.backbone)) return { ok: false, reason: `invalid backbone: ${m.backbone}` };
-      if (m.nodes.length < minNodes || m.nodes.length > 8) return { ok: false, reason: `node count out of range (${m.nodes.length}, need ≥${minNodes})` };
-      if (m.edges.length < 4 || m.edges.length > 8) return { ok: false, reason: `edge count out of range (${m.edges.length}, need ≥4)` };
-      // every node references a real variable from this session
+      // every node references a real variable from this session (data-integrity
+      // gate — runs before the floating-node and count checks so unknown ids
+      // are reported with a more actionable reason than "node count low").
       for (const n of m.nodes) {
         if (!validVarIds.has(n.variableId)) return { ok: false, reason: `unknown variableId ${n.variableId}` };
         if (!validPaperIds.has(n.paperId)) return { ok: false, reason: `unknown paperId ${n.paperId}` };
       }
+      // RULE 17: NO FLOATING NODES — every declared node MUST be incident to
+      // ≥ 1 edge. Checked BEFORE node-count / edge-count so the user sees
+      // the true "片段化" failure reason instead of a misleading "node count
+      // out of range" when both fail. Auto-repair already prunes these
+      // before we get here in the common case; this hard check is the
+      // safety net for any orphan that survived.
+      const incidentAll = new Set<number>();
+      for (const e of m.edges) { incidentAll.add(e.fromVariableId); incidentAll.add(e.toVariableId); }
+      const floatingNames: string[] = [];
+      for (const n of m.nodes) {
+        if (!incidentAll.has(n.variableId)) {
+          floatingNames.push(n.variableName ?? varById.get(n.variableId)?.name ?? `id:${n.variableId}`);
+        }
+      }
+      if (floatingNames.length > 0) {
+        return { ok: false, reason: `floating node(s) not connected by any edge: ${floatingNames.join(", ")}` };
+      }
+      if (m.nodes.length < minNodes || m.nodes.length > 8) return { ok: false, reason: `node count out of range (${m.nodes.length}, need ≥${minNodes})` };
+      if (m.edges.length < 4 || m.edges.length > 8) return { ok: false, reason: `edge count out of range (${m.edges.length}, need ≥4)` };
       // cross-paper synthesis: ≥ N distinct source papers in nodes
       const distinctPapers = new Set(m.nodes.map((n) => n.paperId));
       if (distinctPapers.size < minDistinctPapers) return { ok: false, reason: `requires nodes from ≥ ${minDistinctPapers} different papers (got ${distinctPapers.size})` };
@@ -1893,6 +1914,28 @@ OUTPUT FORMAT — return a JSON object with key "models" containing an array of 
           return true;
         });
         repairStats.droppedEdges += before - m.edges.length;
+        // After edge cleanup, prune any node that no longer participates in
+        // any edge. Pre-fix these orphans rendered as floating boxes on the
+        // canvas (the user's "片段化" complaint). We never drop focus-pick
+        // nodes here — if a focus pick ends up orphaned, we want the
+        // existing focus-pick connectivity check to hard-reject the model
+        // so the user sees a meaningful regeneration rather than a quietly
+        // shrunken model that no longer honors their picks.
+        const incidentRepair = new Set<number>();
+        for (const e of m.edges) { incidentRepair.add(e.fromVariableId); incidentRepair.add(e.toVariableId); }
+        const beforeNodes = m.nodes.length;
+        m.nodes = m.nodes.filter((n) => {
+          if (incidentRepair.has(n.variableId)) return true;
+          // keep focus picks even when orphaned, so the focus-pick orphan
+          // check below produces a meaningful rejection reason
+          if (focusVarIdSet.has(n.variableId)) return true;
+          const v = varById.get(n.variableId);
+          if (v?.canonicalConstructId && focusCanonSet.has(v.canonicalConstructId)) return true;
+          const nm = (n.variableName ?? v?.name ?? "").toLowerCase().trim();
+          if (nm && focusNameSet.has(nm)) return true;
+          return false;
+        });
+        repairStats.droppedNodes += beforeNodes - m.nodes.length;
       }
       // Back-fill missing/invalid secondaryOperator (must differ from primary).
       if (m.operator && ALLOWED_OPERATORS.has(m.operator)) {
