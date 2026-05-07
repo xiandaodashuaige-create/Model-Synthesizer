@@ -38,6 +38,144 @@ import {
 
 const router: IRouter = Router();
 
+// Robust JSON extractor for LLM output. Handles three failure modes we've
+// actually seen from gpt-5.4 on /models/generate:
+//   (a) prose preamble / postamble around the JSON ("Here is the JSON: [...]")
+//   (b) markdown code fences not stripped by the simple regex
+//   (c) hard truncation at max_completion_tokens — the JSON was well-formed
+//       up to some object inside the top-level array/object, then cut off.
+// Returns the parsed value (any shape) or null if unsalvageable.
+function extractAndRepairJson(raw: string): unknown | null {
+  if (!raw) return null;
+  // Strip code fences and trim.
+  const stripped = raw.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+
+  // Helper: try to interpret `s` (starting with `[` or `{`) as JSON, with
+  // truncation repair if it doesn't parse strictly. Returns parsed value or
+  // null. Returning a non-null value means JSON.parse on the (possibly
+  // repaired) string succeeded — no invalid output is ever emitted.
+  const tryParseOrRepair = (s: string): unknown | null => {
+    if (!s || (s[0] !== "[" && s[0] !== "{")) return null;
+    // Trim trailing prose after the last } or ].
+    const lastClose = Math.max(s.lastIndexOf("}"), s.lastIndexOf("]"));
+    let candidate = lastClose > 0 ? s.slice(0, lastClose + 1) : s;
+    try { return JSON.parse(candidate); } catch { /* fall through */ }
+
+    const root = candidate[0];
+    const stack: string[] = [];
+    let inStr = false, escape = false;
+    let lastChildEnd = -1;          // safe cut: just after a fully-closed top-level child
+    let lastSafeTopLevelComma = -1; // safe cut: comma where stack has only root — works for both [] and {}
+    let lastDeepArrayComma = -1;    // last-resort: deepest array comma
+    for (let i = 0; i < candidate.length; i++) {
+      const c = candidate[i];
+      if (escape) { escape = false; continue; }
+      if (inStr) {
+        if (c === "\\") { escape = true; continue; }
+        if (c === '"') inStr = false;
+        continue;
+      }
+      if (c === '"') { inStr = true; continue; }
+      if (c === "{" || c === "[") { stack.push(c); continue; }
+      if (c === "}" || c === "]") {
+        stack.pop();
+        if (stack.length === 1) lastChildEnd = i + 1;
+        continue;
+      }
+      if (c === ",") {
+        // stack.length === 1 means we're at the top level inside the root.
+        // Works for BOTH array roots ("," between elements) and object roots
+        // ("," between key:value pairs) — fixing the prior array-only bias.
+        if (stack.length === 1) lastSafeTopLevelComma = i;
+        else if (stack.length >= 2 && stack[stack.length - 1] === "[") lastDeepArrayComma = i;
+      }
+    }
+
+    // Pick the latest safe cut point we found.
+    const cutAt = Math.max(lastChildEnd, lastSafeTopLevelComma, lastDeepArrayComma);
+    if (cutAt <= 0) return null;
+    let head = candidate.slice(0, cutAt);
+
+    // Re-walk head to know which brackets remain open.
+    const openStack: string[] = [];
+    let s2 = false, esc2 = false;
+    for (let i = 0; i < head.length; i++) {
+      const c = head[i];
+      if (esc2) { esc2 = false; continue; }
+      if (s2) {
+        if (c === "\\") { esc2 = true; continue; }
+        if (c === '"') s2 = false;
+        continue;
+      }
+      if (c === '"') { s2 = true; continue; }
+      if (c === "{" || c === "[") openStack.push(c);
+      else if (c === "}" || c === "]") openStack.pop();
+    }
+    // For object roots, a cut at lastSafeTopLevelComma can leave a dangling
+    // `"key":` (no value) just before the comma — strip back to last full pair.
+    head = head.replace(/,\s*$/, "");
+    if (root === "{") {
+      // If the tail looks like an unfinished `"key":` or `"key":<partial>`,
+      // walk back to the previous `,` or `{` at top level and cut there.
+      // Heuristic: try parsing; if it fails, scan back for last `}` or `,`.
+      let probe = head + "}";
+      try { JSON.parse(probe); } catch {
+        const lastTopBoundary = Math.max(head.lastIndexOf("},"), head.lastIndexOf(",\""), head.lastIndexOf("{\""));
+        if (lastTopBoundary > 0) {
+          // Cut to just before the dangling key. Prefer cutting after the
+          // last "}" (end of a complete value) when present.
+          const lastClosedValue = head.lastIndexOf("},");
+          if (lastClosedValue > 0) head = head.slice(0, lastClosedValue + 1).replace(/,\s*$/, "");
+        }
+      }
+    }
+    while (openStack.length > 0) {
+      const top = openStack.pop();
+      head += top === "{" ? "}" : "]";
+    }
+    try { return JSON.parse(head); } catch { return null; }
+  };
+
+  // Find ALL candidate start positions ([ or { not inside a string), in
+  // order. Prose like "note [1] ... actual {...}" or "see {todo} ... [...]"
+  // would otherwise hijack the wrong fragment. We try each candidate in
+  // turn, preferring the one that parses to the largest non-trivial
+  // structure (more keys/elements = more likely the real payload).
+  const candidates: number[] = [];
+  let inStr = false, escape = false;
+  for (let i = 0; i < stripped.length && candidates.length < 8; i++) {
+    const c = stripped[i];
+    if (escape) { escape = false; continue; }
+    if (inStr) {
+      if (c === "\\") { escape = true; continue; }
+      if (c === '"') inStr = false;
+      continue;
+    }
+    if (c === '"') { inStr = true; continue; }
+    if (c === "[" || c === "{") candidates.push(i);
+  }
+  if (candidates.length === 0) return null;
+
+  const sizeOf = (v: unknown): number => {
+    if (Array.isArray(v)) return v.length;
+    if (v && typeof v === "object") return Object.keys(v).length;
+    return 0;
+  };
+
+  let best: { val: unknown; size: number } | null = null;
+  for (const startIdx of candidates) {
+    const parsed = tryParseOrRepair(stripped.slice(startIdx));
+    if (parsed === null) continue;
+    const size = sizeOf(parsed);
+    // Keep the largest structure. Tie-break by earliest occurrence (already
+    // implicit since we iterate in order).
+    if (!best || size > best.size) best = { val: parsed, size };
+    // Fast path: a sizeable structure is almost certainly the real payload.
+    if (size >= 1 && (Array.isArray(parsed) || Object.keys(parsed as object).length >= 3)) break;
+  }
+  return best?.val ?? null;
+}
+
 interface ModelNode {
   variableId: number;
   variableName: string;
@@ -708,7 +846,15 @@ OUTPUT FORMAT — return ONLY a JSON array, no markdown:
   type GeneratedModel = { operator?: string; secondaryOperator?: string; basePaperTags?: string[]; backbone?: string; name: string; description: string; rationale: string; nodes: ModelNode[]; edges: ModelEdge[] };
   let generated: GeneratedModel[] = [];
   const callTimeoutMs = PARALLEL_MODE ? 50_000 : 55_000;
-  const perCallMaxTokens = PARALLEL_MODE ? 5_000 : 12_000;
+  // 5000 → 8000. gpt-5.4 is a reasoning model: the hidden chain-of-thought
+  // tokens count against `max_completion_tokens` along with the visible
+  // output. With a ~25-30k token prompt, reasoning can eat 3-4k of a 5k
+  // budget before the visible JSON even starts, leaving the JSON truncated
+  // (finish_reason="length") and unparseable. We've observed this in
+  // production: 3 parallel calls all returning fulfilled in ~2s each with
+  // empty/truncated content. 8000 gives reasoning room AND a real output
+  // budget; 3 calls × 8k = 24k tokens, still well under proxy limits.
+  const perCallMaxTokens = PARALLEL_MODE ? 8_000 : 12_000;
 
   const callOpenAI = async (variantIdx: number) => {
     const completion = await openai.chat.completions.create(
@@ -771,26 +917,68 @@ OUTPUT FORMAT — return ONLY a JSON array, no markdown:
     // Aggregate generated models from each successful call. Each call may
     // return either a single object (single-model call) or an array, so we
     // normalize into one flat array.
-    for (const f of fulfilled) {
-      const content = f.value.choices[0]?.message?.content ?? "[]";
+    const perCallStats: Array<{ idx: number; finishReason: string | null | undefined; contentLen: number; recovered: boolean; pushed: number }> = [];
+    for (let idx = 0; idx < fulfilled.length; idx++) {
+      const f = fulfilled[idx];
+      const choice = f.value.choices[0];
+      const content = choice?.message?.content ?? "";
+      const finishReason = choice?.finish_reason;
+      // Try a strict parse first (after fence stripping); on failure fall
+      // back to extractAndRepairJson which handles prose wrappers AND
+      // truncated-by-length JSON. Without this fallback, a single slow
+      // reasoning step on gpt-5.4 nukes the entire model — the user sees
+      // "Failed to parse AI model generation result" with no recovery.
       const cleaned = content.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-      let parsed: unknown;
+      let parsed: unknown = null;
+      let recovered = false;
       try {
         parsed = JSON.parse(cleaned);
       } catch {
-        req.log.warn({ content: cleaned.slice(0, 500) }, "Failed to parse AI model generation response (one of the parallel calls)");
-        continue;
+        parsed = extractAndRepairJson(content);
+        recovered = parsed !== null;
+        if (!recovered) {
+          // Log enough context to diagnose: head + tail of content + finish
+          // reason. Prior version only logged a 500-char head, which missed
+          // truncation patterns at the END of long outputs.
+          req.log.warn(
+            {
+              callIdx: idx,
+              finishReason,
+              contentLen: content.length,
+              head: content.slice(0, 800),
+              tail: content.length > 1200 ? content.slice(-400) : "",
+            },
+            "Failed to parse AI model generation response (repair also failed)",
+          );
+        } else {
+          req.log.info({ callIdx: idx, finishReason, contentLen: content.length }, "Recovered model JSON via truncation repair");
+        }
       }
+      let pushed = 0;
       if (Array.isArray(parsed)) {
         generated.push(...(parsed as GeneratedModel[]));
+        pushed = parsed.length;
       } else if (parsed && typeof parsed === "object") {
         generated.push(parsed as GeneratedModel);
+        pushed = 1;
       }
+      perCallStats.push({ idx, finishReason, contentLen: content.length, recovered, pushed });
     }
+    // Always log per-call stats — invaluable for diagnosing future regressions
+    // (do they all hit length? do some return empty?). Cheap (~1 line of JSON).
+    req.log.info({ sessionId, callCount: fulfilled.length, perCallStats, totalGenerated: generated.length }, "Model-generation per-call parse stats");
 
     if (generated.length === 0) {
-      req.log.warn({ sessionId }, "All parallel calls returned but none produced parseable model JSON");
-      res.status(500).json({ error: "Failed to parse AI model generation result" });
+      // Surface what we actually saw so the user gets a meaningful error
+      // instead of "Failed to parse AI model generation result" (which
+      // told them nothing actionable).
+      const allLength = perCallStats.every((s) => s.finishReason === "length");
+      const allEmpty = perCallStats.every((s) => s.contentLen === 0);
+      req.log.warn({ sessionId, perCallStats }, "All parallel calls returned but none produced parseable model JSON");
+      let hint = "AI 返回的内容无法解析为模型 JSON。";
+      if (allLength) hint = "AI 输出在生成 JSON 中途因 token 预算耗尽被截断（这通常发生在论文/变量过多时）。建议：(1) 在『自定义提示词』里更聚焦地描述方向；(2) 减少『重点变量』数量；(3) 减少会话内论文数量后重试。";
+      else if (allEmpty) hint = "AI 返回了空内容（可能被安全策略拦截或推理超时）。请稍等几秒后重试一次。";
+      res.status(502).json({ error: hint });
       return;
     }
 
