@@ -1,0 +1,136 @@
+Phase 1：数据底座（1.5 周）— 建议
+1.1 扩展变量提取 — 2 个调整建议
+问题：statedGap 的提取质量可能不稳定
+论文摘要里的 gap 声明不总是用 "however" 句式。有些论文的 gap 在引言最后一段、有些在文献综述末尾、有些甚至隐含在"研究问题"中。
+建议修改：
+把 statedGap 的提取范围从"摘要"扩展到"摘要+引言+文献综述"（你有 fullText 字段，可以截断前 3000 字给 AI）
+Prompt 不要限定固定句式，而是让 AI 自由提取"作者明确声明的研究空白"，同时返回一个 gapConfidence 分数（high/medium/low）
+如果 gapConfidence 为 low，前端显示时标注"（该论文未明确声明研究空白）"
+问题：theoryBackbone 可能不在你预定义的 17 个骨架中
+用户研究的论文可能使用你骨架库中没有的理论（如 "Social Presence Theory"、"Cognitive Fit Theory"）。
+建议修改：
+允许 AI 返回骨架库之外的 theoryBackbone，存储原始字符串
+聚类时先匹配预定义骨架，未匹配的归入 "other" 簇，后续可人工审核补充到骨架库
+1.3 聚合算法 — innovationScore 公式需要调整
+你当前的公式：100 - min(100, totalOccurrences * 15)
+问题：过于线性粗暴
+表格
+出现次数	得分	解读
+0	100	纯创新
+1	85	轻微探索
+3	55	已有基础
+7	0	完全饱和
+这个公式的问题是：
+出现 7 次就直接 0 分，但在某些成熟领域（如 TAM），"感知有用性→行为意向"出现 100+ 次也是合理的骨架基础，不应该被 penalize 到 0
+出现 1 次就扣 15 分，但 1 篇文献支持的关系其实正是"前沿但可引用"的黄金地带
+建议改用分档制：
+TypeScript
+复制
+function computeInnovationScore(totalOccurrences: number): number {
+  if (totalOccurrences === 0) return 100;      // 从未被研究 → 纯创新
+  if (totalOccurrences === 1) return 75;       // 1篇 → 前沿探索
+  if (totalOccurrences <= 3) return 50;        // 2-3篇 → 初步验证
+  if (totalOccurrences <= 6) return 25;        // 4-6篇 → 已有基础
+  return 10;                                    // 7+篇 → 经典常识
+}
+这样梯度更合理：经典关系（10分）作为骨架基础没问题，前沿关系（75分）是创新的最佳切入点。
+1.4 文献分簇 — Jaccard 阈值需要动态调整
+Jaccard ≥ 0.5 这个阈值在变量少的领域（如只有 4-5 个变量）几乎所有论文都会合并，在变量多的领域（20+ 变量）可能一篇都合并不了。
+建议：
+改为动态阈值：min(0.5, 3 / minSetSize)，即取 0.5 和"较小集合大小的 3/变量数"的较小值
+或者更简单：先按 theoryBackbone 字符串精确匹配做一级聚类，只有"未匹配到预定义骨架"的论文才进入二级聚类（Jaccard ≥ 0.4）
+Phase 2：生成产出改造（1 周）— 这是最关键的阶段，有 4 个重要建议
+2.3 Novelty 评分 — 规则需要修正
+你当前的 4 条规则中，第 2 条有问题：
+表格
+你的规则	问题
+"表里有但符号相反 → contradicting，innovationScore = 90"	矛盾关系实际上比"纯新关系"更有创新性——你是在挑战已有共识。90分比novel(100)只低10分，这个差距太小
+建议修正：
+TypeScript
+复制
+const NOVELTY_RULES = [
+  { condition: "not in table",              tag: "novel",         score: 85 },
+  { condition: "in table, signConflict",    tag: "contradicting", score: 95 }, // 挑战共识 = 最高创新
+  { condition: "in table, 1-2 occurrences", tag: "boundary",      score: 60 },
+  { condition: "in table, 3-6 occurrences", tag: "established",   score: 25 },
+  { condition: "in table, 7+ occurrences",  tag: "derivative",    score: 10 },
+];
+这样矛盾关系（95）比纯新关系（85）得分更高，因为"挑战已有结论"在学术界是最高级别的创新。
+2.4 创新类型分类 — "情境迁移"判定条件不够具体
+"主结构覆盖率 ≥ 60% 但 session 主题情境关键词无覆盖" 这个条件在代码层面很难实现。什么是"主题情境关键词"？如何量化"无覆盖"？
+建议简化：
+把"情境迁移"从自动分类中移除，改为：
+在生成 prompt 中要求 AI 根据 session 的 topic 和论文的 studyContext 自行判断
+或者在 Phase 3 的 gap 报告中由 AI 判断（那里有完整的上下文）
+6类自动分类改为5类（去掉情境迁移），情境迁移作为 AI 辅助判断的补充。
+2.5 硬性校验 — "noveltyScore < 25 硬拒"可能过于严格
+问题场景：用户研究的是一个非常成熟的领域（如 TAM 在信息系统中的经典应用），大部分边都是 derivative（10分），但用户通过引入一个全新的调节变量做出了边界条件创新。此时 noveltyScore 可能被平均拉低到 20 以下，但 contributionStatement 写得很好。
+建议修改校验逻辑：
+TypeScript
+复制
+// 不是全局 noveltyScore < 25 硬拒，而是：
+// 1. 所有边的 noveltyTag 都是 "derivative"（没有一条边是 novel/boundary/contradicting）
+// 2. 且 innovationTypes 为空
+// → 硬拒
+
+if (allEdgesAreDerivative && innovationTypes.length === 0) {
+  reject("创新性不足：模型未引入任何新关系、新中介或新调节");
+}
+这样保留"经典骨架 + 一个创新调节变量"的模型（虽然平均分低，但有创新点），只拒绝纯粹的"复述已有模型"。
+2.6 模型卡前端 — 颜色编码与现有证据区分
+你计划用绿/橙/红/金四色编码边的 novelty。但现有系统已经有证据编码（深绿=强证据，浅绿=弱证据）。
+建议：不要复用颜色语义，用"线型+颜色"组合：
+表格
+noveltyTag	视觉编码	理由
+derivative	细实线 + 灰色	"这是经典关系，骨架的一部分"
+established	中实线 + 深绿	"已有基础，可信但非创新"
+boundary	中虚线 + 橙色	"前沿探索，值得尝试"
+novel	粗虚线 + 红色	"纯创新，需重点论证"
+contradicting	粗点线 + 金色	"挑战共识，最高创新度"
+这样颜色语义不冲突，用户能同时看到"证据强度"（hover时显示）和"创新度"（线型+颜色）。
+Phase 3：文献全景视图（1.5 周）— 2 个建议
+3.2 Gap 报告生成 — 缓存策略需要更精确
+你计划用 (sessionId, topic, top12 变量名) 做 hash key，30 分钟 TTL。
+问题：如果用户在 30 分钟内新增了一篇论文，缓存不会刷新，但 gap 可能已经变了。
+建议：
+不设 TTL，而是在论文新增/删除时主动清除缓存
+或者用版本号机制：每次 landscape 重建时递增版本号，缓存 key 包含版本号
+3.3 前端热力图 — 技术选型建议
+你提到"用 d3 或简单 grid"。对于这个场景，不需要 d3：
+变量数通常 ≤ 15（博士论文的模型不会太大）
+15×15 = 225 个格子，用 CSS Grid + React 完全够用
+d3 会增加 bundle 体积和学习成本
+建议：用纯 React + CSS Grid 实现，每个格子是一个 <div>，hover 时用 React state 显示 tooltip。
+Phase 4 & 5 — 整体架构层面的 3 个建议
+1. 不要复用 partialPassMeta 存储创新字段
+你计划在 Phase 2 把 contributionStatement、innovationTypes、noveltyScore、edgeNoveltyTags 塞进 partialPassMeta JSON 列，"后续稳定再单独建列"。
+风险：Phase 5 时你需要对这些字段做查询（如"找出所有 mechanism_revelation 类型的模型"），JSON 列无法建索引，查询性能差。
+建议：Phase 2 就直接在 researchModelsTable 上加 3 个新列：
+contributionStatement: jsonb（结构化JSON，不是字符串）
+innovationTypes: text[]（PostgreSQL 数组类型，可索引）
+noveltyScore: integer
+Drizzle 的 pnpm push 加列是零停机的，不会有兼容性问题。旧数据的这三个字段自然为 NULL，前端判断为"早期模型，无创新分析"即可。
+2. ConstructRelationship 按 session 隔离 vs 全局共享
+你的设计是 ConstructRelationship 有 sessionId 列，按 session 隔离。
+考虑：如果用户有两个 session 研究方向相近（如 Session A 是"AI主播信任"，Session B 是"虚拟偶像信任"），变量和关系大量重叠，数据却无法复用。
+建议：保持按 session 隔离（这是你当前的设计），但在 Phase 1.3 的 rebuildLandscape 中提供一个 includeSimilarSessions 参数（默认 false，用户可手动开启）。开启后，聚合范围扩展到主题关键词匹配的其他 session。
+3. AI 调用成本控制
+整个方案中 AI 调用点很多：
+表格
+阶段	AI 调用点	预估单次成本
+Phase 1.1	变量提取增强（theoryBackbone + statedGap + studyContext）	跟现有提取同量级
+Phase 1.3	文献分簇（clusterByTheory）	零 AI，纯算法 ✅
+Phase 3.2	Gap 报告生成	1 次 gpt-5-mini / session
+Phase 4.1	文献综述增强	1 次 gpt-5.4 / model
+Phase 4.2	理论贡献生成	1 次 gpt-5.4 / model
+Phase 4.4	审稿人预检	1 次 gpt-5-mini / model
+总成本可控，但需要给 gpt-5-mini 的调用（Gap 报告、审稿人预检）设置更短的 timeout（如 25 秒），因为这些是"锦上添花"的功能，不应阻塞主流程。
+总结：最关键的 3 个修改建议
+表格
+优先级	建议	理由
+P0	innovationScore 从线性公式改为分档制	避免经典关系被过度 penalize
+P0	创新类型分类去掉"情境迁移"（条件不可量化），改为 5 类	保证自动分类的可实现性
+P1	Phase 2 直接加 3 个新列，不要复用 partialPassMeta	避免 Phase 5 查询性能问题
+P1	硬性校验改为"所有边都是 derivative 且 innovationTypes 为空"才拒	保留"经典骨架+一个创新点"的模型
+P2	边的 novelty 编码用"线型+颜色"而非纯颜色	不与现有证据颜色编码冲突
+你的方案整体是可行的、有深度的、验收标准可衡量的。上述建议主要是让某些规则在工程层面更可落地，避免 Phase 2 做了一半发现某个分类规则无法实现的情况。
