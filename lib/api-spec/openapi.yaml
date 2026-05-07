@@ -2696,8 +2696,9 @@ components:
           type: array
           items:
             type: string
-            enum: [library, web]
+            enum: [library, web, scholar]
           default: [library, web]
+          description: Where to look. `library` = papers in this session. `web` = OpenAlex. `scholar` = Google Scholar via SerpAPI.
         granularity:
           type: array
           items:
@@ -2708,6 +2709,31 @@ components:
           type: string
           nullable: true
           description: Optional natural-language guidance from the user (e.g. "prefer recent meta-analyses").
+        focusEdgeKey:
+          type: string
+          nullable: true
+          description: When provided, restrict the search to ONLY this edge. Other edges in the model are ignored, the AI prompt is much smaller, and overall-granularity is suppressed. Used by the per-edge "搜索出处" entry point on the live model page.
+        includeImages:
+          type: boolean
+          nullable: true
+          description: When true, also include up to 3 figure thumbnails per edge (SerpAPI google_images). Defaults to true when focusEdgeKey is set.
+
+    EvidenceImageHit:
+      type: object
+      required: [thumbnailUrl, sourceUrl, sourceDomain]
+      properties:
+        title:
+          type: string
+          nullable: true
+        thumbnailUrl:
+          type: string
+        imageUrl:
+          type: string
+          nullable: true
+        sourceUrl:
+          type: string
+        sourceDomain:
+          type: string
 
     EvidencePaperHit:
       type: object
@@ -2715,7 +2741,7 @@ components:
       properties:
         source:
           type: string
-          enum: [library, web]
+          enum: [library, web, scholar]
         paperId:
           type: integer
           nullable: true
@@ -2771,6 +2797,11 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/EvidencePaperHit"
+        imageHits:
+          type: array
+          description: Optional figure thumbnails returned when includeImages=true (or when focused on a single edge).
+          items:
+            $ref: "#/components/schemas/EvidenceImageHit"
 
     EvidenceSearchResult:
       type: object

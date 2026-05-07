@@ -2255,7 +2255,12 @@ export const SearchModelEvidenceParams = zod.object({
 });
 
 export const SearchModelEvidenceBody = zod.object({
-  scopes: zod.array(zod.enum(["library", "web"])).default([`library`, `web`]),
+  scopes: zod
+    .array(zod.enum(["library", "web", "scholar"]))
+    .default([`library`, `web`])
+    .describe(
+      "Where to look. `library` = papers in this session. `web` = OpenAlex. `scholar` = Google Scholar via SerpAPI.",
+    ),
   granularity: zod
     .array(zod.enum(["overall", "per-edge"]))
     .default([`overall`, `per-edge`]),
@@ -2265,12 +2270,24 @@ export const SearchModelEvidenceBody = zod.object({
     .describe(
       'Optional natural-language guidance from the user (e.g. \"prefer recent meta-analyses\").',
     ),
+  focusEdgeKey: zod
+    .string()
+    .nullish()
+    .describe(
+      'When provided, restrict the search to ONLY this edge. Other edges in the model are ignored, the AI prompt is much smaller, and overall-granularity is suppressed. Used by the per-edge \"搜索出处\" entry point on the live model page.',
+    ),
+  includeImages: zod
+    .boolean()
+    .nullish()
+    .describe(
+      "When true, also include up to 3 figure thumbnails per edge (SerpAPI google_images). Defaults to true when focusEdgeKey is set.",
+    ),
 });
 
 export const SearchModelEvidenceResponse = zod.object({
   overallMatches: zod.array(
     zod.object({
-      source: zod.enum(["library", "web"]),
+      source: zod.enum(["library", "web", "scholar"]),
       paperId: zod.number().nullish().describe("Present when source=library."),
       externalId: zod
         .string()
@@ -2305,7 +2322,7 @@ export const SearchModelEvidenceResponse = zod.object({
       relationship: zod.string(),
       hits: zod.array(
         zod.object({
-          source: zod.enum(["library", "web"]),
+          source: zod.enum(["library", "web", "scholar"]),
           paperId: zod
             .number()
             .nullish()
@@ -2329,6 +2346,20 @@ export const SearchModelEvidenceResponse = zod.object({
             ),
         }),
       ),
+      imageHits: zod
+        .array(
+          zod.object({
+            title: zod.string().nullish(),
+            thumbnailUrl: zod.string(),
+            imageUrl: zod.string().nullish(),
+            sourceUrl: zod.string(),
+            sourceDomain: zod.string(),
+          }),
+        )
+        .optional()
+        .describe(
+          "Optional figure thumbnails returned when includeImages=true (or when focused on a single edge).",
+        ),
     }),
   ),
   durationMs: zod.number().optional(),
@@ -2632,7 +2663,12 @@ export const SearchLiveModelEvidenceParams = zod.object({
 });
 
 export const SearchLiveModelEvidenceBody = zod.object({
-  scopes: zod.array(zod.enum(["library", "web"])).default([`library`, `web`]),
+  scopes: zod
+    .array(zod.enum(["library", "web", "scholar"]))
+    .default([`library`, `web`])
+    .describe(
+      "Where to look. `library` = papers in this session. `web` = OpenAlex. `scholar` = Google Scholar via SerpAPI.",
+    ),
   granularity: zod
     .array(zod.enum(["overall", "per-edge"]))
     .default([`overall`, `per-edge`]),
@@ -2642,12 +2678,24 @@ export const SearchLiveModelEvidenceBody = zod.object({
     .describe(
       'Optional natural-language guidance from the user (e.g. \"prefer recent meta-analyses\").',
     ),
+  focusEdgeKey: zod
+    .string()
+    .nullish()
+    .describe(
+      'When provided, restrict the search to ONLY this edge. Other edges in the model are ignored, the AI prompt is much smaller, and overall-granularity is suppressed. Used by the per-edge \"搜索出处\" entry point on the live model page.',
+    ),
+  includeImages: zod
+    .boolean()
+    .nullish()
+    .describe(
+      "When true, also include up to 3 figure thumbnails per edge (SerpAPI google_images). Defaults to true when focusEdgeKey is set.",
+    ),
 });
 
 export const SearchLiveModelEvidenceResponse = zod.object({
   overallMatches: zod.array(
     zod.object({
-      source: zod.enum(["library", "web"]),
+      source: zod.enum(["library", "web", "scholar"]),
       paperId: zod.number().nullish().describe("Present when source=library."),
       externalId: zod
         .string()
@@ -2682,7 +2730,7 @@ export const SearchLiveModelEvidenceResponse = zod.object({
       relationship: zod.string(),
       hits: zod.array(
         zod.object({
-          source: zod.enum(["library", "web"]),
+          source: zod.enum(["library", "web", "scholar"]),
           paperId: zod
             .number()
             .nullish()
@@ -2706,6 +2754,20 @@ export const SearchLiveModelEvidenceResponse = zod.object({
             ),
         }),
       ),
+      imageHits: zod
+        .array(
+          zod.object({
+            title: zod.string().nullish(),
+            thumbnailUrl: zod.string(),
+            imageUrl: zod.string().nullish(),
+            sourceUrl: zod.string(),
+            sourceDomain: zod.string(),
+          }),
+        )
+        .optional()
+        .describe(
+          "Optional figure thumbnails returned when includeImages=true (or when focused on a single edge).",
+        ),
     }),
   ),
   durationMs: zod.number().optional(),

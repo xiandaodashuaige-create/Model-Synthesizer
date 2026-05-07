@@ -2470,9 +2470,11 @@ router.post("/models/:id/select", async (req, res): Promise<void> => {
 // ============================================================================
 
 type EvidenceSearchBody = {
-  scopes?: Array<"library" | "web">;
+  scopes?: Array<"library" | "web" | "scholar">;
   granularity?: Array<"overall" | "per-edge">;
   instructions?: string | null;
+  focusEdgeKey?: string | null;
+  includeImages?: boolean | null;
 };
 
 type AdditionalEvidence = {
@@ -2518,7 +2520,7 @@ router.post("/sessions/:id/models/:modelId/evidence-search", async (req, res): P
     return;
   }
   const body = (req.body ?? {}) as EvidenceSearchBody;
-  const scopes: Array<"library" | "web"> = Array.isArray(body.scopes) && body.scopes.length > 0 ? body.scopes : ["library", "web"];
+  const scopes: Array<"library" | "web" | "scholar"> = Array.isArray(body.scopes) && body.scopes.length > 0 ? body.scopes : ["library", "web"];
   const granularity: Array<"overall" | "per-edge"> = Array.isArray(body.granularity) && body.granularity.length > 0 ? body.granularity : ["overall", "per-edge"];
   const formatted = formatModel(model);
   try {
@@ -2526,7 +2528,13 @@ router.post("/sessions/:id/models/:modelId/evidence-search", async (req, res): P
       sessionId,
       edges: buildEdgeInputs(formatted.edges),
       modelSummary: summariseModel(formatted),
-      options: { scopes, granularity, instructions: body.instructions ?? null },
+      options: {
+        scopes,
+        granularity,
+        instructions: body.instructions ?? null,
+        focusEdgeKey: body.focusEdgeKey ?? null,
+        includeImages: body.includeImages ?? null,
+      },
     });
     res.json(result);
   } catch (err) {

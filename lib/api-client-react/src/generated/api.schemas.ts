@@ -558,6 +558,7 @@ export type EvidenceSearchRequestScopesItem =
 export const EvidenceSearchRequestScopesItem = {
   library: "library",
   web: "web",
+  scholar: "scholar",
 } as const;
 
 export type EvidenceSearchRequestGranularityItem =
@@ -569,10 +570,23 @@ export const EvidenceSearchRequestGranularityItem = {
 } as const;
 
 export interface EvidenceSearchRequest {
+  /** Where to look. `library` = papers in this session. `web` = OpenAlex. `scholar` = Google Scholar via SerpAPI. */
   scopes?: EvidenceSearchRequestScopesItem[];
   granularity?: EvidenceSearchRequestGranularityItem[];
   /** Optional natural-language guidance from the user (e.g. "prefer recent meta-analyses"). */
   instructions?: string | null;
+  /** When provided, restrict the search to ONLY this edge. Other edges in the model are ignored, the AI prompt is much smaller, and overall-granularity is suppressed. Used by the per-edge "搜索出处" entry point on the live model page. */
+  focusEdgeKey?: string | null;
+  /** When true, also include up to 3 figure thumbnails per edge (SerpAPI google_images). Defaults to true when focusEdgeKey is set. */
+  includeImages?: boolean | null;
+}
+
+export interface EvidenceImageHit {
+  title?: string | null;
+  thumbnailUrl: string;
+  imageUrl?: string | null;
+  sourceUrl: string;
+  sourceDomain: string;
 }
 
 export type EvidencePaperHitSource =
@@ -581,6 +595,7 @@ export type EvidencePaperHitSource =
 export const EvidencePaperHitSource = {
   library: "library",
   web: "web",
+  scholar: "scholar",
 } as const;
 
 export interface EvidencePaperHit {
@@ -611,6 +626,8 @@ export interface EvidenceEdgeMatch {
   toVariableName: string;
   relationship: string;
   hits: EvidencePaperHit[];
+  /** Optional figure thumbnails returned when includeImages=true (or when focused on a single edge). */
+  imageHits?: EvidenceImageHit[];
 }
 
 export interface EvidenceSearchResult {

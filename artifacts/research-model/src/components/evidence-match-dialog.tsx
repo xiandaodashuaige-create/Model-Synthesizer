@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Loader2, Sparkles, Globe, BookOpen, Plus, History, Undo2, X, ExternalLink } from "lucide-react";
+import { Loader2, Sparkles, Globe, BookOpen, Plus, History, Undo2, X, ExternalLink, GraduationCap, ImageIcon } from "lucide-react";
 import {
   useSearchModelEvidence,
   useApplyModelEvidence,
@@ -33,7 +33,26 @@ type SelectionKey = string; // `${edgeKey}::${ref}`  ref = `L:${paperId}` or `W:
 function refOfHit(h: EvidencePaperHit): string {
   if (h.source === "library" && h.paperId != null) return `L:${h.paperId}`;
   if (h.source === "web" && h.externalId) return `W:${h.externalId}`;
+  if (h.source === "scholar" && h.externalId) return `S:${h.externalId}`;
   return `?:${h.title.slice(0, 40)}`;
+}
+
+// Wrap a paper URL through the user's institutional library proxy if they've
+// configured one (single text input, persisted in localStorage). Common
+// pattern: `https://login.libproxy.<school>.edu/login?url={URL}` — we just
+// concatenate at the {URL} placeholder, falling back to suffix-append. Empty
+// or missing template returns the raw URL.
+const PROXY_KEY = "evidence.libraryProxyTemplate";
+function applyLibraryProxy(url: string | null | undefined): string | null {
+  if (!url) return null;
+  if (typeof window === "undefined") return url;
+  const tpl = (window.localStorage.getItem(PROXY_KEY) ?? "").trim();
+  if (!tpl) return url;
+  if (tpl.includes("{URL}")) return tpl.replace("{URL}", encodeURIComponent(url));
+  return tpl + encodeURIComponent(url);
+}
+function scholarSearchUrl(title: string): string {
+  return `https://scholar.google.com/scholar?q=${encodeURIComponent(title)}`;
 }
 
 function HitCard({
@@ -64,19 +83,49 @@ function HitCard({
           />
         )}
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-1.5 mb-0.5">
+          <div className="flex items-center gap-1.5 mb-0.5 flex-wrap">
             <span
               className={`inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded ${
-                hit.source === "library" ? "bg-blue-50 text-blue-700 border border-blue-200" : "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                hit.source === "library"
+                  ? "bg-blue-50 text-blue-700 border border-blue-200"
+                  : hit.source === "scholar"
+                    ? "bg-amber-50 text-amber-700 border border-amber-200"
+                    : "bg-emerald-50 text-emerald-700 border border-emerald-200"
               }`}
             >
-              {hit.source === "library" ? <BookOpen className="w-2.5 h-2.5" /> : <Globe className="w-2.5 h-2.5" />}
-              {hit.source === "library" ? t("evidence.tag.library" as any) : t("evidence.tag.web" as any)}
+              {hit.source === "library" ? <BookOpen className="w-2.5 h-2.5" /> : hit.source === "scholar" ? <GraduationCap className="w-2.5 h-2.5" /> : <Globe className="w-2.5 h-2.5" />}
+              {hit.source === "library"
+                ? t("evidence.tag.library" as any)
+                : hit.source === "scholar"
+                  ? t("evidence.tag.scholar" as any)
+                  : t("evidence.tag.web" as any)}
             </span>
             <span className="text-[10px] text-muted-foreground">★ {hit.score.toFixed(2)}</span>
             {hit.url && (
-              <a href={hit.url} target="_blank" rel="noreferrer" className="text-[10px] text-muted-foreground hover:text-primary inline-flex items-center gap-0.5">
+              <a href={hit.url} target="_blank" rel="noreferrer" className="text-[10px] text-muted-foreground hover:text-primary inline-flex items-center gap-0.5" title={hit.url}>
                 <ExternalLink className="w-2.5 h-2.5" />
+              </a>
+            )}
+            {hit.source !== "scholar" && (
+              <a
+                href={scholarSearchUrl(hit.title)}
+                target="_blank"
+                rel="noreferrer"
+                className="text-[10px] text-amber-700 hover:text-amber-900 inline-flex items-center gap-0.5"
+                title={t("evidence.openInScholar" as any) as string}
+              >
+                <GraduationCap className="w-2.5 h-2.5" />
+              </a>
+            )}
+            {hit.url && applyLibraryProxy(hit.url) !== hit.url && (
+              <a
+                href={applyLibraryProxy(hit.url) ?? "#"}
+                target="_blank"
+                rel="noreferrer"
+                className="text-[10px] text-violet-700 hover:text-violet-900 inline-flex items-center gap-0.5"
+                title={t("evidence.openViaProxy" as any) as string}
+              >
+                {t("evidence.proxyShort" as any)}
               </a>
             )}
           </div>
@@ -125,9 +174,15 @@ export function EvidenceMatchDialog({
 
   const [scopeLib, setScopeLib] = useState(true);
   const [scopeWeb, setScopeWeb] = useState(true);
+  const [scopeScholar, setScopeScholar] = useState(true);
   const [grOverall, setGrOverall] = useState(true);
   const [grPerEdge, setGrPerEdge] = useState(true);
   const [instructions, setInstructions] = useState("");
+  const [proxyTemplate, setProxyTemplate] = useState<string>(() =>
+    typeof window === "undefined" ? "" : (window.localStorage.getItem(PROXY_KEY) ?? ""),
+  );
+  const [showProxyEditor, setShowProxyEditor] = useState(false);
+  const isFocused = !!focusEdgeKey;
   const [result, setResult] = useState<EvidenceSearchResult | null>(null);
   const [selected, setSelected] = useState<Set<SelectionKey>>(new Set());
   const [tab, setTab] = useState<"search" | "history">("search");
@@ -162,17 +217,32 @@ export function EvidenceMatchDialog({
   };
 
   const runSearch = () => {
-    const scopes: Array<"library" | "web"> = [];
+    const scopes: Array<"library" | "web" | "scholar"> = [];
     if (scopeLib) scopes.push("library");
     if (scopeWeb) scopes.push("web");
-    const granularity: Array<"overall" | "per-edge"> = [];
-    if (grOverall) granularity.push("overall");
-    if (grPerEdge) granularity.push("per-edge");
+    if (scopeScholar) scopes.push("scholar");
+    // Focused mode: backend forces per-edge + skips overall, so the
+    // granularity panel doesn't apply. Send per-edge so we don't fail the
+    // server's "at least one" guard.
+    const granularity: Array<"overall" | "per-edge"> = isFocused ? ["per-edge"] : [];
+    if (!isFocused) {
+      if (grOverall) granularity.push("overall");
+      if (grPerEdge) granularity.push("per-edge");
+    }
     if (scopes.length === 0 || granularity.length === 0) {
       toast({ title: t("evidence.toast.pickAtLeastOne" as any), variant: "destructive" });
       return;
     }
-    const payload = { scopes, granularity, instructions: instructions.trim() || null };
+    const payload = {
+      scopes,
+      granularity,
+      instructions: instructions.trim() || null,
+      // Send focusEdgeKey so the backend filters its edge list BEFORE any
+      // OpenAlex / Scholar fetch or AI scoring — saves tokens AND eliminates
+      // cross-edge dilution. Image hits auto-enable in focused mode.
+      focusEdgeKey: focusEdgeKey ?? null,
+      includeImages: isFocused ? true : null,
+    };
     const onSuccess = (r: EvidenceSearchResult) => {
       setResult(r);
       const next = new Set<SelectionKey>();
@@ -209,24 +279,26 @@ export function EvidenceMatchDialog({
     }
     // Build hit lookup by ref
     const hitByEdgeRef = new Map<string, EvidencePaperHit>();
-    const webHitsByRef = new Map<string, EvidencePaperHit>();
     for (const em of result.perEdgeMatches ?? []) {
       for (const h of em.hits ?? []) {
         const r = refOfHit(h);
         hitByEdgeRef.set(`${em.edgeKey}::${r}`, h);
-        if (h.source === "web" && h.externalId) webHitsByRef.set(h.externalId, h);
       }
     }
     const addPapers: Array<{ externalId: string; title: string; authors: string[]; year: number | null; abstract: string | null; url: string | null }> = [];
-    const seenWeb = new Set<string>();
+    const seenExt = new Set<string>();
     const edgeAttachments: Array<{ edgeKey: string; paperId?: number | null; externalId?: string | null; evidenceQuote: string }> = [];
     for (const k of selected) {
       const h = hitByEdgeRef.get(k);
       if (!h || !h.evidenceQuote) continue;
       const [edgeKey] = k.split("::");
-      if (h.source === "web" && h.externalId) {
-        if (!seenWeb.has(h.externalId)) {
-          seenWeb.add(h.externalId);
+      // Web (OpenAlex) AND scholar (SerpAPI Google Scholar) hits both flow
+      // through the same import path: we add them to the session library
+      // by externalId. The server's importer is idempotent on (sessionId,
+      // externalId), so re-attaching a scholar paper later is safe.
+      if ((h.source === "web" || h.source === "scholar") && h.externalId) {
+        if (!seenExt.has(h.externalId)) {
+          seenExt.add(h.externalId);
           addPapers.push({
             externalId: h.externalId,
             title: h.title,
@@ -377,8 +449,14 @@ export function EvidenceMatchDialog({
             <>
               {!result && (
                 <div className="space-y-3">
-                  <p className="text-xs text-muted-foreground">{t("evidence.dialog.intro" as any)}</p>
-                  <div className="grid grid-cols-2 gap-3">
+                  {isFocused && focusEdgeLabel ? (
+                    <div className="text-xs bg-primary/5 border border-primary/30 text-foreground rounded-md px-3 py-2" data-testid="evidence-focus-banner">
+                      {t("evidence.dialog.focusedIntro" as any, { from: focusEdgeLabel.from, to: focusEdgeLabel.to })}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">{t("evidence.dialog.intro" as any)}</p>
+                  )}
+                  <div className={isFocused ? "" : "grid grid-cols-2 gap-3"}>
                     <div className="border border-border rounded-md p-3 space-y-1.5">
                       <div className="text-[11px] font-semibold uppercase text-muted-foreground">{t("evidence.opts.scope" as any)}</div>
                       <label className="flex items-center gap-2 text-sm">
@@ -389,18 +467,72 @@ export function EvidenceMatchDialog({
                         <input type="checkbox" checked={scopeWeb} onChange={(e) => setScopeWeb(e.target.checked)} data-testid="evidence-scope-web" />
                         <Globe className="w-3.5 h-3.5 text-emerald-700" /> {t("evidence.opts.web" as any)}
                       </label>
-                    </div>
-                    <div className="border border-border rounded-md p-3 space-y-1.5">
-                      <div className="text-[11px] font-semibold uppercase text-muted-foreground">{t("evidence.opts.granularity" as any)}</div>
                       <label className="flex items-center gap-2 text-sm">
-                        <input type="checkbox" checked={grPerEdge} onChange={(e) => setGrPerEdge(e.target.checked)} data-testid="evidence-gran-peredge" />
-                        {t("evidence.opts.perEdge" as any)}
-                      </label>
-                      <label className="flex items-center gap-2 text-sm">
-                        <input type="checkbox" checked={grOverall} onChange={(e) => setGrOverall(e.target.checked)} data-testid="evidence-gran-overall" />
-                        {t("evidence.opts.overall" as any)}
+                        <input type="checkbox" checked={scopeScholar} onChange={(e) => setScopeScholar(e.target.checked)} data-testid="evidence-scope-scholar" />
+                        <GraduationCap className="w-3.5 h-3.5 text-amber-700" /> {t("evidence.opts.scholar" as any)}
                       </label>
                     </div>
+                    {/* Granularity panel only matters when searching the WHOLE
+                        model. In focused mode the backend forces per-edge and
+                        skips overall (single edge → overall is meaningless). */}
+                    {!isFocused && (
+                      <div className="border border-border rounded-md p-3 space-y-1.5">
+                        <div className="text-[11px] font-semibold uppercase text-muted-foreground">{t("evidence.opts.granularity" as any)}</div>
+                        <label className="flex items-center gap-2 text-sm">
+                          <input type="checkbox" checked={grPerEdge} onChange={(e) => setGrPerEdge(e.target.checked)} data-testid="evidence-gran-peredge" />
+                          {t("evidence.opts.perEdge" as any)}
+                        </label>
+                        <label className="flex items-center gap-2 text-sm">
+                          <input type="checkbox" checked={grOverall} onChange={(e) => setGrOverall(e.target.checked)} data-testid="evidence-gran-overall" />
+                          {t("evidence.opts.overall" as any)}
+                        </label>
+                      </div>
+                    )}
+                  </div>
+                  {/* Institutional library proxy template — single field stored
+                      in localStorage. Once set, every paper hit gets an extra
+                      "通过学校代理打开" link that wraps the URL through the
+                      campus proxy (e.g. EZproxy/OpenAthens). */}
+                  <div className="text-[11px]">
+                    <button
+                      type="button"
+                      onClick={() => setShowProxyEditor((v) => !v)}
+                      className="text-muted-foreground hover:text-foreground underline-offset-2 hover:underline"
+                      data-testid="evidence-toggle-proxy"
+                    >
+                      {proxyTemplate ? t("evidence.proxy.configured" as any) : t("evidence.proxy.configure" as any)}
+                    </button>
+                    {showProxyEditor && (
+                      <div className="mt-1.5 space-y-1">
+                        <input
+                          type="text"
+                          value={proxyTemplate}
+                          onChange={(e) => setProxyTemplate(e.target.value)}
+                          placeholder={t("evidence.proxy.placeholder" as any) as string}
+                          className="w-full text-xs rounded-md border border-input bg-background px-2 py-1.5"
+                          data-testid="evidence-proxy-input"
+                        />
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const v = proxyTemplate.trim();
+                              if (typeof window !== "undefined") {
+                                if (v) window.localStorage.setItem(PROXY_KEY, v);
+                                else window.localStorage.removeItem(PROXY_KEY);
+                              }
+                              setShowProxyEditor(false);
+                              toast({ title: t("evidence.proxy.saved" as any) });
+                            }}
+                            className="text-xs px-2 py-1 rounded bg-primary text-primary-foreground"
+                            data-testid="evidence-proxy-save"
+                          >
+                            {t("common.save" as any)}
+                          </button>
+                          <span className="text-[10px] text-muted-foreground">{t("evidence.proxy.hint" as any)}</span>
+                        </div>
+                      </div>
+                    )}
                   </div>
                   <div>
                     <label className="block text-[11px] font-semibold uppercase text-muted-foreground mb-1">
@@ -452,16 +584,16 @@ export function EvidenceMatchDialog({
                     </div>
                   )}
 
-                  {grPerEdge && perEdge.length > 0 && (
+                  {(grPerEdge || isFocused) && perEdge.length > 0 && (
                     <div className="space-y-3">
                       <h3 className="text-xs font-semibold uppercase text-muted-foreground">{t("evidence.section.perEdge" as any)}</h3>
                       {perEdge.map((em) => {
-                        const isFocused = focusEdgeKey === em.edgeKey;
+                        const isFocusedEdge = focusEdgeKey === em.edgeKey;
                         return (
                         <div
                           key={em.edgeKey}
-                          ref={isFocused ? focusBlockRef : undefined}
-                          className={`border rounded-md p-3 space-y-2 transition-colors ${isFocused ? "border-primary bg-primary/5 ring-2 ring-primary/30" : "border-border"}`}
+                          ref={isFocusedEdge ? focusBlockRef : undefined}
+                          className={`border rounded-md p-3 space-y-2 transition-colors ${isFocusedEdge ? "border-primary bg-primary/5 ring-2 ring-primary/30" : "border-border"}`}
                           data-testid="evidence-edge-block"
                         >
                           <div className="text-sm font-medium text-foreground">
@@ -487,6 +619,40 @@ export function EvidenceMatchDialog({
                               );
                             })}
                           </div>
+                          {/* Per-edge figure thumbnails (SerpAPI google_images).
+                              Auto-fetched in focused mode — they're often the
+                              clearest piece of evidence for "is this the same
+                              kind of relationship?" Click opens the source
+                              page so the user can verify the figure in context. */}
+                          {(em.imageHits ?? []).length > 0 && (
+                            <div className="pt-2 border-t border-border/60 space-y-1.5">
+                              <div className="text-[10px] font-semibold uppercase text-muted-foreground inline-flex items-center gap-1">
+                                <ImageIcon className="w-2.5 h-2.5" /> {t("evidence.section.figures" as any)}
+                              </div>
+                              <div className="grid grid-cols-3 gap-2">
+                                {(em.imageHits ?? []).map((img) => (
+                                  <a
+                                    key={img.sourceUrl}
+                                    href={img.sourceUrl}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="block group border border-border rounded overflow-hidden bg-muted/30"
+                                    title={img.title ?? img.sourceDomain}
+                                    data-testid="evidence-image-hit"
+                                  >
+                                    <img
+                                      src={img.thumbnailUrl}
+                                      alt={img.title ?? "figure"}
+                                      className="w-full h-24 object-cover group-hover:scale-105 transition-transform"
+                                      loading="lazy"
+                                      onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+                                    />
+                                    <div className="px-1.5 py-1 text-[10px] text-muted-foreground line-clamp-1">{img.sourceDomain}</div>
+                                  </a>
+                                ))}
+                              </div>
+                            </div>
+                          )}
                         </div>
                         );
                       })}

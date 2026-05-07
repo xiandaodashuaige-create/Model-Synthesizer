@@ -606,8 +606,14 @@ router.post("/sessions/:id/live-model/evidence-search", async (req, res) => {
   if (!Number.isFinite(sessionId)) return res.status(400).json({ error: "invalid session id" });
   if (!(await ensureSessionExists(sessionId))) return res.status(404).json({ error: "session not found" });
   const detail = await loadLiveModelDetail(sessionId);
-  const body = (req.body ?? {}) as { scopes?: Array<"library" | "web">; granularity?: Array<"overall" | "per-edge">; instructions?: string | null };
-  const scopes: Array<"library" | "web"> = Array.isArray(body.scopes) && body.scopes.length > 0 ? body.scopes : ["library", "web"];
+  const body = (req.body ?? {}) as {
+    scopes?: Array<"library" | "web" | "scholar">;
+    granularity?: Array<"overall" | "per-edge">;
+    instructions?: string | null;
+    focusEdgeKey?: string | null;
+    includeImages?: boolean | null;
+  };
+  const scopes: Array<"library" | "web" | "scholar"> = Array.isArray(body.scopes) && body.scopes.length > 0 ? body.scopes : ["library", "web"];
   const granularity: Array<"overall" | "per-edge"> = Array.isArray(body.granularity) && body.granularity.length > 0 ? body.granularity : ["overall", "per-edge"];
 
   const edges: EdgeInput[] = detail.edges.map((e) => ({
@@ -625,7 +631,13 @@ router.post("/sessions/:id/live-model/evidence-search", async (req, res) => {
       sessionId,
       edges,
       modelSummary: summary,
-      options: { scopes, granularity, instructions: body.instructions ?? null },
+      options: {
+        scopes,
+        granularity,
+        instructions: body.instructions ?? null,
+        focusEdgeKey: body.focusEdgeKey ?? null,
+        includeImages: body.includeImages ?? null,
+      },
     });
     return res.json(result);
   } catch (err) {

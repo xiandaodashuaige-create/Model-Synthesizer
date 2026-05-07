@@ -65,6 +65,13 @@ pnpm --filter @workspace/db run push # Push DB schema changes
 - **Savings**: backend `groupBy(route, model)` recomputes each row at flagship rate, returns `flagshipCostUsd` + `savedCostUsd` per route AND total. Default 3×2 grid shows "已花积分" + "已省积分" (`+N` emerald). Header byline always appends ` · N 积分 (−M)`.
 - **Value mode (default)**: papers/variables/models from `useGetSessionSummary` + conservative labor estimate (0.5h/paper + 0.2h/variable + 1.5h/model). Cost-audit table behind `localStorage["ai-usage-dev-mode"]` toggle.
 
+### Evidence search (`lib/evidence-matching.ts` + `evidence-match-dialog.tsx`)
+- **Per-edge focus mode**: live-model relationship list "搜索出处" button passes `focusEdgeKey: ${fromVar}-${toVar}-${rel}` matching `makeEdgeKey()`. Backend filters edges array BEFORE OpenAlex/Scholar fetch + AI scoring, so focused mode = 1 fan-out instead of N. Auto-enables `wantImages`, forces per-edge granularity, suppresses overall. Per-edge pool is doubled (`max(WEB_PER_EDGE*2, 10)`) for richer single-edge results.
+- **Google Scholar source**: `fetchGoogleScholar()` via SerpAPI `engine=google_scholar`. New scope checkbox "Google 学术". Hits use `source: "scholar"` + `S:<externalId>` ref, flow through same idempotent `importWebPaper` path as OpenAlex on apply (server upserts by `(sessionId, externalId)`).
+- **Per-edge figures**: `fetchEdgeFigures()` via SerpAPI `engine=google_images` (3 hits, stock-domain filter). Returned as `imageHits` on each `EvidenceEdgeMatch`. Only fetched when `wantImages` AND ≤3 edges (avoids fanning out 10+ image calls). Rendered as 3-col thumbnail grid below per-edge hits, click opens source page.
+- **Library proxy**: per-hit "学校代理" link wraps any URL through user's institutional EZproxy template (single text input persisted in `localStorage["evidence.libraryProxyTemplate"]`, `{URL}` placeholder; falls back to suffix concat). Lets users access purchased databases (Wiley, Springer, Elsevier) from any web/scholar hit.
+- **Per-hit Google Scholar link**: every non-scholar hit gets a small graduation-cap icon that searches the title in scholar.google.com — one-click escape hatch to find the canonical paper.
+
 ### Cross-cutting
 - **Client codegen**: OpenAPI generates Zod validators + React Query hooks. Codegen overwrites `lib/api-zod/src/index.ts`.
 - **Global 401 interceptor**: throttled `window` event triggers re-login overlay.

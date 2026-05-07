@@ -20,7 +20,7 @@ export type EdgeInput = {
 };
 
 export type PaperHit = {
-  source: "library" | "web";
+  source: "library" | "web" | "scholar";
   paperId?: number | null;
   externalId?: string | null;
   title: string;
@@ -33,6 +33,14 @@ export type PaperHit = {
   evidenceQuote?: string | null;
 };
 
+export type ImageHit = {
+  title: string | null;
+  thumbnailUrl: string;
+  imageUrl: string | null;
+  sourceUrl: string;
+  sourceDomain: string;
+};
+
 export type EdgeMatch = {
   edgeKey: string;
   fromVariableId: number;
@@ -41,12 +49,19 @@ export type EdgeMatch = {
   toVariableName: string;
   relationship: string;
   hits: PaperHit[];
+  imageHits?: ImageHit[];
 };
 
 export type SearchOptions = {
-  scopes: Array<"library" | "web">;
+  scopes: Array<"library" | "web" | "scholar">;
   granularity: Array<"overall" | "per-edge">;
   instructions?: string | null;
+  // When set, restrict the search to ONLY this edgeKey. Other edges in the
+  // model are dropped before any web/scholar fetch or AI scoring runs.
+  // Overall granularity is suppressed in this mode (it makes no sense for a
+  // single edge). Defaults: focused mode also auto-enables image search.
+  focusEdgeKey?: string | null;
+  includeImages?: boolean | null;
 };
 
 const MODEL = "gpt-5.4";
@@ -94,6 +109,137 @@ const RELATION_NL: Record<string, string> = {
 function edgeAsQuery(e: EdgeInput): string {
   const verb = e.relationship === "moderates" ? "moderates" : e.relationship === "mediates" ? "mediates" : "effect";
   return `${e.fromVariableName} ${verb} ${e.toVariableName}`.replace(/\s+/g, " ").trim();
+}
+
+// ---- Google Scholar via SerpAPI ------------------------------------------
+// Used as an additional `web`-style scope. SerpAPI returns title / authors /
+// year / publication info / snippet for top scholar results. We treat snippets
+// as the abstract surrogate for downstream AI scoring.
+
+type ScholarCandidate = {
+  externalId: string; // "scholar:<result_id>" or "scholar:<hash>"
+  title: string;
+  authors: string[];
+  year: number | null;
+  abstract: string | null;
+  url: string | null;
+};
+
+async function fetchGoogleScholar(query: string, perPage: number): Promise<ScholarCandidate[]> {
+  const key = process.env.SERPAPI_API_KEY;
+  if (!key) return [];
+  const safe = query.replace(/["',:|]+/g, " ").replace(/\s+/g, " ").trim();
+  if (!safe) return [];
+  const url = new URL("https://serpapi.com/search.json");
+  url.searchParams.set("engine", "google_scholar");
+  url.searchParams.set("q", safe);
+  url.searchParams.set("num", String(Math.min(perPage, 10)));
+  url.searchParams.set("api_key", key);
+  let data: {
+    organic_results?: Array<{
+      result_id?: string;
+      title?: string;
+      link?: string;
+      snippet?: string;
+      publication_info?: { summary?: string; authors?: Array<{ name?: string }> };
+    }>;
+    error?: string;
+  };
+  try {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 12_000);
+    const r = await fetch(url.toString(), { headers: { Accept: "application/json" }, signal: ctl.signal });
+    clearTimeout(timer);
+    if (!r.ok) return [];
+    data = await r.json();
+  } catch {
+    return [];
+  }
+  if (data.error) return [];
+  const out: ScholarCandidate[] = [];
+  for (const it of data.organic_results ?? []) {
+    if (!it?.title || !it.link) continue;
+    const id = it.result_id || `${it.link.slice(0, 80)}`;
+    const summary = it.publication_info?.summary ?? "";
+    // SerpAPI summary is typically "Authors - Venue, Year - Domain". Pull the
+    // first 4-digit year if present, fall back to null. Authors come from the
+    // structured publication_info.authors when available, else from the
+    // summary head.
+    const yearMatch = summary.match(/\b(19|20)\d{2}\b/);
+    const year = yearMatch ? Number(yearMatch[0]) : null;
+    const structuredAuthors = (it.publication_info?.authors ?? [])
+      .map((a) => a?.name)
+      .filter((n): n is string => !!n);
+    const fallbackAuthors = summary ? summary.split(" - ")[0]?.split(",").map((s) => s.trim()).filter(Boolean) ?? [] : [];
+    const authors = (structuredAuthors.length > 0 ? structuredAuthors : fallbackAuthors).slice(0, 6);
+    out.push({
+      externalId: `scholar:${id}`,
+      title: it.title,
+      authors,
+      year,
+      abstract: it.snippet ?? null,
+      url: it.link,
+    });
+  }
+  return out;
+}
+
+// ---- Per-edge figure search via SerpAPI google_images --------------------
+
+const STOCK_DOMAINS_IMG = ["shutterstock.", "istockphoto.", "gettyimages.", "alamy.", "dreamstime.", "depositphotos.", "stock.adobe."];
+
+async function fetchEdgeFigures(edge: EdgeInput): Promise<ImageHit[]> {
+  const key = process.env.SERPAPI_API_KEY;
+  if (!key) return [];
+  const verb = edge.relationship === "moderates" ? "moderating" : edge.relationship === "mediates" ? "mediating" : "effect";
+  const q = `"${edge.fromVariableName}" ${verb} "${edge.toVariableName}" conceptual model OR framework figure`;
+  const url = new URL("https://serpapi.com/search.json");
+  url.searchParams.set("engine", "google_images");
+  url.searchParams.set("q", q);
+  url.searchParams.set("num", "20");
+  url.searchParams.set("api_key", key);
+  url.searchParams.set("safe", "active");
+  url.searchParams.set("tbs", "isz:m");
+  let data: {
+    error?: string;
+    images_results?: Array<{ title?: string; link?: string; source?: string; original?: string; thumbnail?: string }>;
+  };
+  try {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 12_000);
+    const r = await fetch(url.toString(), { headers: { Accept: "application/json" }, signal: ctl.signal });
+    clearTimeout(timer);
+    if (!r.ok) return [];
+    data = await r.json();
+  } catch {
+    return [];
+  }
+  if (data.error) return [];
+  const isHttp = (u: string) => /^https?:\/\//i.test(u);
+  const seen = new Set<string>();
+  const out: ImageHit[] = [];
+  for (const it of data.images_results ?? []) {
+    const sourceUrl = it.link ?? "";
+    const thumb = it.thumbnail ?? "";
+    if (!sourceUrl || !thumb || !isHttp(sourceUrl) || !isHttp(thumb)) continue;
+    let domain = it.source ?? "";
+    if (!domain) {
+      try { domain = new URL(sourceUrl).hostname; } catch { continue; }
+    }
+    const lower = domain.toLowerCase();
+    if (STOCK_DOMAINS_IMG.some((s) => lower.includes(s))) continue;
+    if (seen.has(sourceUrl)) continue;
+    seen.add(sourceUrl);
+    out.push({
+      title: (it.title ?? "").slice(0, 200) || null,
+      thumbnailUrl: thumb,
+      imageUrl: it.original && isHttp(it.original) ? it.original : null,
+      sourceUrl,
+      sourceDomain: domain,
+    });
+    if (out.length >= 3) break;
+  }
+  return out;
 }
 
 async function fetchOpenAlex(query: string, perPage: number): Promise<OpenAlexWork[]> {
@@ -289,8 +435,22 @@ export async function findEvidenceForModel(args: {
   const t0 = Date.now();
   const wantLib = args.options.scopes.includes("library");
   const wantWeb = args.options.scopes.includes("web");
-  const wantOverall = args.options.granularity.includes("overall");
-  const wantPerEdge = args.options.granularity.includes("per-edge");
+  const wantScholar = args.options.scopes.includes("scholar");
+
+  // Focused-edge mode: the user clicked "搜索出处" on ONE specific edge in the
+  // relationship list. Drop every other edge BEFORE we fan out web/scholar
+  // fetches or build the AI prompt — otherwise we'd burn tokens on unrelated
+  // edges and dilute per-edge precision. Overall granularity is also
+  // suppressed (it only makes sense for the whole model). Image hits are
+  // auto-enabled here since the user is asking for evidence of one specific
+  // claim and figures are the most informative artifact.
+  const focusKey = (args.options.focusEdgeKey ?? "").trim();
+  const isFocused = focusKey.length > 0;
+  const edges = isFocused ? args.edges.filter((e) => e.edgeKey === focusKey) : args.edges;
+
+  const wantOverall = !isFocused && args.options.granularity.includes("overall");
+  const wantPerEdge = isFocused || args.options.granularity.includes("per-edge");
+  const wantImages = args.options.includeImages ?? isFocused;
   const userInstructions = (args.options.instructions ?? "").slice(0, 500).trim();
 
   // ---------- gather candidate pool ----------
@@ -298,6 +458,7 @@ export async function findEvidenceForModel(args: {
     string,
     | { kind: "library"; cand: LibCandidate }
     | { kind: "web"; cand: ReturnType<typeof workToCandidate> }
+    | { kind: "scholar"; cand: ScholarCandidate }
   >();
   const aiCandidates: AiCandidate[] = [];
 
@@ -310,10 +471,14 @@ export async function findEvidenceForModel(args: {
     }
   }
 
+  // In focused mode we ONLY have one edge, so per-edge and overall both
+  // become "search by this edge's natural-language query". Bump per-edge
+  // pool size since we're not splitting the budget across many edges.
+  const focusedPerEdge = isFocused ? Math.max(WEB_PER_EDGE * 2, 10) : WEB_PER_EDGE;
+
   if (wantWeb && wantPerEdge) {
-    // One small OpenAlex search per edge (parallel, capped).
     const seen = new Set<string>();
-    const results = await Promise.all(args.edges.map((e) => fetchOpenAlex(edgeAsQuery(e), WEB_PER_EDGE).catch(() => [])));
+    const results = await Promise.all(edges.map((e) => fetchOpenAlex(edgeAsQuery(e), focusedPerEdge).catch(() => [])));
     for (const works of results) {
       for (const w of works) {
         const c = workToCandidate(w);
@@ -325,13 +490,34 @@ export async function findEvidenceForModel(args: {
       }
     }
   } else if (wantWeb && !wantPerEdge) {
-    // Overall-only: do a single search with the model summary as query.
     const works = await fetchOpenAlex(args.modelSummary.slice(0, 200), WEB_PER_EDGE * 2).catch(() => []);
     for (const w of works) {
       const c = workToCandidate(w);
       const ref = `W:${c.externalId}`;
       if (refToCand.has(ref)) continue;
       refToCand.set(ref, { kind: "web", cand: c });
+      aiCandidates.push({ ref, title: c.title, authors: c.authors, year: c.year, abstract: trunc(c.abstract) });
+    }
+  }
+
+  if (wantScholar && wantPerEdge) {
+    const seen = new Set<string>();
+    const results = await Promise.all(edges.map((e) => fetchGoogleScholar(edgeAsQuery(e), focusedPerEdge).catch(() => [])));
+    for (const cands of results) {
+      for (const c of cands) {
+        const ref = `S:${c.externalId}`;
+        if (seen.has(ref) || refToCand.has(ref)) continue;
+        seen.add(ref);
+        refToCand.set(ref, { kind: "scholar", cand: c });
+        aiCandidates.push({ ref, title: c.title, authors: c.authors, year: c.year, abstract: trunc(c.abstract) });
+      }
+    }
+  } else if (wantScholar && !wantPerEdge) {
+    const cands = await fetchGoogleScholar(args.modelSummary.slice(0, 200), WEB_PER_EDGE * 2).catch(() => []);
+    for (const c of cands) {
+      const ref = `S:${c.externalId}`;
+      if (refToCand.has(ref)) continue;
+      refToCand.set(ref, { kind: "scholar", cand: c });
       aiCandidates.push({ ref, title: c.title, authors: c.authors, year: c.year, abstract: trunc(c.abstract) });
     }
   }
@@ -368,6 +554,22 @@ export async function findEvidenceForModel(args: {
         evidenceQuote: evidenceQuote ?? null,
       };
     }
+    if (entry.kind === "scholar") {
+      const c = entry.cand;
+      return {
+        source: "scholar",
+        paperId: null,
+        externalId: c.externalId,
+        title: c.title,
+        authors: c.authors,
+        year: c.year,
+        abstract: c.abstract,
+        url: c.url,
+        score,
+        rationale,
+        evidenceQuote: evidenceQuote ?? null,
+      };
+    }
     const c = entry.cand;
     return {
       source: "web",
@@ -384,7 +586,18 @@ export async function findEvidenceForModel(args: {
     };
   }
 
-  const perEdgeMatches: EdgeMatch[] = args.edges.map((e) => {
+  // Per-edge image hits: only fetched when wantImages is on AND we have a
+  // small edge set (avoid fanning out 10+ google_images calls). In focused
+  // mode this is always exactly one call.
+  const imageHitsByEdge = new Map<string, ImageHit[]>();
+  if (wantImages && wantPerEdge && edges.length <= 3) {
+    const results = await Promise.all(edges.map((e) => fetchEdgeFigures(e).catch(() => [] as ImageHit[])));
+    edges.forEach((e, i) => imageHitsByEdge.set(e.edgeKey, results[i] ?? []));
+  }
+
+  // Walk the FILTERED edge set (not args.edges) so focused mode returns
+  // exactly one block instead of N empty ones for unrelated edges.
+  const perEdgeMatches: EdgeMatch[] = edges.map((e) => {
     const raw = perEdgeMap.get(e.edgeKey) ?? [];
     const hits = raw
       .map((h) => hydrate(h.ref, h.score, h.rationale, h.evidenceQuote))
@@ -399,6 +612,7 @@ export async function findEvidenceForModel(args: {
       toVariableName: e.toVariableName,
       relationship: e.relationship,
       hits,
+      imageHits: imageHitsByEdge.get(e.edgeKey) ?? [],
     };
   });
 
