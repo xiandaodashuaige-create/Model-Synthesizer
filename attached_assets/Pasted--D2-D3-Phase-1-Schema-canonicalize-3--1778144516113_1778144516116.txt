@@ -1,0 +1,260 @@
+可以进入D2 / D3 验证
+你这次Phase 1 的施工顺序是合理的：
+
+Schema → 共享canonicalize → 提取写入→ 聚合器→ 自检脚本
+而且你们修掉的3 个架构师问题都是真问题：
+
+fear of missing out被错切；
+同一篇论文多个假设导致totalOccurrences 虚高；
+mediation / moderation 丢viaVariable和被调节路径信息。
+这三个修掉后，Phase 1 的底座才比较可信。
+
+我对4 个子阶段的判断
+1.1 Schema 三件套
+判断：基本通过
+新增：
+
+papers.theoryBackbone
+papers.statedGaps
+papers.studyContext
+sessions.landscapeMeta
+constructRelationshipsTable
+这符合你后续做innovation layer 的需要。
+
+但建议确认两个点
+1.theoryBackbone最好支持数组
+如果现在只是string，也能先跑，但后续理论整合会受限。
+
+建议最终结构是：
+
+理论骨架：[ 
+  {
+    id ："行" ， 
+    标签：“刺激-机体-反应” ， 
+    evidenceText : " ... " , 
+    置信度：0.8​ 
+  }
+]
+一篇论文经常不止一个理论基础。
+
+2.statedGaps比statedGap更好
+你报告里说是statedGaps，这是对的。 gap 应该允许多条，并带类型。
+
+理想结构：
+
+声明的差距：[ 
+  {
+    类型："上下文" | "机制" | "边界" | "理论" | "构念" | "结果"           
+    文本：” ... ” ， 
+    sourceSection : "摘要|引言|讨论" , 
+    置信度：0.7​ 
+  }
+]
+1.2 共享canonicalize lib
+判断：这是关键正确决策
+把canonicalize 做成共享包非常重要。否则前端、后端、聚合器、模型生成各自normalize，后面一定会分叉。
+
+你提到三层结构：
+
+原始名称 / 规范名称 / 上下文限定符 / 构造族
+这个方向非常好。
+
+它能避免：
+
+对人工智能主播的信任
+对平台的信任
+消费者信任
+全部被粗暴合并成trust。
+
+对fear of missing out修复的判断
+你们加COMPOUND_OF_CORES黑名单是对的。
+
+这类构念不能按of拆：
+
+害怕错过
+归属感
+易用性
+感知易用性
+服务质量
+使用意图
+建议再确认这些都在回归测试里。
+
+我还建议补充一类测试
+中文/中英混合变量：
+
+AI主播信任
+消费者信任
+感知拟人化
+AI主播信任
+对人工智能主播的信任
+否则canonicalize 对中文场景仍可能不稳。
+
+1.3 提取prompt + paper 新字段写入
+判断：方向通过
+让每篇论文额外抽：
+
+理论主干
+已公布的差距
+研究背景
+是创新性底座的正确来源。
+
+但D2 一定要人工看质量，因为这些字段很容易出现：
+
+AI 泛泛填写；
+statedGap 编造；
+studyContext 抽不到但硬填；
+theoryBackbone 只猜SOR/TAM。
+D2 不只看“字段有内容”
+你的D2 验证现在是：
+
+看papers.studyContext / theoryBackbone / statedGaps 是否被填。
+
+我建议改成：
+
+不仅要有内容，还要有原文依据/置信度/不可判断时为空。
+
+尤其statedGaps，不能为了填而填。
+
+验收标准建议：
+
+studyContext：允许null，不允许乱猜
+theoryBackbone：必须有evidenceText 或confidence
+statedGaps：必须是原文或接近原文，不允许泛泛总结
+1.4 聚合算法 + 分簇 + 自检
+判断：基本通过
+你们做了：
+
+aggregateLandscape
+aggregateTheoryClusters
+rebuildLandscape
+事务 DELETE + INSERT
+landscapeVersion 更新
+sentinel paper 过滤
+scheduleLandscapeRebuild 去抖
+39/39 自检全绿
+这个是可以接受的。
+
+关键修复 1：totalOccurrences 按 paper 去重
+这个必须做，你们已经修了。
+
+否则一篇论文多个hypothesis 会让系统误以为“很多文献支持”。
+
+正确语义应该是：
+
+totalOccurrences = 支持该关系的不同论文数
+而不是hypothesis 数。
+
+关键修复2：sign 投票按论文计票
+也正确。
+
+否则单篇论文重复报告多次正向，会压过另一篇负向论文，导致signConflict 检测失真。
+
+关键修复3：保留viaVariable / moderated path
+非常重要。
+
+Phase 2 要判断：
+
+机制创新：插入了什么中介
+边界创新：哪个变量调节了哪条X→Y
+如果没有viaVariable和(X,Y)，后面boundary / mechanism 判断会失真。
+
+这点你们修对了。
+
+关于“跨实例并发安全先跳过”
+我接受，但要记录为技术债
+你说当前单实例 autoscale，所以不加 advisory lock。
+
+我认为可以接受，暂时不阻塞 Phase 1。
+
+但要注意：如果未来部署变成多实例，DELETE + INSERT rebuild 可能出现并发覆盖。
+
+建议记录：
+
+TODO：当部署变为多实例时，在 rebuildLandscape 周围添加 pg_advisory_xact_lock(sessionId)。
+现在不做没问题。
+
+我建议 D2 / D3 增加的验收项
+D2：单篇论文重新提取
+不要只看字段是否存在，建议看 8 项：
+
+papers.studyContext 有合理值；
+papers.theoryBackbone 不是乱猜；
+papers.statedGaps 若无明确 gap，可以为空；
+paper_hypotheses 仍正常写入；
+construct_relationships 有对应行；
+supportingPapers 里包含该 paperId；
+supportingEvidence 里保留 viaVariable；
+如果是调节关系，保留被调节路径信息。
+D3：十几篇论文批量提取
+建议看：
+
+rebuild 没有每篇触发一次；
+relationshipCount 合理；
+totalOccurrences 不大于支持论文数；
+signConflict 至少能被构造案例触发；
+theoryClusters 不全都堆到一个 cluster；
+sentinel manual paper 没被算进去；
+landscapeVersion 确实 bump；
+删除论文后 landscape 能更新。
+我对“39/39 自检全绿”的判断
+这是好信号，但不能替代 D2/D3。
+
+因为自检多半验证纯函数和构造数据，而 D2/D3 验证真实链路：
+
+AI提取 → 数据库写入 → 计划重建 → 聚合 → sessions.landscapeMeta
+Phase 1 最容易出问题的不是纯算法，而是：
+
+AI 返回字段形状不稳定；
+JSON 解析兼容；
+DB JSON 字段默认值；
+fire-and-forget rebuild 失败但用户无感；
+批量提取触发次数过多；
+stale landscape 没提示。
+是否建议现在进入 Phase 2？
+我的建议：D2/D3 过了再进
+不要直接进 Phase 2。
+
+原因：
+
+Phase 2 的 noveltyScore、innovationTypes、edgeNoveltyTags 都依赖 Phase 1 数据。如果 Phase 1 landscape 有一点偏，Phase 2 会把偏差放大到模型卡和硬拒逻辑里。
+
+所以顺序应该是：
+
+Phase 1 代码完成
+→ D2 单篇真实验证
+→ D3 多篇 session 验证
+→ 抽查 3-5 行 construct_relationships
+→ 再进入 Phase 2
+我是否建议你现在让系统跑 D3？
+如果你有现成 session，我建议跑一次，但不要只跑脚本，要输出一份摘要：
+
+sessionId：
+纸张数量：
+实际纸张数量：
+假设计数：
+relationshipRowCount：
+十大关系：
+signConflictCount：
+理论聚类计数：
+景观版本：
+重建次数：
+示例行：
+这样你能判断 landscape 是否“像论文领域地图”，而不只是“表里有数据”。
+
+最终判断
+Phase 1：有条件通过
+我认可你们这次 Phase 1 的实现方向，尤其是：
+
+共享 canonicalize；
+ConstructRelationship 聚合；
+按论文去重 totalOccurrences；
+保留 mediation/moderation 结构信息；
+去抖 rebuild；
+自检脚本。
+但进入 Phase 2 前必须确认
+D2 单篇真实提取质量；
+D3 多篇 session 聚合质量；
+studyContext / theoryBackbone / statedGaps 不是为了填而填；
+construct_relationships 的 totalOccurrences 是论文数，不是假设数；
+mediation / moderation 信息在 DB 里真的能被 Phase 2 用。
+一句话：可以继续，但先跑 D2/D3；这一步如果数据质量不过，Phase 2 的创新评分会变成“漂亮但不可信”

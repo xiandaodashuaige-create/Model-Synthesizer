@@ -49,6 +49,32 @@ function check(name: string, pass: boolean, detail?: string): void {
     e.contextQualifier === null && e.canonicalName.length > 0,
     JSON.stringify(e));
 
+  // Chinese / mixed-script regression — the literature in this app is heavily
+  // Chinese; the qualifier-split heuristic is English-only by design (no
+  // Chinese prepositions), so these MUST stay one undivided construct.
+  for (const phrase of [
+    "AI 主播信任",
+    "对 AI 主播的信任",
+    "消费者信任",
+    "感知拟人化",
+    "AI 主播感知拟人化",
+    "对人工智能主播的信任",
+    "消费者冲动购买意愿",
+    "心流体验",
+    "社会临场感",
+  ]) {
+    const r = canonicalize(phrase);
+    check(`Chinese "${phrase}" stays as one construct (no spurious split)`,
+      r.contextQualifier === null && r.canonicalName.length > 0,
+      JSON.stringify(r));
+  }
+
+  // Lock-step: same Chinese name with different casing/spacing on the AI tag
+  // must collapse to one canonicalName so cross-paper aggregation works.
+  check("'AI 主播信任' and 'ai主播信任' collapse to the same canonical",
+    canonicalize("AI 主播信任").canonicalName === canonicalize("ai主播信任").canonicalName,
+    `${canonicalize("AI 主播信任").canonicalName} vs ${canonicalize("ai主播信任").canonicalName}`);
+
   // Compound "X of Y" constructs that must NOT split (regression guard from
   // the Phase 1 architect review).
   for (const [phrase, expectedCanonical] of [

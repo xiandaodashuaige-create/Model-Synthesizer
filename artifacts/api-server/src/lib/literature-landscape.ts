@@ -334,6 +334,16 @@ export async function rebuildLandscape(sessionId: number): Promise<{
   return { rowsWritten: stampedRows.length, version: nextVersion };
 }
 
+// TECH DEBT (acknowledged Phase 1 review): cross-instance concurrency. Today
+// rebuildLandscape's "DELETE then INSERT" pair is safe because Replit autoscale
+// runs a single instance per artifact and the in-process debouncer below
+// guarantees at-most-one rebuild per sessionId at any moment. If we ever scale
+// to multiple instances, two concurrent rebuilds for the same session can
+// race: one instance deletes, the other inserts on top, and the first's
+// insert leaves a half-overlapping landscape. When that day comes, wrap the
+// transaction in `pg_advisory_xact_lock(sessionId)` so each rebuild serializes
+// at the database level. Not blocking Phase 1.
+
 // In-memory debounce: at most one rebuild per session in-flight at a time.
 // If a rebuild is requested while one is running, we mark the session as
 // "rebuild-again-after-this-finishes" and re-trigger when the in-flight one

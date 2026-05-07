@@ -6,6 +6,7 @@
   "scripts": {
     "hello": "tsx ./src/hello.ts",
     "selftest:phase-1": "tsx ./src/selftest-phase-1.ts",
+    "d3-probe": "tsx ./src/d3-probe.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
@@ -14,6 +15,7 @@
   },
   "dependencies": {
     "@workspace/canonicalize": "workspace:*",
-    "@workspace/db": "workspace:*"
+    "@workspace/db": "workspace:*",
+    "drizzle-orm": "catalog:"
   }
 }

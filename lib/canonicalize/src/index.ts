@@ -143,11 +143,24 @@ function detectQualifier(normalized: string): { core: string; qualifier: string 
   return { core, qualifier };
 }
 
+// Chinese-script polish, applied ONLY inside the 3-layer canonicalize() —
+// not in legacy normalizeName(), so existing canonicalConstructId values and
+// v2 focus-pick localStorage keys keep working without a migration. Strips
+// whitespace at ASCII↔CJK boundaries so "AI 主播信任" and "ai主播信任"
+// produce the same canonicalName for cross-paper aggregation. Without this,
+// every Chinese paper that writes "AI 主播" with a space would fragment into
+// its own bucket relative to papers that write "AI主播" without one.
+function stripBoundarySpaces(s: string): string {
+  return s
+    .replace(/([a-z0-9])\s+([\u3400-\u9fff])/g, "$1$2")
+    .replace(/([\u3400-\u9fff])\s+([a-z0-9])/g, "$1$2");
+}
+
 // 3-layer canonicalize: returns the structured object used by the literature
 // landscape pipeline (Phase 1+) for aggregation across papers.
 export function canonicalize(rawName: string): CanonicalName {
   const trimmed = (rawName ?? "").toString();
-  const normalized = normalizeName(trimmed);
+  const normalized = stripBoundarySpaces(normalizeName(trimmed));
   const { core, qualifier } = detectQualifier(normalized);
   return {
     rawName: trimmed,
