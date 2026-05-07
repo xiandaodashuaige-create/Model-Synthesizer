@@ -1026,10 +1026,18 @@ export default function LiveModelPage({ params }: { params?: { id: string } }) {
               // Compute filtered list inline so the empty-state ("no match")
               // sees the same source-of-truth filter the rendered list uses.
               const q = poolQuery.trim().toLowerCase();
+              // Match against the variable name only (and the type token, so
+               // typing "moderator" still narrows by type). The previous
+               // implementation also searched the full definition paragraph,
+               // which produced wildly irrelevant hits — e.g. "im" matched the
+               // word "image" buried inside the definition of "perceived
+               // value". Definitions are long prose; substring search across
+               // them is too noisy for a quick picker.
               const filtered = q
                 ? variables.filter((v) => {
-                    const hay = `${v.name} ${v.type ?? ""} ${(v as any).definition ?? ""}`.toLowerCase();
-                    return hay.includes(q);
+                    const name = (v.name ?? "").toLowerCase();
+                    const type = (v.type ?? "").toLowerCase();
+                    return name.includes(q) || type === q || type.startsWith(q);
                   })
                 : variables;
               return (
