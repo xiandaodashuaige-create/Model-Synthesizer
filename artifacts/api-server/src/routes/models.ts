@@ -1414,6 +1414,7 @@ HARD RULES (violations = invalid output):
 16. **Backbone instantiation (must match what the source papers actually use)**: the chosen \`backbone\` value MUST come from the BACKBONES ALREADY EVIDENCED block above whenever that block is non-empty — do not invent a framework the literature here doesn't support. The rationale's [BACKBONE: ...] header must match the \`backbone\` field. If the model's structure visibly violates the backbone's shape (e.g. claims SOR but has no organism/cognitive layer between the stimulus IV and the behavior DV; claims TAM but has no perceived-usefulness/ease-of-use mediator), REJECTED — pick the backbone whose canonical shape your nodes actually instantiate. Different models in the same batch SHOULD prefer different evidenced backbones when more than one is available, so the user sees real theoretical variety (e.g. one SOR model + one TAM model) rather than three slight variations of the same framework.
 17. **NO FLOATING NODES + TITLE-GRAPH CONSISTENCY (CRITICAL — anti "片段化")**: every variable listed in \`nodes[]\` MUST be the \`fromVariableId\` OR \`toVariableId\` of AT LEAST ONE edge in \`edges[]\`. A node that is declared but never participates in any edge renders as a floating box on the canvas — this is the #1 user complaint and will be HARD-REJECTED (no rescue). Before you finalize, walk every node and ask "which edge wires this in?" — if the answer is "none", DELETE the node from \`nodes[]\` (do not silently leave it in). Conversely: every construct you mention by NAME inside the model's \`name\` or \`description\` (e.g. "consumer engagement as mediator", "social overload as moderator") MUST appear as an actual node in \`nodes[]\` AND be wired into the spine via \`edges[]\`. Promising "X mediates Y → Z" in the description and not putting X in the graph is a title-vs-graph LIE and will be REJECTED. If you can't wire a construct in (because the source papers don't support that edge), drop the claim from the description rather than leaving the node floating.
 18. **Tangential-paper exclusion (CRITICAL when DOMAIN LOCK applies)**: the source-paper pool may contain papers whose context is tangential to the user's topic (e.g. a metaverse-tourism paper in an AI-broadcaster project). NEVER use such a tangential paper as the source of a moderator, mediator, or any structural node. Tangential-paper variables drag the model into the wrong domain and create the "我的主题是 AI 主播但模型里出现了 tourist involvement" failure mode. Heuristic for "tangential": the paper's title/abstract names a stimulus context (tourism, gaming, healthcare, education, etc.) that is DIFFERENT from the topic's domain. If a tangential paper's abstract DOES contain a construct that's also independently evidenced in an in-domain paper, prefer to cite the in-domain paper instead. When in doubt, fewer in-domain nodes beat more cross-domain nodes — Hard Rule #4's ≥3-paper minimum is OVERRIDDEN by this rule when honoring it would force a tangential paper in.
+19. **CHAIN INTEGRITY — IV must reach DV; every mediator must transmit (CRITICAL — anti "断链中介")**: a research model's whole point is to explain HOW the IV produces the DV. Therefore: (a) EVERY node typed \`independent\` (or \`antecedent\`) MUST have a directed path through non-moderator edges that ENDS at a node typed \`dependent\` (or \`outcome\`). An IV that points to a mediator which then points nowhere is a DEAD-END IV — REJECTED, no rescue. (b) EVERY node typed \`mediator\` MUST have AT LEAST ONE incoming non-moderator edge AND AT LEAST ONE outgoing non-moderator edge. A "mediator" with only incoming edges is not actually mediating — it's a terminal sink that LOOKS like a DV; a "mediator" with only outgoing edges is just an IV in disguise. The exact failure to avoid: IV1 → M, IV2 → M, M → (nothing), DV exists but is only reached by an unrelated parallel path. Before you finalize, walk every mediator and verify "what does this mediator FORWARD to? does the chain ultimately terminate at a DV?" — if not, EITHER add the missing M → DV edge (with a real verbatim citation, not invented), OR change the node's \`type\` to whatever role it actually plays (often \`dependent\` if it's a terminal cognitive outcome), OR remove it from the model entirely. The server will reject any model whose IVs don't reach DVs and any mediator that lacks bidirectional flow. NOTE: this rule subsumes Hard Rule #17 for mediators (#17 only checks "any incident edge"; #19 checks the directional plumbing).
 
 OUTPUT FORMAT — return ONLY a JSON object (NOT a bare array) whose single top-level key is "models" and whose value is an array of model objects. This is REQUIRED by the API's JSON-mode constraint. Do NOT wrap in markdown.
 {
@@ -2253,7 +2254,7 @@ OUTPUT FORMAT — return a JSON object with key "models" containing an array of 
         if (!adj.has(e.fromVariableId)) adj.set(e.fromVariableId, []);
         adj.get(e.fromVariableId)!.push(e.toVariableId);
       }
-      const dvIds = new Set(m.nodes.filter((n) => n.type === "dependent").map((n) => n.variableId));
+      const dvIds = new Set(m.nodes.filter((n) => n.type === "dependent" || n.type === "outcome").map((n) => n.variableId));
       // longestToDV(start) = longest # of nodes on any path from `start` ending at a DV; -Infinity if none.
       function longestToDV(start: number, visited: Set<number>): number {
         if (visited.has(start)) return -Infinity; // cycle guard
@@ -2268,15 +2269,62 @@ OUTPUT FORMAT — return a JSON object with key "models" containing an array of 
         }
         return best;
       }
-      const ivIds = m.nodes.filter((n) => n.type === "independent").map((n) => n.variableId);
+      const ivIds = m.nodes.filter((n) => n.type === "independent" || n.type === "antecedent").map((n) => n.variableId);
       let maxChain = 0;
+      // RULE 19a: IV→DV reachability — every IV MUST have a directed path
+      // that terminates at a DV node. Pre-fix `longestToDV()` was computed
+      // but only the chain-LENGTH was checked: a stranded IV (path returns
+      // -Infinity, meaning no path exists at all) was silently ignored,
+      // letting through models like the user-reported "perceived value
+      // mediator with 2 incoming edges and 0 outgoing" structure where
+      // both IVs technically had outgoing edges to a mediator but the
+      // mediator never reached the DV. Now we hard-reject any IV whose
+      // path to a DV doesn't exist. No SOFT_FAIL — this is the spine
+      // breaking; salvage would ship a non-explanatory model.
+      const strandedIvNames: string[] = [];
       for (const iv of ivIds) {
         const r = longestToDV(iv, new Set());
-        if (r !== -Infinity) maxChain = Math.max(maxChain, r);
+        if (r === -Infinity) {
+          const v = varById.get(iv);
+          strandedIvNames.push(v?.name ?? `id:${iv}`);
+        } else {
+          maxChain = Math.max(maxChain, r);
+        }
+      }
+      if (strandedIvNames.length > 0) {
+        return { ok: false, reason: `IV→DV reachability broken — these IVs have no directed path to any DV: ${strandedIvNames.join(", ")} (the chain probably terminates at a mediator that has no outgoing edge to the DV)` };
       }
       if (maxChain > 4) {
         // 4 = IV + up to 2 mediators + DV (3 hops). Reject if any IV→DV path is > 3 hops.
         return { ok: false, reason: `mediator chain too long (${maxChain - 1} hops on an IV→DV path, max allowed = 3)` };
+      }
+      // RULE 19b: mediator-flow integrity — every mediator node MUST have
+      // ≥1 INCOMING non-moderator edge AND ≥1 OUTGOING non-moderator edge.
+      // Without bidirectional flow the node is not actually mediating: an
+      // incoming-only "mediator" is functionally a terminal sink (often
+      // mis-typed; should be DV); an outgoing-only "mediator" is an IV in
+      // disguise. Pre-fix the user-reported model shipped exactly this
+      // shape: `perceived value` had 2 incoming edges from stimulus IVs
+      // and 0 outgoing edges, so it could never carry causality to the DV.
+      const incomingNonMod = new Map<number, number>();
+      const outgoingNonMod = new Map<number, number>();
+      for (const e of m.edges) {
+        if (e.relationship === "moderates") continue;
+        outgoingNonMod.set(e.fromVariableId, (outgoingNonMod.get(e.fromVariableId) ?? 0) + 1);
+        incomingNonMod.set(e.toVariableId, (incomingNonMod.get(e.toVariableId) ?? 0) + 1);
+      }
+      const brokenMediators: string[] = [];
+      for (const n of m.nodes) {
+        if (n.type !== "mediator") continue;
+        const ins = incomingNonMod.get(n.variableId) ?? 0;
+        const outs = outgoingNonMod.get(n.variableId) ?? 0;
+        if (ins === 0 || outs === 0) {
+          const lacking = ins === 0 ? (outs === 0 ? "no incoming AND no outgoing" : "no incoming") : "no outgoing";
+          brokenMediators.push(`${n.variableName ?? varById.get(n.variableId)?.name ?? `id:${n.variableId}`} (${lacking})`);
+        }
+      }
+      if (brokenMediators.length > 0) {
+        return { ok: false, reason: `mediator-flow broken — these mediators lack bidirectional non-moderator edges: ${brokenMediators.join("; ")} (a mediator must transmit causality from upstream to downstream; if it can't, change its type or remove it)` };
       }
       return { ok: true };
     }
@@ -2324,7 +2372,7 @@ OUTPUT FORMAT — return a JSON object with key "models" containing an array of 
     // we never lower the bar, we just stop punishing the whole model for
     // one cleanly-removable defect.
     const ALL_OPS = ["EXTEND", "INSERT_MODERATOR", "PARALLEL_MEDIATORS", "SWAP_MEDIATOR", "THEORY_GRAFT"] as const;
-    const repairStats = { droppedNodes: 0, droppedEdges: 0, droppedModeratorEdges: 0, droppedUngroundedEdges: 0, filledSecondaryOp: 0, rescuedFocusOrphans: 0 };
+    const repairStats = { droppedNodes: 0, droppedEdges: 0, droppedModeratorEdges: 0, droppedUngroundedEdges: 0, filledSecondaryOp: 0, rescuedFocusOrphans: 0, rescuedDanglingMediators: 0 };
     for (const m of generated) {
       if (!m || typeof m !== "object") continue;
       if (Array.isArray(m.nodes)) {
@@ -2463,6 +2511,79 @@ OUTPUT FORMAT — return a JSON object with key "models" containing an array of 
           repairStats.rescuedFocusOrphans++;
         }
       }
+      // ── DANGLING-MEDIATOR OUTGOING RESCUE ──────────────────────────────
+      // Companion to the focus-pick orphan rescue above. When a mediator
+      // node has incoming edges but NO outgoing non-moderator edge, the
+      // chain dead-ends at the mediator and the IVs upstream of it can
+      // never reach the DV (validate's IV→DV reachability check would
+      // hard-reject the model). Try to rescue by cloning the strongest
+      // outgoing non-moderator edge from another node in the model that
+      // already terminates at a DV — using the dangling mediator as the
+      // new source. Same evidence-cloning trick as focus rescue: the
+      // donor's verbatim text still passes isEvidenceGrounded() because
+      // grounding checks text vs paper corpus, not vs variable names.
+      // Prefer donors that ARE mediators (so the cloned edge is M → DV,
+      // matching what we wish the AI had emitted); fall back to any
+      // non-moderator edge that ends at a DV node.
+      if (Array.isArray(m.nodes) && Array.isArray(m.edges)) {
+        const incomingByNode = new Map<number, number>();
+        const outgoingByNode = new Map<number, number>();
+        for (const e of m.edges) {
+          if (e.relationship === "moderates") continue;
+          outgoingByNode.set(e.fromVariableId, (outgoingByNode.get(e.fromVariableId) ?? 0) + 1);
+          incomingByNode.set(e.toVariableId, (incomingByNode.get(e.toVariableId) ?? 0) + 1);
+        }
+        const dvIdSet = new Set(m.nodes.filter((n) => n.type === "dependent" || n.type === "outcome").map((n) => n.variableId));
+        for (const med of m.nodes) {
+          if (med.type !== "mediator") continue;
+          const ins = incomingByNode.get(med.variableId) ?? 0;
+          const outs = outgoingByNode.get(med.variableId) ?? 0;
+          // Only rescue mediators that are dangling on the OUTPUT side
+          // AND have at least one incoming edge (so the rescue produces
+          // a complete IV → M → DV chain). Mediators with no incoming
+          // edges are a different bug (they look like IVs with the wrong
+          // type tag) and need the AI to fix the typing — we hard-reject
+          // those so the user gets a meaningful regeneration.
+          if (ins === 0 || outs > 0) continue;
+          if (dvIdSet.size === 0) continue;
+          // Prefer a donor edge whose source is another mediator (ideal
+          // semantic: "another mediator points to a DV, this one should
+          // too"); fall back to any non-moderator edge terminating at a
+          // DV node.
+          const mediatorIdSet = new Set(m.nodes.filter((n) => n.type === "mediator").map((n) => n.variableId));
+          let donorEdge: ModelEdge | null = null;
+          for (const e of m.edges) {
+            if (e.relationship === "moderates") continue;
+            if (!dvIdSet.has(e.toVariableId)) continue;
+            if (e.fromVariableId === med.variableId) continue;
+            if (mediatorIdSet.has(e.fromVariableId)) { donorEdge = e; break; }
+          }
+          if (!donorEdge) {
+            for (const e of m.edges) {
+              if (e.relationship === "moderates") continue;
+              if (!dvIdSet.has(e.toVariableId)) continue;
+              if (e.fromVariableId === med.variableId) continue;
+              donorEdge = e; break;
+            }
+          }
+          if (!donorEdge) continue;
+          // Don't double-add.
+          if (m.edges.some((e) => e.fromVariableId === med.variableId && e.toVariableId === donorEdge!.toVariableId && e.relationship !== "moderates")) continue;
+          const medName = med.variableName ?? varById.get(med.variableId)?.name ?? donorEdge.fromVariableName;
+          const cloned: ModelEdge = {
+            ...donorEdge,
+            fromVariableId: med.variableId,
+            fromVariableName: medName,
+            // Cited hypothesis named the donor IV/mediator, not the
+            // dangling mediator. Clear so the UI doesn't mis-attribute.
+            evidenceHypothesisId: null,
+          };
+          m.edges.push(cloned);
+          outgoingByNode.set(med.variableId, 1);
+          incomingByNode.set(cloned.toVariableId, (incomingByNode.get(cloned.toVariableId) ?? 0) + 1);
+          repairStats.rescuedDanglingMediators++;
+        }
+      }
       // Back-fill missing/invalid secondaryOperator (must differ from primary).
       if (m.operator && ALLOWED_OPERATORS.has(m.operator)) {
         if (!m.secondaryOperator || !ALLOWED_OPERATORS.has(m.secondaryOperator) || m.secondaryOperator === m.operator) {
@@ -2474,7 +2595,7 @@ OUTPUT FORMAT — return a JSON object with key "models" containing an array of 
         }
       }
     }
-    if (repairStats.droppedNodes || repairStats.droppedEdges || repairStats.droppedModeratorEdges || repairStats.filledSecondaryOp || repairStats.rescuedFocusOrphans) {
+    if (repairStats.droppedNodes || repairStats.droppedEdges || repairStats.droppedModeratorEdges || repairStats.filledSecondaryOp || repairStats.rescuedFocusOrphans || repairStats.rescuedDanglingMediators) {
       req.log.info({ sessionId, ...repairStats }, "Auto-repair pass cleaned generated models before validation");
     }
 
