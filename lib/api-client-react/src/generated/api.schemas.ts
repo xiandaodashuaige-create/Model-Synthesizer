@@ -722,6 +722,84 @@ export interface LandscapeCoverage {
   extractedWithInnovationFieldsCount: number;
 }
 
+export type LandscapeRelationshipRowRelationshipType =
+  (typeof LandscapeRelationshipRowRelationshipType)[keyof typeof LandscapeRelationshipRowRelationshipType];
+
+export const LandscapeRelationshipRowRelationshipType = {
+  direct: "direct",
+  mediation: "mediation",
+  moderation: "moderation",
+} as const;
+
+export type LandscapeRelationshipRowSign =
+  (typeof LandscapeRelationshipRowSign)[keyof typeof LandscapeRelationshipRowSign];
+
+export const LandscapeRelationshipRowSign = {
+  positive: "positive",
+  negative: "negative",
+  mixed: "mixed",
+  none: "none",
+} as const;
+
+/**
+ * One aggregated `constructRelationships` row, shaped for the
+Landscape page table. Mirrors the DB row but drops verbose
+per-paper evidence (the page only renders aggregate counts and
+first/last year).
+
+ */
+export interface LandscapeRelationshipRow {
+  id: number;
+  canonicalFrom: string;
+  canonicalTo: string;
+  contextQualifierFrom?: string | null;
+  contextQualifierTo?: string | null;
+  relationshipType: LandscapeRelationshipRowRelationshipType;
+  sign: LandscapeRelationshipRowSign;
+  signConflict: boolean;
+  /** @minimum 0 */
+  totalOccurrences: number;
+  domainsCovered: string[];
+  earliestYear?: number | null;
+  latestYear?: number | null;
+  /**
+   * @minimum 0
+   * @maximum 100
+   */
+  noveltyPotentialScore: number;
+}
+
+/**
+ * One entry from `landscapeMeta.theoryClusters`.
+ */
+export interface TheoryClusterRow {
+  id: string;
+  label: string;
+  theoryIds: string[];
+  /** @minimum 0 */
+  paperCount: number;
+}
+
+/**
+ * Read model returned by `GET /sessions/{id}/landscape`. Combines the
+coverage banner inputs with the full relationship table and the
+theory-cluster + evidenced-backbone summaries. `landscapeVersion`
+is null until the first `rebuildLandscape()` runs for the session.
+
+ */
+export interface SessionLandscape {
+  landscapeVersion: number | null;
+  /** ISO timestamp of the most recent rebuild. */
+  lastRebuildAt: string | null;
+  coverage: LandscapeCoverage;
+  relationships: LandscapeRelationshipRow[];
+  theoryClusters: TheoryClusterRow[];
+  /** Distinct theory names mentioned by at least one in-scope paper's
+`theoryBackbone`. Lower-cased, de-duplicated, sorted.
+ */
+  evidencedBackbones: string[];
+}
+
 export interface LiveModelNodeOut {
   id: number;
   variableId: number;

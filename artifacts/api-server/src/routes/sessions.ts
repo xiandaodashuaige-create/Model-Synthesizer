@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { eq, sql, or, isNull, and } from "drizzle-orm";
-import { db, sessionsTable, papersTable, variablesTable, researchModelsTable } from "@workspace/db";
+import { db, sessionsTable, papersTable, variablesTable, researchModelsTable, constructRelationshipsTable } from "@workspace/db";
 import {
   CreateSessionBody,
   GetSessionParams,
@@ -191,6 +191,116 @@ router.get("/sessions/:id/summary", async (req, res): Promise<void> => {
     moderatorVarCount: moderatorCount?.count ?? 0,
     dependentVarCount: depCount?.count ?? 0,
     selectedModelId: selectedModel[0]?.id ?? null,
+  });
+});
+
+// Phase 2 Innovation Layer — read the session's literature landscape
+// snapshot. Pure read; does NOT trigger a rebuild. Auth-gated by the global
+// `loadAuthorizedSession` middleware mounted at `/api/sessions/:id`.
+router.get("/sessions/:id/landscape", async (_req, res): Promise<void> => {
+  // loadAuthorizedSession (mounted globally at /api/sessions/:id) has already
+  // validated the id, enforced ownership, and stashed the row + numeric id
+  // into res.locals. Reuse both instead of re-parsing/re-fetching so we have
+  // a single source of truth for "which session am I serving".
+  const session = (res.locals["session"] ?? null) as typeof sessionsTable.$inferSelect | null;
+  const sessionId = (res.locals["sessionId"] ?? null) as number | null;
+  if (!session || !sessionId) {
+    res.status(404).json({ error: "session not found" });
+    return;
+  }
+
+  const lm = (session.landscapeMeta ?? {}) as {
+    landscapeVersion?: number;
+    lastRebuildAt?: string;
+    landscapeCoverage?: {
+      coverageRate?: number;
+      totalEligiblePaperCount?: number;
+      extractedWithInnovationFieldsCount?: number;
+    };
+    theoryClusters?: Array<{ id?: string; label?: string; theoryIds?: string[]; paperCount?: number }>;
+  };
+
+  // Read the CR table + theoryBackbone evidence in parallel; both are
+  // session-scoped indexed scans.
+  const [crRows, tbRows] = await Promise.all([
+    db.select().from(constructRelationshipsTable).where(eq(constructRelationshipsTable.sessionId, sessionId)),
+    db
+      .select({ theoryBackbone: papersTable.theoryBackbone })
+      .from(papersTable)
+      .where(
+        and(
+          eq(papersTable.sessionId, sessionId),
+          sql`${papersTable.externalId} NOT LIKE 'manual:%'`,
+          sql`${papersTable.tangential} IS NOT TRUE`,
+        ),
+      ),
+  ]);
+
+  // Slim the CR rows: drop verbose per-paper evidence (supportingPapers,
+  // landscapeVersion stamp, timestamps) — the page only renders aggregates.
+  const relationships = crRows
+    .map((r) => ({
+      id: r.id,
+      canonicalFrom: r.canonicalFrom,
+      canonicalTo: r.canonicalTo,
+      contextQualifierFrom: r.contextQualifierFrom,
+      contextQualifierTo: r.contextQualifierTo,
+      relationshipType: r.relationshipType,
+      sign: r.sign,
+      signConflict: r.signConflict,
+      totalOccurrences: r.totalOccurrences,
+      domainsCovered: Array.isArray(r.domainsCovered) ? (r.domainsCovered as string[]) : [],
+      earliestYear: r.earliestYear,
+      latestYear: r.latestYear,
+      noveltyPotentialScore: r.noveltyPotentialScore,
+    }))
+    // Most-evidenced first; tie-break on canonical names for stable ordering.
+    .sort(
+      (a, b) =>
+        b.totalOccurrences - a.totalOccurrences ||
+        a.canonicalFrom.localeCompare(b.canonicalFrom) ||
+        a.canonicalTo.localeCompare(b.canonicalTo),
+    );
+
+  const evidencedSet = new Set<string>();
+  for (const row of tbRows) {
+    const tb = row.theoryBackbone as Array<{ name?: unknown }> | null;
+    if (Array.isArray(tb)) {
+      for (const t of tb) {
+        if (t && typeof t.name === "string" && t.name.trim().length > 0) {
+          evidencedSet.add(t.name.trim().toLowerCase());
+        }
+      }
+    }
+  }
+  const evidencedBackbones = Array.from(evidencedSet).sort();
+
+  const theoryClusters = Array.isArray(lm.theoryClusters)
+    ? lm.theoryClusters
+        .map((c) => ({
+          id: typeof c.id === "string" ? c.id : "",
+          label: typeof c.label === "string" ? c.label : (typeof c.id === "string" ? c.id : ""),
+          theoryIds: Array.isArray(c.theoryIds) ? c.theoryIds.filter((s): s is string => typeof s === "string") : [],
+          paperCount: typeof c.paperCount === "number" ? c.paperCount : 0,
+        }))
+        .filter((c) => c.id.length > 0)
+    : [];
+
+  const cov = lm.landscapeCoverage ?? {};
+  const coverage = {
+    coverageRate: typeof cov.coverageRate === "number" ? cov.coverageRate : 0,
+    totalEligiblePaperCount: typeof cov.totalEligiblePaperCount === "number" ? cov.totalEligiblePaperCount : 0,
+    extractedWithInnovationFieldsCount:
+      typeof cov.extractedWithInnovationFieldsCount === "number" ? cov.extractedWithInnovationFieldsCount : 0,
+  };
+
+  res.json({
+    landscapeVersion: typeof lm.landscapeVersion === "number" ? lm.landscapeVersion : null,
+    lastRebuildAt: typeof lm.lastRebuildAt === "string" ? lm.lastRebuildAt : null,
+    coverage,
+    relationships,
+    theoryClusters,
+    evidencedBackbones,
   });
 });
 

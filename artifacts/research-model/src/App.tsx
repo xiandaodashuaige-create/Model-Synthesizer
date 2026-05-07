@@ -16,6 +16,7 @@ import SessionModels from "./pages/sessions/models";
 import SessionModelsCompare from "./pages/sessions/models-compare";
 import SessionModelDetail from "./pages/sessions/model-detail";
 import SessionLiveModel from "./pages/sessions/live-model";
+import SessionLandscape from "./pages/sessions/landscape";
 import { Layout } from "./components/layout";
 import { useT } from "@/lib/i18n";
 
@@ -36,6 +37,7 @@ function Router() {
         <Route path="/sessions/:id/models/compare" component={(props) => <SessionLayout><SessionModelsCompare params={props.params} /></SessionLayout>} />
         <Route path="/sessions/:id/models/:modelId" component={(props) => <SessionLayout><SessionModelDetail params={props.params} /></SessionLayout>} />
         <Route path="/sessions/:id/live-model" component={(props) => <SessionLayout><SessionLiveModel params={props.params} /></SessionLayout>} />
+        <Route path="/sessions/:id/landscape" component={(props) => <SessionLayout><SessionLandscape params={props.params} /></SessionLayout>} />
         <Route component={NotFound} />
       </Switch>
     </Layout>

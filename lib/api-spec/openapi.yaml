@@ -1333,6 +1333,43 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /sessions/{id}/landscape:
+    get:
+      operationId: getSessionLandscape
+      tags: [models]
+      summary: Read the per-session literature landscape (Phase 2 Innovation Layer)
+      description: |
+        Returns the snapshot the Innovation Layer reasons over: coverage,
+        every aggregated `constructRelationships` row, the AI-distilled
+        theory clusters, and the set of evidenced theory backbones. Pure
+        read — does NOT trigger a rebuild. Auth-gated by
+        `loadAuthorizedSession`. The Landscape page calls this on mount.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Landscape snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionLandscape"
+        "400":
+          description: Invalid session id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Session not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /sessions/{id}/learning-stats:
     get:
       operationId: getSessionLearningStats
@@ -2560,6 +2597,119 @@ components:
           type: integer
           minimum: 0
       required: [coverageRate, totalEligiblePaperCount, extractedWithInnovationFieldsCount]
+
+    LandscapeRelationshipRow:
+      type: object
+      description: |
+        One aggregated `constructRelationships` row, shaped for the
+        Landscape page table. Mirrors the DB row but drops verbose
+        per-paper evidence (the page only renders aggregate counts and
+        first/last year).
+      properties:
+        id:
+          type: integer
+        canonicalFrom:
+          type: string
+        canonicalTo:
+          type: string
+        contextQualifierFrom:
+          type: string
+          nullable: true
+        contextQualifierTo:
+          type: string
+          nullable: true
+        relationshipType:
+          type: string
+          enum: [direct, mediation, moderation]
+        sign:
+          type: string
+          enum: [positive, negative, mixed, none]
+        signConflict:
+          type: boolean
+        totalOccurrences:
+          type: integer
+          minimum: 0
+        domainsCovered:
+          type: array
+          items:
+            type: string
+        earliestYear:
+          type: integer
+          nullable: true
+        latestYear:
+          type: integer
+          nullable: true
+        noveltyPotentialScore:
+          type: integer
+          minimum: 0
+          maximum: 100
+      required:
+        - id
+        - canonicalFrom
+        - canonicalTo
+        - relationshipType
+        - sign
+        - signConflict
+        - totalOccurrences
+        - domainsCovered
+        - noveltyPotentialScore
+
+    TheoryClusterRow:
+      type: object
+      description: One entry from `landscapeMeta.theoryClusters`.
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        theoryIds:
+          type: array
+          items:
+            type: string
+        paperCount:
+          type: integer
+          minimum: 0
+      required: [id, label, theoryIds, paperCount]
+
+    SessionLandscape:
+      type: object
+      description: |
+        Read model returned by `GET /sessions/{id}/landscape`. Combines the
+        coverage banner inputs with the full relationship table and the
+        theory-cluster + evidenced-backbone summaries. `landscapeVersion`
+        is null until the first `rebuildLandscape()` runs for the session.
+      properties:
+        landscapeVersion:
+          type: integer
+          nullable: true
+        lastRebuildAt:
+          type: string
+          nullable: true
+          description: ISO timestamp of the most recent rebuild.
+        coverage:
+          $ref: "#/components/schemas/LandscapeCoverage"
+        relationships:
+          type: array
+          items:
+            $ref: "#/components/schemas/LandscapeRelationshipRow"
+        theoryClusters:
+          type: array
+          items:
+            $ref: "#/components/schemas/TheoryClusterRow"
+        evidencedBackbones:
+          type: array
+          description: |
+            Distinct theory names mentioned by at least one in-scope paper's
+            `theoryBackbone`. Lower-cased, de-duplicated, sorted.
+          items:
+            type: string
+      required:
+        - landscapeVersion
+        - lastRebuildAt
+        - coverage
+        - relationships
+        - theoryClusters
+        - evidencedBackbones
 
     EdgeMatchedRelationship:
       type: object

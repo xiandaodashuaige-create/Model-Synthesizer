@@ -62,6 +62,7 @@ import type {
   SearchPapersBody,
   SearchSessionPapersFullTextParams,
   Session,
+  SessionLandscape,
   SessionSummary,
   UpdateLiveModelNodePositionBody,
   UpdateModelBody,
@@ -3516,6 +3517,99 @@ export const useRecomputeModelInnovation = <
 > => {
   return useMutation(getRecomputeModelInnovationMutationOptions(options));
 };
+
+/**
+ * Returns the snapshot the Innovation Layer reasons over: coverage,
+every aggregated `constructRelationships` row, the AI-distilled
+theory clusters, and the set of evidenced theory backbones. Pure
+read — does NOT trigger a rebuild. Auth-gated by
+`loadAuthorizedSession`. The Landscape page calls this on mount.
+
+ * @summary Read the per-session literature landscape (Phase 2 Innovation Layer)
+ */
+export const getGetSessionLandscapeUrl = (id: number) => {
+  return `/api/sessions/${id}/landscape`;
+};
+
+export const getSessionLandscape = async (
+  id: number,
+  options?: RequestInit,
+): Promise<SessionLandscape> => {
+  return customFetch<SessionLandscape>(getGetSessionLandscapeUrl(id), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetSessionLandscapeQueryKey = (id: number) => {
+  return [`/api/sessions/${id}/landscape`] as const;
+};
+
+export const getGetSessionLandscapeQueryOptions = <
+  TData = Awaited<ReturnType<typeof getSessionLandscape>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSessionLandscape>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetSessionLandscapeQueryKey(id);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getSessionLandscape>>
+  > = ({ signal }) => getSessionLandscape(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getSessionLandscape>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetSessionLandscapeQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getSessionLandscape>>
+>;
+export type GetSessionLandscapeQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Read the per-session literature landscape (Phase 2 Innovation Layer)
+ */
+
+export function useGetSessionLandscape<
+  TData = Awaited<ReturnType<typeof getSessionLandscape>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSessionLandscape>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetSessionLandscapeQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
 
 /**
  * @summary How many feedback rounds the AI has learned from for this session/global

@@ -57,6 +57,7 @@ export default function SessionLayout({ children }: { children: React.ReactNode 
     { name: t("ws.tab.variables" as any), href: `/sessions/${sessionId}/variables`, count: summary?.variableCount ?? 0 },
     { name: t("ws.tab.models" as any), href: `/sessions/${sessionId}/models`, count: summary?.modelCount ?? 0 },
     { name: t("ws.tab.live" as any), href: `/sessions/${sessionId}/live-model`, count: liveCount },
+    { name: t("ws.tab.landscape" as any), href: `/sessions/${sessionId}/landscape`, count: 0 },
   ];
 
   const hasSelectedModel = (summary?.modelCount ?? 0) > 0 && !!(summary as any)?.hasSelectedModel;

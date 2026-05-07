@@ -166,6 +166,14 @@ Every model edge gets exactly one tag from this enum. Tags are derived from `con
 | `boundary_extended` (renamed from moderated_extension) | edge is a moderator on an established (X, Y) pair, where this moderator has never been used on this specific (X, Y) | 80 | 新边界条件 | medium dashed, teal |
 | `contradicting` (two-tier — see below) | `signConflict = true` | 80 base / 95 if resolved | 文献矛盾 / 已解释矛盾 | thick dotted, gold |
 
+> **Threshold contract (single source of truth)**: the bracket boundaries
+> live in `bracketByOccurrences()` (`artifacts/api-server/src/lib/innovation-scoring.ts`):
+> `≥7 → saturated`, `≥3 → established`, `1–2 → underexplored`. The
+> Landscape page UI MUST use the same `≥3` cutoff when classifying a
+> relationship row as "established". Any change to these constants requires
+> updating both this section and the UI labels in `i18n.tsx`
+> (`landscape.bracket.*`, `landscape.relationships.help`).
+
 ### Why these scores
 
 - **`saturated = 10` is intentionally low** for innovation purposes, but UI must label it neutrally as "成熟依据" — saturated edges are *necessary* skeleton for any defensible model. They are not "bad", just not innovative.

@@ -1,0 +1,157 @@
+判断：切片 2 第 1 步可以通过，建议继续进入 Landscape 页面。
+
+这次做得比较关键的一点是：你没有停留在 edgeNoveltyTags: string[]，而是升级成结构化解释对象。这非常正确，直接解决了后面用户会问的核心问题：
+
+为什么这条边被判成 novel，而不是 boundary_extended？
+
+我认可的点
+1. EdgeNoveltyTag 结构化通过
+你现在每条边有：
+
+tag
+reason
+matchedRelationship
+score / 原有字段
+这比纯字符串强很多。
+
+尤其是这条解释：
+
+被调节的主路径仅在 2 篇文献中出现，未达到 3 篇 established 阈值，暂按 novel 处理；扩充文献后可能升级为边界扩展
+这就是用户需要看到的解释。
+
+这说明系统不是黑箱，而是在告诉用户：
+
+当前不是没有识别调节关系，而是文献池支持度不足。
+非常重要。
+
+2. matchedRelationship 设计通过
+CR 行快照包含：
+
+canonicalFrom
+canonicalTo
+relationshipType
+totalOccurrences
+signConflict
+domainsCovered
+这够前端展示第一版解释。
+
+后面如果要增强，可以再加：
+
+supportingPaperTitles
+supportingPaperIds
+earliestYear
+latestYear
+但当前不阻塞。
+
+3. OpenAPI 类型化通过
+新增：
+
+LandscapeCoverage
+EdgeMatchedRelationship
+EdgeNoveltyTag
+InnovationSubScores
+InnovationWarning
+InnovationMeta
+并把 ResearchModel.innovationMeta 从不透明 object 换成 $ref，这是正确的。
+
+这样前端切片 2/3 不需要大量 as any。
+
+4. recompute endpoint 鉴权通过
+POST /sessions/{id}/models/{modelId}/recompute-innovation
+这是正确路径。
+
+之前你们修过 IDOR，这次继续保持 session scoped，很好。
+
+5. session 9 真实验证通过
+结果很健康：
+
+3 条 underexplored 有 matched；
+2 条 novel matched=null；
+moderator 边虽然 novel，但 matched 有主路径快照；
+reason 是后端生成，不需要前端拼。
+这说明切片 2 第 1 步不仅 schema 正确，也在真实数据上有解释力。
+
+一个需要记录的点
+0 边模型 noveltyScore = null
+架构评审提到这个是低优，但前端必须兜底。
+
+UI 不要显示：
+
+NaN
+0
+应该显示：
+
+暂无可评分关系
+或：
+
+No scored edges
+并且 contributionScore 也要考虑是否能显示。
+
+关于 established 阈值从 7 到 3
+你之前说 boundary_extended 要 saturated ≥7，现在 reason 里变成：
+
+未达到 3 篇 established 阈值
+这个我反而更认可。
+
+在 49 篇的小型 landscape 里，3 篇作为 established 门槛更实用。
+建议 taxonomy 里同步说明：
+
+established threshold = max(3, dynamic threshold...)
+如果以后文献池大了，可以动态提高。
+
+是否进入 Landscape 页面？
+同意进入
+下一步做 Landscape 页面是正确的。建议页面第一版不要太复杂，先做三块：
+
+1. 顶部 Coverage Banner
+显示：
+
+当前创新分析覆盖 8/49 篇文献，覆盖率 16.3%，结果为初步分析。
+并提示：
+
+覆盖率低于 70% 时，系统只展示分析，不会用创新评分硬性拒绝模型。
+2. Relationship Landscape 表
+先用表格，不一定马上做热力图。
+
+字段建议：
+
+canonicalFrom
+canonicalTo
+relationshipType
+totalOccurrences
+signConflict
+domainsCovered
+innovation potential / underexplored status
+supporting papers count
+用户需要先看懂，不一定要炫酷。
+
+3. Theory Clusters / Backbones
+展示：
+
+cluster name
+papers count
+dominant constructs
+backbones
+因为理论整合创新依赖这个。
+
+Gap 页面可以放在 Landscape 后
+你现在顺序：
+
+Landscape 页面
+Gap 页面
+recompute 按钮
+我建议保持。
+
+但 Gap 页面第一版可以用后端已有 landscape + heuristic gaps，不一定马上上 AI gap report。先让用户看到：
+
+哪些关系饱和
+哪些关系低频
+哪些关系冲突
+哪些情境覆盖不足
+最终判断
+切片 2 第 1 步通过，可以继续步骤 2。
+
+我建议给执行方的回复是：
+
+同意进入 Landscape 页面。EdgeNoveltyTag 结构化和 reason 解释已经满足前端可解释性需求；OpenAPI 类型化和 recompute endpoint 也通过。下一步先做 coverage banner + CR 关系列表 + theory cluster/backbone 展示。注意 UI 对 noveltyScore=null 做兜底，并把 established 阈值=3 同步到 taxonomy/replit 文档。
+

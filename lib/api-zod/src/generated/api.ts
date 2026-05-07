@@ -2066,6 +2066,116 @@ export const RecomputeModelInnovationResponse = zod.object({
 });
 
 /**
+ * Returns the snapshot the Innovation Layer reasons over: coverage,
+every aggregated `constructRelationships` row, the AI-distilled
+theory clusters, and the set of evidenced theory backbones. Pure
+read — does NOT trigger a rebuild. Auth-gated by
+`loadAuthorizedSession`. The Landscape page calls this on mount.
+
+ * @summary Read the per-session literature landscape (Phase 2 Innovation Layer)
+ */
+export const GetSessionLandscapeParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const getSessionLandscapeResponseCoverageCoverageRateMin = 0;
+export const getSessionLandscapeResponseCoverageCoverageRateMax = 1;
+
+export const getSessionLandscapeResponseCoverageTotalEligiblePaperCountMin = 0;
+
+export const getSessionLandscapeResponseCoverageExtractedWithInnovationFieldsCountMin = 0;
+
+export const getSessionLandscapeResponseRelationshipsItemTotalOccurrencesMin = 0;
+
+export const getSessionLandscapeResponseRelationshipsItemNoveltyPotentialScoreMin = 0;
+export const getSessionLandscapeResponseRelationshipsItemNoveltyPotentialScoreMax = 100;
+
+export const getSessionLandscapeResponseTheoryClustersItemPaperCountMin = 0;
+
+export const GetSessionLandscapeResponse = zod
+  .object({
+    landscapeVersion: zod.number().nullable(),
+    lastRebuildAt: zod
+      .string()
+      .nullable()
+      .describe("ISO timestamp of the most recent rebuild."),
+    coverage: zod
+      .object({
+        coverageRate: zod
+          .number()
+          .min(getSessionLandscapeResponseCoverageCoverageRateMin)
+          .max(getSessionLandscapeResponseCoverageCoverageRateMax)
+          .describe(
+            "extractedWithInnovationFieldsCount \/ totalEligiblePaperCount",
+          ),
+        totalEligiblePaperCount: zod
+          .number()
+          .min(getSessionLandscapeResponseCoverageTotalEligiblePaperCountMin)
+          .describe("Non-tangential, non-manual papers in the session."),
+        extractedWithInnovationFieldsCount: zod
+          .number()
+          .min(
+            getSessionLandscapeResponseCoverageExtractedWithInnovationFieldsCountMin,
+          ),
+      })
+      .describe(
+        "How much of the session's eligible literature pool has been extracted\nwith Phase 1 innovation fields. Drives the Landscape page banner and\ngates `InnovationMeta.mode` (below 0.7 → analysis_only).\n",
+      ),
+    relationships: zod.array(
+      zod
+        .object({
+          id: zod.number(),
+          canonicalFrom: zod.string(),
+          canonicalTo: zod.string(),
+          contextQualifierFrom: zod.string().nullish(),
+          contextQualifierTo: zod.string().nullish(),
+          relationshipType: zod.enum(["direct", "mediation", "moderation"]),
+          sign: zod.enum(["positive", "negative", "mixed", "none"]),
+          signConflict: zod.boolean(),
+          totalOccurrences: zod
+            .number()
+            .min(
+              getSessionLandscapeResponseRelationshipsItemTotalOccurrencesMin,
+            ),
+          domainsCovered: zod.array(zod.string()),
+          earliestYear: zod.number().nullish(),
+          latestYear: zod.number().nullish(),
+          noveltyPotentialScore: zod
+            .number()
+            .min(
+              getSessionLandscapeResponseRelationshipsItemNoveltyPotentialScoreMin,
+            )
+            .max(
+              getSessionLandscapeResponseRelationshipsItemNoveltyPotentialScoreMax,
+            ),
+        })
+        .describe(
+          "One aggregated `constructRelationships` row, shaped for the\nLandscape page table. Mirrors the DB row but drops verbose\nper-paper evidence (the page only renders aggregate counts and\nfirst\/last year).\n",
+        ),
+    ),
+    theoryClusters: zod.array(
+      zod
+        .object({
+          id: zod.string(),
+          label: zod.string(),
+          theoryIds: zod.array(zod.string()),
+          paperCount: zod
+            .number()
+            .min(getSessionLandscapeResponseTheoryClustersItemPaperCountMin),
+        })
+        .describe("One entry from `landscapeMeta.theoryClusters`."),
+    ),
+    evidencedBackbones: zod
+      .array(zod.string())
+      .describe(
+        "Distinct theory names mentioned by at least one in-scope paper's\n`theoryBackbone`. Lower-cased, de-duplicated, sorted.\n",
+      ),
+  })
+  .describe(
+    "Read model returned by `GET \/sessions\/{id}\/landscape`. Combines the\ncoverage banner inputs with the full relationship table and the\ntheory-cluster + evidenced-backbone summaries. `landscapeVersion`\nis null until the first `rebuildLandscape()` runs for the session.\n",
+  );
+
+/**
  * @summary How many feedback rounds the AI has learned from for this session/global
  */
 export const GetSessionLearningStatsParams = zod.object({
