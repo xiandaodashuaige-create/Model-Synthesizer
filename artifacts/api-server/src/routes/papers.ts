@@ -665,7 +665,11 @@ If a field is unknown, use null. Authors should be an array of strings. Year is 
 First page text:
 ${head}`;
         const completion = await openai.chat.completions.create({
-          model: "gpt-5.4",
+          // Cost optimisation: parsing a fixed bibliographic-metadata schema
+          // (title / authors / year / venue / abstract) from a single page of
+          // text is exactly the kind of high-volume structured extraction
+          // gpt-5-mini is built for.
+          model: "gpt-5-mini",
           max_completion_tokens: 800,
           messages: [{ role: "user", content: aiPrompt }],
         });

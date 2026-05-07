@@ -6,9 +6,20 @@ import {
 import { Activity, ChevronDown, ChevronUp } from "lucide-react";
 import { useT } from "@/lib/i18n";
 
-function fmtUsd(n: number): string {
-  if (n < 0.01) return `$${n.toFixed(4)}`;
-  return `$${n.toFixed(2)}`;
+// Display unit is "积分" (credits): 1 credit = $0.01 of underlying OpenAI list
+// price, i.e. credits = USD × 100. We round to whole credits for any spend ≥
+// 1 credit (the typical case), and show one decimal under that so a freshly
+// created session with one cheap call still reads as a non-zero number rather
+// than collapsing to "0 积分". The DB layer keeps storing micro-USD so we can
+// always re-derive the rate later if pricing changes.
+function fmtCredits(usd: number): string {
+  const credits = usd * 100;
+  if (credits >= 1) return `${Math.round(credits).toLocaleString()}`;
+  if (credits <= 0) return "0";
+  // Anything 0 < credits < 1 rounds to one decimal, but clamp to 0.1 so a
+  // genuinely non-zero spend never visually collapses to "0.0" — that would
+  // misleadingly suggest "this call was free" when it wasn't.
+  return Math.max(0.1, Math.round(credits * 10) / 10).toFixed(1);
 }
 
 function fmtNum(n: number): string {
@@ -72,7 +83,7 @@ export function AiUsagePanel({ sessionId }: { sessionId: number }) {
   // SPENT (cost, tokens, calls). Both are real numbers, not inflated.
   const valueByline = `${paperCount} ${t("usage.value.papers" as any)} · ${variableCount} ${t("usage.value.variables" as any)} · ${modelCount} ${t("usage.value.models" as any)} · ≈${laborHours.toFixed(1)}h`;
   const costByline = !usageLoading && !usageError && usage
-    ? `${fmtUsd(totalCost)} · ${fmtNum(totalTokens)} ${t("usage.tokens" as any)} · ${totalCalls} ${t("usage.calls" as any)}`
+    ? `${fmtCredits(totalCost)} ${t("usage.credits.unit" as any)} · ${fmtNum(totalTokens)} ${t("usage.tokens" as any)} · ${totalCalls} ${t("usage.calls" as any)}`
     : "";
 
   return (
@@ -154,7 +165,7 @@ export function AiUsagePanel({ sessionId }: { sessionId: number }) {
                     <th className="text-left font-medium py-1.5 pr-3">{t("usage.col.route" as any)}</th>
                     <th className="text-right font-medium py-1.5 px-2">{t("usage.col.calls" as any)}</th>
                     <th className="text-right font-medium py-1.5 px-2">{t("usage.col.tokens" as any)}</th>
-                    <th className="text-right font-medium py-1.5 pl-2">{t("usage.col.cost" as any)}</th>
+                    <th className="text-right font-medium py-1.5 pl-2">{t("usage.col.credits" as any)}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -165,17 +176,20 @@ export function AiUsagePanel({ sessionId }: { sessionId: number }) {
                         <td className="py-1.5 pr-3 font-mono text-foreground">{r.route}</td>
                         <td className="py-1.5 px-2 text-right text-muted-foreground">{r.calls}</td>
                         <td className="py-1.5 px-2 text-right text-muted-foreground">{fmtNum(r.totalTokens)}</td>
-                        <td className="py-1.5 pl-2 text-right text-foreground">{fmtUsd(r.costUsd)}</td>
+                        <td className="py-1.5 pl-2 text-right text-foreground tabular-nums">{fmtCredits(r.costUsd)}</td>
                       </tr>
                     ))}
                   <tr className="font-medium">
                     <td className="py-1.5 pr-3 text-foreground">{t("usage.total" as any)}</td>
                     <td className="py-1.5 px-2 text-right">{totalCalls}</td>
                     <td className="py-1.5 px-2 text-right">{fmtNum(totalTokens)}</td>
-                    <td className="py-1.5 pl-2 text-right">{fmtUsd(totalCost)}</td>
+                    <td className="py-1.5 pl-2 text-right tabular-nums">{fmtCredits(totalCost)}</td>
                   </tr>
                 </tbody>
               </table>
+              <div className="mt-2 text-[11px] text-muted-foreground leading-snug">
+                {t("usage.credits.note" as any)}
+              </div>
             </div>
           )}
         </div>

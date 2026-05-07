@@ -2350,14 +2350,22 @@ ${edgeLines}`;
 
   try {
     const completion = await openai.chat.completions.create({
-      model: "gpt-5.4",
+      // Cost optimisation: literature-review prose generation is downstream of
+      // the heavy lifting — the nodes/edges and their citations are already
+      // assembled by gpt-5.4 in /models/generate. This call only re-shapes the
+      // pre-computed structure into a single Markdown paragraph, which is well
+      // within gpt-5-mini's capabilities.
+      model: "gpt-5-mini",
       max_completion_tokens: 1400,
       messages: [
         { role: "system", content: sysPrompt },
         { role: "user", content: userPrompt },
       ],
     });
-    logAiUsageFromOpenAI(completion, { route: "models/literature-review", sessionId: Number(req.params["id"]) || null, userId: req.user?.id ?? null });
+    // The route param `:id` here is a MODEL id, not a session id — attribute
+    // usage to the owning session so /sessions/:id/ai-usage totals stay
+    // accurate (otherwise these rows land under a fake session id == modelId).
+    logAiUsageFromOpenAI(completion, { route: "models/literature-review", sessionId: model.sessionId, userId: req.user?.id ?? null });
     const markdown = (completion.choices[0]?.message?.content ?? "").trim();
     if (!markdown) {
       res.status(503).json({ error: "AI returned empty response" });

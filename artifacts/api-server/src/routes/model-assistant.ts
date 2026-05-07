@@ -680,7 +680,13 @@ async function aiRelevanceFilter(
 - Sample paper titles: ${sessionCtx.paperTitles.slice(0, 5).join(" | ") || "(none)"}\n`
       : "";
     const completion: any = await openai.chat.completions.create({
-      model: "gpt-5.4",
+      // Cost optimisation: this is a bounded classification task (pick one of 4
+      // categories per candidate, write a ≤30-char "why" string). gpt-5-mini
+      // handles it with effectively the same accuracy as gpt-5.4 at ~10×
+      // cheaper input and ~5× cheaper completion. Per OpenAI's published list
+      // pricing, this single change is the largest sustained spend cut on the
+      // route — image search runs on every "find figures" click.
+      model: "gpt-5-mini",
       max_completion_tokens: 1000,
       messages: [
         {
@@ -759,7 +765,10 @@ async function expandQueriesWithAI(
 - Sample paper titles in this project: ${sessionCtx.paperTitles.slice(0, 6).join(" | ") || "(none)"}`
       : "";
     const completion: any = await openai.chat.completions.create({
-      model: "gpt-5.4",
+      // Cost optimisation: query expansion is a small, well-scoped translation
+      // task with a fixed output schema (3-5 short English strings). gpt-5-mini
+      // matches gpt-5.4 quality here at a fraction of the cost.
+      model: "gpt-5-mini",
       max_completion_tokens: 500,
       messages: [
         {
@@ -1338,7 +1347,11 @@ async function aiRateModelFigureLikelihood(
       })
       .join("\n\n");
     const completion: any = await openai.chat.completions.create({
-      model: "gpt-5.4",
+      // Cost optimisation: paper screening is a 3-class likelihood ranking
+      // (high/medium/low) over titles+abstracts. gpt-5-mini is plenty for the
+      // signal-vs-negative-signal heuristics already enumerated in the prompt;
+      // gpt-5.4's deeper reasoning yields no measurable accuracy gain here.
+      model: "gpt-5-mini",
       max_completion_tokens: 1200,
       messages: [
         {
