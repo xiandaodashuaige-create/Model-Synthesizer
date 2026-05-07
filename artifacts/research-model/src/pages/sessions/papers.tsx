@@ -82,6 +82,19 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
   const [extractingPaperId, setExtractingPaperId] = useState<number | null>(null);
   const [pdfQueueProgress, setPdfQueueProgress] = useState<{ done: number; total: number } | null>(null);
   const [pdfDragOver, setPdfDragOver] = useState(false);
+  // Per-paper "expand abstract" toggle. We render abstracts collapsed (~2
+  // lines) by default to keep the saved-papers list scannable. Pre-fix the
+  // tailwind `line-clamp-2` utility was getting overridden somewhere in the
+  // cascade (likely the @tailwindcss/typography plugin's prose styles
+  // resetting `display`), so abstracts rendered full-height and pushed the
+  // page to ~25 lines per row. Now we ALSO enforce the clamp via inline
+  // style as a defense-in-depth fallback no parent CSS can override.
+  const [expandedAbstracts, setExpandedAbstracts] = useState<Set<number>>(new Set());
+  const toggleAbstract = (id: number) => setExpandedAbstracts((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
 
   const { data: sessionPapers, isLoading: papersLoading } = useListSessionPapers(sessionId, {
     query: { enabled: !!sessionId, queryKey: getListSessionPapersQueryKey(sessionId) },
@@ -552,7 +565,12 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
                       {paper.citationCount != null ? `· ${paper.citationCount} ${t("common.citations" as any)}` : ""}
                     </p>
                     {paper.abstract && (
-                      <p className="text-xs text-muted-foreground mt-1 line-clamp-2 leading-relaxed">{paper.abstract}</p>
+                      <p
+                        className="text-xs text-muted-foreground mt-1 leading-relaxed"
+                        style={{ display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}
+                      >
+                        {paper.abstract}
+                      </p>
                     )}
                   </div>
                   <button
@@ -944,7 +962,31 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
                     </div>
                   </div>
                   {paper.abstract && (
-                    <p className="text-xs text-muted-foreground mt-2 line-clamp-2 leading-relaxed">{paper.abstract}</p>
+                    <div className="mt-2">
+                      <p
+                        className="text-xs text-muted-foreground leading-relaxed cursor-pointer"
+                        onClick={() => toggleAbstract(paper.id)}
+                        title={expandedAbstracts.has(paper.id) ? t("common.collapse" as any) as string : t("common.expand" as any) as string}
+                        style={
+                          expandedAbstracts.has(paper.id)
+                            ? undefined
+                            : { display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }
+                        }
+                      >
+                        {paper.abstract}
+                      </p>
+                      {paper.abstract.length > 220 && (
+                        <button
+                          type="button"
+                          onClick={() => toggleAbstract(paper.id)}
+                          className="mt-1 text-[11px] font-medium text-primary hover:underline"
+                        >
+                          {expandedAbstracts.has(paper.id)
+                            ? (t("common.collapse" as any) as string)
+                            : (t("common.expand" as any) as string)}
+                        </button>
+                      )}
+                    </div>
                   )}
                 </div>
                 <div className="flex items-center gap-2 shrink-0">

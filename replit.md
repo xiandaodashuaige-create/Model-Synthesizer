@@ -82,6 +82,9 @@ pnpm --filter @workspace/db run push # Push DB schema changes
 - **Library proxy**: per-hit "学校代理" link wraps any URL through user's institutional EZproxy template (single text input persisted in `localStorage["evidence.libraryProxyTemplate"]`, `{URL}` placeholder; falls back to suffix concat). Lets users access purchased databases (Wiley, Springer, Elsevier) from any web/scholar hit.
 - **Per-hit Google Scholar link**: every non-scholar hit gets a small graduation-cap icon that searches the title in scholar.google.com — one-click escape hatch to find the canonical paper.
 
+### Paper card abstract clamp (`pages/sessions/papers.tsx`)
+- Both abstract render sites (search-results card + saved-papers card) had `line-clamp-2` in className but rendered full-height (~25 lines per card) — Tailwind v4's `line-clamp` utility was being neutralized by the `@tailwindcss/typography` plugin's prose styles resetting `display`. Fix: enforce the clamp via INLINE STYLE (`display: -webkit-box`, `WebkitLineClamp: 2`, `WebkitBoxOrient: vertical`, `overflow: hidden`) — no parent CSS can override. Saved-papers card also gets a per-paper "展开/收起" toggle (`expandedAbstracts: Set<number>`) so users can read the full abstract on demand; search-results card stays clamp-only.
+
 ### Cross-cutting
 - **Client codegen**: OpenAPI generates Zod validators + React Query hooks. Codegen overwrites `lib/api-zod/src/index.ts`.
 - **Global 401 interceptor**: throttled `window` event triggers re-login overlay.
