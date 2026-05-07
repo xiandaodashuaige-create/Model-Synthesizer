@@ -15,7 +15,7 @@ import {
   getListSessionVariablesQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Loader2, Plus, X, AlertTriangle, BookOpen, ArrowRight, Sparkles, GitBranch, Search, FileDown, FileText, ImageDown, RotateCcw, Trash2 } from "lucide-react";
+import { Loader2, Plus, X, AlertTriangle, BookOpen, ArrowRight, Sparkles, GitBranch, Search, FileDown, FileText, ImageDown, ImageIcon, RotateCcw, Trash2 } from "lucide-react";
 import { exportMarkdown, exportDocx } from "@/lib/export-live-model";
 import {
   renderModelSvg,
@@ -28,6 +28,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useT } from "@/lib/i18n";
 import { EditableModelGraph, type CanvasNode, type CanvasEdge, type VariablePoolEntry } from "@/components/editable-model-graph";
 import { EvidenceMatchDialog } from "@/components/evidence-match-dialog";
+import { ReferenceFigureDialog } from "@/components/reference-figure-dialog";
 import dagre from "@dagrejs/dagre";
 
 // Compute the effective on-canvas (x,y) for each live-model node so we can
@@ -239,6 +240,11 @@ export default function LiveModelPage({ params }: { params?: { id: string } }) {
   // When the user clicks "Find sources" on a specific edge row we pass these
   // hints to the dialog so it auto-runs the search and scrolls to that edge.
   const [evidenceFocus, setEvidenceFocus] = useState<{ edgeKey: string; from: string; to: string } | null>(null);
+  // Per-edge "find reference figure" dialog state — visual evidence for an
+  // unsupported edge. Pre-fills a query like "X positive effect Y conceptual
+  // model" so the user can see published model figures showing this same
+  // construct relationship even when no quotable citation exists.
+  const [figureFocus, setFigureFocus] = useState<{ from: string; to: string; relationship: string } | null>(null);
   const addNode = useAddLiveModelNode();
   const removeNode = useRemoveLiveModelNode();
   const addEdge = useAddLiveModelEdge();
@@ -955,6 +961,22 @@ export default function LiveModelPage({ params }: { params?: { id: string } }) {
                                 <Search className="w-2.5 h-2.5" />
                                 {t("live.edge.searchEvidence" as any)}
                               </button>
+                              <button
+                                type="button"
+                                data-testid={`button-search-figure-${e.id}`}
+                                onClick={() => {
+                                  setFigureFocus({
+                                    from: e.fromVariableName,
+                                    to: e.toVariableName,
+                                    relationship: e.relationship,
+                                  });
+                                }}
+                                title={t("live.edge.searchFigureTip" as any) as string}
+                                className="inline-flex items-center gap-1 text-[10px] font-medium text-sky-700 bg-sky-50 hover:bg-sky-100 border border-sky-200 px-1.5 py-0.5 rounded transition-colors"
+                              >
+                                <ImageIcon className="w-2.5 h-2.5" />
+                                {t("live.edge.searchFigure" as any)}
+                              </button>
                             </>
                           )}
                         </div>
@@ -1246,6 +1268,13 @@ export default function LiveModelPage({ params }: { params?: { id: string } }) {
         autoSearch={!!evidenceFocus}
         focusEdgeKey={evidenceFocus?.edgeKey}
         focusEdgeLabel={evidenceFocus ? { from: evidenceFocus.from, to: evidenceFocus.to } : undefined}
+      />
+
+      <ReferenceFigureDialog
+        open={!!figureFocus}
+        onClose={() => setFigureFocus(null)}
+        sessionId={sessionId}
+        edge={figureFocus}
       />
     </div>
   );

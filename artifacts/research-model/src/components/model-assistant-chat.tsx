@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useChatModelAssistant, useSearchModelImages, useSearchModelPapers, useAddImageBlocklistEntry, useListImageBlocklist, useDeleteImageBlocklistEntry, useGetModelAssistantMessages, useClearModelAssistantMessages, getGetModelAssistantMessagesQueryKey, getListImageBlocklistQueryKey, getGetLiveModelQueryKey } from "@workspace/api-client-react";
+import { useChatModelAssistant, useSearchModelImages, useSearchModelPapers, useAddImageBlocklistEntry, useListImageBlocklist, useDeleteImageBlocklistEntry, useGetModelAssistantMessages, useClearModelAssistantMessages, useGetSession, getGetModelAssistantMessagesQueryKey, getListImageBlocklistQueryKey, getGetLiveModelQueryKey } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { BookOpen, BookPlus, ChevronDown, ChevronUp, Download, ExternalLink, FileText, Heart, Image as ImageIcon, LayoutGrid, Loader2, MessageSquare, Paperclip, RefreshCw, RotateCcw, Search, Send, Sparkles, Trash2, X } from "lucide-react";
 import { useT } from "@/lib/i18n";
@@ -76,6 +76,40 @@ export function ModelAssistantChat({
   const qc = useQueryClient();
   const historyQ = useGetModelAssistantMessages(sessionId);
   const clearHistoryMut = useClearModelAssistantMessages();
+  const sessionQ = useGetSession(sessionId);
+
+  // Opening nudge: when user has uploaded enough papers but never opened image search.
+  // Two independent flags, BOTH per-session and persisted in localStorage so the
+  // nudge is suppressed forever after either (a) explicit dismissal or (b) the
+  // user opens the image search panel even once. Re-hydrated on sessionId
+  // change since this component is reused across sessions.
+  const NUDGE_KEY = `model-assistant-image-nudge-dismissed-${sessionId}`;
+  const SEEN_KEY = `model-assistant-image-panel-seen-${sessionId}`;
+  const [nudgeDismissed, setNudgeDismissed] = useState<boolean>(false);
+  const [imgPanelEverOpened, setImgPanelEverOpened] = useState<boolean>(false);
+  useEffect(() => {
+    try {
+      setNudgeDismissed(localStorage.getItem(NUDGE_KEY) === "1");
+      setImgPanelEverOpened(localStorage.getItem(SEEN_KEY) === "1");
+    } catch {
+      setNudgeDismissed(false);
+      setImgPanelEverOpened(false);
+    }
+  }, [sessionId, NUDGE_KEY, SEEN_KEY]);
+  const dismissNudge = () => {
+    setNudgeDismissed(true);
+    try { localStorage.setItem(NUDGE_KEY, "1"); } catch { /* quota */ }
+  };
+  const sessionTopic = sessionQ.data?.topic ?? "";
+  const sessionPaperCount = sessionQ.data?.paperCount ?? 0;
+  const nudgeQueries = useMemo<string[]>(() => {
+    const topic = sessionTopic.trim();
+    if (!topic) return [];
+    const varNames = Array.from(variableNameById.values()).slice(0, 4);
+    const out = [`${topic} conceptual model`, `${topic} theoretical framework`];
+    if (varNames.length >= 2) out.push(`${topic} ${varNames[0]} ${varNames[1]}`);
+    return out.slice(0, 3);
+  }, [sessionTopic, variableNameById]);
 
   const [messages, setMessages] = useState<ChatMsg[]>([
     { role: "assistant", content: t("models.assistant.greeting" as any) },
@@ -150,6 +184,15 @@ export function ModelAssistantChat({
     });
   };
   const [imgPanelOpen, setImgPanelOpen] = useState(false);
+  // Mark the panel as "ever opened" the first time it transitions to open so
+  // the opening nudge stays hidden forever after the user has discovered it.
+  useEffect(() => {
+    if (imgPanelOpen && !imgPanelEverOpened) {
+      setImgPanelEverOpened(true);
+      try { localStorage.setItem(SEEN_KEY, "1"); } catch { /* quota */ }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [imgPanelOpen]);
   const [searchMode, setSearchMode] = useState<SearchMode>("images");
   const [imgQuery, setImgQuery] = useState("");
   const [imgRawMode, setImgRawMode] = useState(false);
@@ -571,6 +614,43 @@ export function ModelAssistantChat({
           >
             <LayoutGrid className="w-3.5 h-3.5" /> {t("models.assistant.liveApplied.openLive" as any)}
           </a>
+        </div>
+      )}
+
+      {!imgPanelOpen && !imgPanelEverOpened && !nudgeDismissed && sessionTopic && sessionPaperCount >= 3 && nudgeQueries.length > 0 && (
+        <div className="border-t border-sky-200 bg-sky-50/80 px-4 py-3 space-y-2" data-testid="panel-image-search-nudge">
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex items-center gap-1.5 text-xs font-semibold text-sky-900">
+              <ImageIcon className="w-3.5 h-3.5" /> {t("models.assistant.openingNudge.title" as any)}
+            </div>
+            <button
+              type="button"
+              onClick={dismissNudge}
+              className="text-sky-700 hover:text-sky-900 p-0.5"
+              aria-label={t("models.assistant.openingNudge.dismiss" as any) as string}
+              data-testid="button-dismiss-image-nudge"
+              title={t("models.assistant.openingNudge.dismiss" as any) as string}
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          <p className="text-xs text-sky-900 bg-white/70 rounded p-2 border border-sky-200">
+            {t("models.assistant.openingNudge.body" as any, { count: sessionPaperCount })}
+          </p>
+          <div className="text-[11px] font-medium text-sky-800">{t("models.assistant.openingNudge.suggested" as any)}</div>
+          <div className="flex flex-wrap gap-1.5">
+            {nudgeQueries.map((q, i) => (
+              <button
+                key={i}
+                type="button"
+                data-testid={`button-nudge-query-${i}`}
+                onClick={() => { runImageSearch(q); dismissNudge(); }}
+                className="inline-flex items-center gap-1.5 rounded-md border border-sky-400 bg-white hover:bg-sky-100 text-sky-800 text-xs font-medium px-2.5 py-1"
+              >
+                <Search className="w-3 h-3" /> {q}
+              </button>
+            ))}
+          </div>
         </div>
       )}
 
