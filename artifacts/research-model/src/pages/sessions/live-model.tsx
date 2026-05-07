@@ -253,6 +253,10 @@ export default function LiveModelPage({ params }: { params?: { id: string } }) {
     moderatesEdgeId?: number;
   } | null>(null);
 
+  // Variable-pool keyword filter. Matches against name + type + definition
+  // (case-insensitive, whitespace-trimmed) so users can find a construct fast
+  // even when the pool has 100+ entries after a multi-paper extraction.
+  const [poolQuery, setPoolQuery] = useState("");
   const [isAddingEdge, setIsAddingEdge] = useState(false);
   const [edgeFrom, setEdgeFrom] = useState<number | "">("");
   const [edgeTo, setEdgeTo] = useState<number | "">("");
@@ -978,13 +982,58 @@ export default function LiveModelPage({ params }: { params?: { id: string } }) {
                   {t("live.pool.noVarsLink" as any)}
                 </Link>
               </div>
-            ) : (
-              <ul className="divide-y divide-border max-h-[480px] overflow-y-auto">
-                {variables.map((v) => {
-                  const included = includedVariableIds.has(v.id);
-                  const node = (detail.nodes ?? []).find((n) => n.variableId === v.id);
-                  return (
-                    <li key={v.id} className="flex items-center gap-2 px-3 py-2.5">
+            ) : (() => {
+              // Compute filtered list inline so the empty-state ("no match")
+              // sees the same source-of-truth filter the rendered list uses.
+              const q = poolQuery.trim().toLowerCase();
+              const filtered = q
+                ? variables.filter((v) => {
+                    const hay = `${v.name} ${v.type ?? ""} ${(v as any).definition ?? ""}`.toLowerCase();
+                    return hay.includes(q);
+                  })
+                : variables;
+              return (
+                <>
+                  <div className="px-3 pt-3 pb-2 border-b border-border">
+                    <div className="relative">
+                      <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+                      <input
+                        type="search"
+                        value={poolQuery}
+                        onChange={(e) => setPoolQuery(e.target.value)}
+                        placeholder={t("live.pool.searchPlaceholder" as any) as string}
+                        data-testid="input-pool-search"
+                        className="w-full text-xs bg-background border border-input rounded-md h-7 pl-7 pr-7 placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                      />
+                      {poolQuery && (
+                        <button
+                          type="button"
+                          data-testid="button-pool-search-clear"
+                          onClick={() => setPoolQuery("")}
+                          className="absolute right-1.5 top-1/2 -translate-y-1/2 p-0.5 rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                          aria-label={t("live.pool.searchClear" as any) as string}
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      )}
+                    </div>
+                    {q && (
+                      <p className="mt-1.5 text-[10px] text-muted-foreground">
+                        {t("live.pool.searchCount" as any, { matched: filtered.length, total: variables.length })}
+                      </p>
+                    )}
+                  </div>
+                  {filtered.length === 0 ? (
+                    <div className="p-4 text-center text-xs text-muted-foreground italic">
+                      {t("live.pool.searchEmpty" as any)}
+                    </div>
+                  ) : (
+                    <ul className="divide-y divide-border max-h-[480px] overflow-y-auto">
+                      {filtered.map((v) => {
+                        const included = includedVariableIds.has(v.id);
+                        const node = (detail.nodes ?? []).find((n) => n.variableId === v.id);
+                        return (
+                          <li key={v.id} className="flex items-center gap-2 px-3 py-2.5">
                       <span
                         className="w-2 h-2 rounded-full shrink-0"
                         style={{ background: TYPE_COLORS[v.type] ?? "#64748b" }}
@@ -1014,11 +1063,14 @@ export default function LiveModelPage({ params }: { params?: { id: string } }) {
                           <Plus className="w-3.5 h-3.5" />
                         </button>
                       )}
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </>
+              );
+            })()}
           </aside>
         </div>
       )}
