@@ -27,7 +27,7 @@ export type VarLite = { id: number; type: string; name: string };
 export { normalizeName, clusterKey, canonicalize, aggregationKey, aggregationKeyOf } from "@workspace/canonicalize";
 export type { CanonicalName } from "@workspace/canonicalize";
 
-import { normalizeName } from "@workspace/canonicalize";
+import { normalizeName, clusterKey } from "@workspace/canonicalize";
 
 // Re-normalize the name half of a stored cluster key. Used on v1 → v2
 // migration so users don't lose pre-existing focus picks when the

@@ -701,6 +701,13 @@ importers:
         version: 19.2.14
 
   scripts:
+    dependencies:
+      '@workspace/canonicalize':
+        specifier: workspace:*
+        version: link:../lib/canonicalize
+      '@workspace/db':
+        specifier: workspace:*
+        version: link:../lib/db
     devDependencies:
       '@types/node':
         specifier: 'catalog:'

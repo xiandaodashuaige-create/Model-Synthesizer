@@ -9,6 +9,7 @@ import {
 import { openai } from "@workspace/integrations-openai-ai-server";
 import { normalizeName } from "@workspace/canonicalize";
 import { logAiUsageFromOpenAI } from "../lib/ai-usage";
+import { scheduleLandscapeRebuild } from "../lib/literature-landscape.js";
 import { CONSTRUCT_LAYERS } from "../lib/theoryTemplates.js";
 
 const router: IRouter = Router();
@@ -153,7 +154,29 @@ Return ONLY this JSON (no markdown, no commentary):
       "effectSize": "<reported coefficient/p-value/CI like 'β=.34, p<.001' or null if not stated>",
       "pageOrSection": "<page number or section heading, or null>"
     }
-  ]
+  ],
+  "theoryBackbone": [
+    {
+      "name": "Named theory the paper anchors on, in standard textbook form (e.g. 'Theory of Planned Behavior', 'Stimulus-Organism-Response', 'Technology Acceptance Model', 'Social Exchange Theory', 'Parasocial Interaction Theory'). Do NOT invent ad-hoc names — only emit a row when the paper itself names a theory or framework.",
+      "role": "primary|secondary",
+      "citationText": "Verbatim sentence where the paper names the theory, or null if cited only by author-year reference"
+    }
+  ],
+  "statedGaps": [
+    {
+      "type": "mechanism|boundary|integration|correction|construct|context",
+      "statement": "Verbatim sentence where the AUTHORS describe the gap they say their study addresses (introduction or discussion). Do NOT paraphrase. Do NOT emit gaps you inferred — only ones explicitly stated.",
+      "pageOrSection": "<page number or section heading, or null>"
+    }
+  ],
+  "studyContext": {
+    "objectType": "What the paper STUDIES (the concrete object/agent/setting), in 1-3 lower-case words. Examples: 'ai streamer', 'chatbot', 'voice assistant', 'recommender system', 'metaverse retail', 'short-video commerce', 'live streaming', 'virtual influencer', 'autonomous vehicle'. REQUIRED.",
+    "sampleType": "consumer|student|employee|patient|expert|other or null",
+    "geography": "Country / region of the sample, or null if not reported",
+    "platform": "Specific platform if applicable (e.g. 'TikTok', 'Taobao Live', 'ChatGPT'), or null",
+    "modality": "text|voice|video|multimodal|vr|ar or null",
+    "language": "Primary stimulus language (e.g. 'English', 'Chinese'), or null"
+  }
 }
 
 What counts as a VARIABLE — be GENEROUS, not stingy. A variable is anything the paper:
@@ -234,6 +257,9 @@ NOTICE: the chatbot characteristics are kept as separate IV rows even though the
     let parsed: {
       variables?: Array<{ name: string; type: string; definition: string; citationText: string; canonicalConstruct?: string; constructLayer?: string }>;
       hypotheses?: Array<{ id: string; from: string; to: string; via?: string | null; relationship: string; statement: string; effectSize?: string | null; pageOrSection?: string | null }>;
+      theoryBackbone?: Array<{ name?: string; role?: string; citationText?: string | null }>;
+      statedGaps?: Array<{ type?: string; statement?: string; citationText?: string | null; pageOrSection?: string | null }>;
+      studyContext?: { objectType?: string; sampleType?: string | null; geography?: string | null; platform?: string | null; modality?: string | null; language?: string | null };
     } = {};
 
     const cleaned = content.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
@@ -347,9 +373,57 @@ NOTICE: the chatbot characteristics are kept as separate IV rows even though the
         }
       }
 
-      await tx.update(papersTable).set({ extracted: "true" }).where(eq(papersTable.id, paper.id));
+      // Innovation Layer (Phase 1): persist the paper-level structured
+      // additions returned by the extended extraction prompt. Each field is
+      // stored verbatim — the aggregator (lib/literature-landscape.ts) is
+      // the single owner of any cross-paper rollup logic.
+      const VALID_GAP_TYPES = new Set(["mechanism", "boundary", "integration", "correction", "construct", "context"]);
+      const cleanTheoryBackbone = Array.isArray(parsed.theoryBackbone)
+        ? parsed.theoryBackbone
+            .filter((t) => t && typeof t.name === "string" && t.name.trim().length > 1)
+            .slice(0, 8)
+            .map((t) => ({
+              name: t.name!.trim().slice(0, 200),
+              role: t.role === "secondary" ? "secondary" : "primary",
+              citationText: typeof t.citationText === "string" ? t.citationText.trim().slice(0, 600) : null,
+            }))
+        : [];
+      const cleanStatedGaps = Array.isArray(parsed.statedGaps)
+        ? parsed.statedGaps
+            .filter((g) => g && typeof g.statement === "string" && g.statement.trim().length >= 10 && typeof g.type === "string" && VALID_GAP_TYPES.has(g.type))
+            .slice(0, 8)
+            .map((g) => ({
+              type: g.type!,
+              statement: g.statement!.trim().slice(0, 800),
+              pageOrSection: typeof g.pageOrSection === "string" ? g.pageOrSection.trim().slice(0, 120) : null,
+            }))
+        : [];
+      const ctx = parsed.studyContext;
+      const cleanStudyContext = ctx && typeof ctx === "object" && typeof ctx.objectType === "string" && ctx.objectType.trim().length > 0
+        ? {
+            objectType: ctx.objectType.trim().slice(0, 80).toLowerCase(),
+            sampleType: typeof ctx.sampleType === "string" ? ctx.sampleType.trim().slice(0, 40).toLowerCase() : null,
+            geography: typeof ctx.geography === "string" ? ctx.geography.trim().slice(0, 80) : null,
+            platform: typeof ctx.platform === "string" ? ctx.platform.trim().slice(0, 80) : null,
+            modality: typeof ctx.modality === "string" ? ctx.modality.trim().slice(0, 40).toLowerCase() : null,
+            language: typeof ctx.language === "string" ? ctx.language.trim().slice(0, 40) : null,
+          }
+        : null;
+
+      await tx.update(papersTable).set({
+        extracted: "true",
+        theoryBackbone: cleanTheoryBackbone,
+        statedGaps: cleanStatedGaps,
+        studyContext: cleanStudyContext,
+      }).where(eq(papersTable.id, paper.id));
       return insertedRows;
     });
+
+    // Phase 1 trigger: kick the per-session landscape rebuild after a
+    // successful extraction. Fire-and-forget — the schedule helper handles
+    // debounce/coalescing so a "extract all" batch with N papers produces at
+    // most 2 rebuilds queued at any moment, not N.
+    scheduleLandscapeRebuild(params.data.id);
 
     res.json(inserted.flat().map((v) => formatVariable(v, paper)));
   } catch (err) {

@@ -78,21 +78,46 @@ const QUALIFIER_RE = new RegExp(
 
 // Stop-list for cores that look like prepositions or articles after splitting.
 // Guards against degenerate matches where the regex picks up a tail word that
-// happens to BE a preposition (e.g. "trust by association" → core="trust by", qual="association"
-// — we don't want to bind "trust by" as a construct family).
-const CORE_BLOCKLIST = new Set([
-  "the",
-  "a",
-  "an",
-  "of",
-  "in",
-  "for",
-  "with",
-  "on",
-  "by",
-  "to",
-  "from",
+// happens to BE a preposition (e.g. "trust by association" → core="trust by",
+// qual="association" — we don't want to bind "trust by" as a construct family).
+const CORE_LAST_TOKEN_BLOCKLIST = new Set([
+  "the", "a", "an", "of", "in", "for", "with", "on", "by", "to", "from",
 ]);
+
+// Cores that are NEVER complete constructs on their own — they always appear
+// in compound construct names of the form "X of Y" (e.g. "fear of missing
+// out", "sense of community", "quality of life", "perception of risk", "lack
+// of trust", "level of involvement"). Without this list, layer 3 would split
+// them and aggregate "fear" as a fake construct family across unrelated
+// papers — a serious data corruption bug for the literature landscape.
+//
+// This list only suppresses splits when the preposition is "of"; "X in Y" /
+// "X for Y" are unaffected because those patterns rarely surface as compound
+// construct names in this literature.
+//
+// Add to this list when a real-world over-split is observed. The Phase 1
+// self-test exercises every entry.
+const COMPOUND_OF_CORES = new Set([
+  "fear", "sense", "quality", "lack", "loss", "level", "degree", "ease",
+  "locus", "source", "type", "amount", "frequency", "rate", "length",
+  "depth", "breadth", "kind", "sort", "way", "mode", "means", "presence",
+  "absence", "feeling", "state", "form", "set", "pair", "number",
+  "perception", "awareness", "knowledge", "use", "intention", "willingness",
+  "ability", "capacity", "experience", "process", "act", "action", "moment",
+  "point", "issue", "matter", "chain", "rule", "stage", "pattern", "lack",
+  "freedom", "extent", "speed", "burden", "cost", "value", "role", "scope",
+  "share", "view", "image", "picture", "habit", "fit", "theory", "model",
+  "framework", "law", "principle", "concept", "notion", "set", "group",
+]);
+
+// Reject qualifiers whose first word is a gerund (-ing) — strong signal the
+// "X of Y" is a compound construct phrase, not a context qualifier
+// ("art of selling", "joy of giving"). Cheap heuristic that catches a long
+// tail of cases the explicit blocklist misses.
+function looksLikeGerundQualifier(qualifier: string): boolean {
+  const first = qualifier.split(/\s+/)[0] ?? "";
+  return /^[\p{Ll}\p{Lu}]{3,}ing$/u.test(first);
+}
 
 // Layer 3 helper: detect the qualifier split. Returns the unchanged input as
 // `core` with `qualifier=null` when no clean split is found.
@@ -103,12 +128,18 @@ function detectQualifier(normalized: string): { core: string; qualifier: string 
   const core = m.groups.core.trim();
   const qualifier = m.groups.qual.trim();
   if (!core || !qualifier) return { core: normalized, qualifier: null };
-  // Reject splits where the core's last token is itself a function word —
-  // typically means we mis-split a construct name like "social presence by
-  // proxy" into ("social presence by", "proxy"). The lastTokenBlock check
-  // catches the simpler form ("trust by", "association").
+  // Function-word tail in core: catches mis-split forms like "trust by".
   const lastTokenInCore = core.split(/\s+/).pop() ?? "";
-  if (CORE_BLOCKLIST.has(lastTokenInCore)) return { core: normalized, qualifier: null };
+  if (CORE_LAST_TOKEN_BLOCKLIST.has(lastTokenInCore)) return { core: normalized, qualifier: null };
+  // Compound-of construct: "fear of missing out" stays as one construct, not
+  // ("fear", "missing out").
+  // We detect by checking the preposition that matched — re-extract from the
+  // gap between core and qualifier in the normalized string.
+  const gap = normalized.slice(core.length + 1, normalized.length - qualifier.length - 1).trim();
+  if (gap === "of") {
+    if (COMPOUND_OF_CORES.has(core)) return { core: normalized, qualifier: null };
+    if (looksLikeGerundQualifier(qualifier)) return { core: normalized, qualifier: null };
+  }
   return { core, qualifier };
 }
 
