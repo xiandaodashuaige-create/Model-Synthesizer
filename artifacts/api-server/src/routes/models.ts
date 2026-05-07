@@ -798,24 +798,26 @@ HARD RULES (violations = invalid output):
 13. **Hypothesis-grounded evidence (preferred)**: when an edge corresponds to a row in the FORMAL HYPOTHESES POOL above, set \`evidenceHypothesisId\` to that row's id (e.g. "H2a"), copy \`statement\` verbatim into \`evidenceCitationText\`, copy \`effectSize\` and \`pageOrSection\` if available. Edges grounded in formal hypotheses are stronger than those grounded only in narrative citations.
 14. **Topic alignment (enforced by the UNIFIED USER INTENT block at the top)**: every generated model MUST visibly advance the user's stated research topic and respect the DOMAIN LOCK + OUTCOME LOCK rules. The model's \`description\` MUST open with one sentence in the user's language that explicitly names BOTH the topic's domain (e.g. "AI 客服机器人") AND its outcome family (e.g. "消费者冲动购买"), and states how this model preserves both. Drifting the domain (e.g. swapping "AI chatbot" for "AI streamer") OR the outcome family (e.g. swapping "impulse purchase" for "purchase intention") is INVALID and the model will be REJECTED. If the topic is so narrow that only 2 papers are clearly relevant, override Hard Rule #4's "≥3 papers" requirement and prefer a topically-tight 2-paper combination over a topically-loose 3-paper one — call this out in [TOPIC FIT].
 
-OUTPUT FORMAT — return ONLY a JSON array, no markdown:
-[
-  {
-    "operator": "EXTEND|INSERT_MODERATOR|PARALLEL_MEDIATORS|SWAP_MEDIATOR|THEORY_GRAFT",
-    "secondaryOperator": "EXTEND|INSERT_MODERATOR|PARALLEL_MEDIATORS|SWAP_MEDIATOR|THEORY_GRAFT (must differ from operator)",
-    "basePaperTags": ["P1", "P2", "P3"],
-    "backbone": "${[...THEORY_BACKBONES.map((b) => b.id), "NONE"].join("|")}",
-    "name": "concise model name",
-    "description": "1-2 sentences",
-    "rationale": "[OPERATOR: ...] [BASE: ...] [BACKBONE: ...] then 3-5 sentences explaining HOW the operator was applied (which edge from which paper was extended/grafted/swapped/etc.) and why this is theoretically coherent",
-    "nodes": [
-      { "variableId": <int>, "variableName": "<name>", "type": "independent|mediator|moderator|dependent", "paperId": <int>, "paperTitle": "<title>", "paperAuthors": ["<author>"], "paperYear": <year or null> }
-    ],
-    "edges": [
-      { "fromVariableId": <int>, "toVariableId": <int>, "fromVariableName": "<name>", "toVariableName": "<name>", "relationship": "positive|negative|moderates|mediates", "evidencePaperId": <int>, "evidencePaperTitle": "<title>", "evidencePaperAuthors": ["<author>"], "evidencePaperYear": <year or null>, "evidenceCitationText": "<verbatim sentence from the paper>", "evidenceHypothesisId": "<H1|H2a|null>", "effectSize": "<β=.34, p<.001 | null>", "evidenceLocation": "<p.412 | Section 3.2 | null>", "moderatorJustification": "<REQUIRED when relationship=moderates; null otherwise>" }
-    ]
-  }
-]${directiveReminder}`;
+OUTPUT FORMAT — return ONLY a JSON object (NOT a bare array) whose single top-level key is "models" and whose value is an array of model objects. This is REQUIRED by the API's JSON-mode constraint. Do NOT wrap in markdown.
+{
+  "models": [
+    {
+      "operator": "EXTEND|INSERT_MODERATOR|PARALLEL_MEDIATORS|SWAP_MEDIATOR|THEORY_GRAFT",
+      "secondaryOperator": "EXTEND|INSERT_MODERATOR|PARALLEL_MEDIATORS|SWAP_MEDIATOR|THEORY_GRAFT (must differ from operator)",
+      "basePaperTags": ["P1", "P2", "P3"],
+      "backbone": "${[...THEORY_BACKBONES.map((b) => b.id), "NONE"].join("|")}",
+      "name": "concise model name",
+      "description": "1-2 sentences",
+      "rationale": "[OPERATOR: ...] [BASE: ...] [BACKBONE: ...] then 3-5 sentences explaining HOW the operator was applied (which edge from which paper was extended/grafted/swapped/etc.) and why this is theoretically coherent",
+      "nodes": [
+        { "variableId": <int>, "variableName": "<name>", "type": "independent|mediator|moderator|dependent", "paperId": <int>, "paperTitle": "<title>", "paperAuthors": ["<author>"], "paperYear": <year or null> }
+      ],
+      "edges": [
+        { "fromVariableId": <int>, "toVariableId": <int>, "fromVariableName": "<name>", "toVariableName": "<name>", "relationship": "positive|negative|moderates|mediates", "evidencePaperId": <int>, "evidencePaperTitle": "<title>", "evidencePaperAuthors": ["<author>"], "evidencePaperYear": <year or null>, "evidenceCitationText": "<verbatim sentence from the paper>", "evidenceHypothesisId": "<H1|H2a|null>", "effectSize": "<β=.34, p<.001 | null>", "evidenceLocation": "<p.412 | Section 3.2 | null>", "moderatorJustification": "<REQUIRED when relationship=moderates; null otherwise>" }
+      ]
+    }
+  ]
+}${directiveReminder}`;
 
   // Per-call diversity seeds. When we fan out N parallel single-model calls
   // they can't see each other, so each gets a different "preferred operator
@@ -846,21 +848,26 @@ OUTPUT FORMAT — return ONLY a JSON array, no markdown:
   type GeneratedModel = { operator?: string; secondaryOperator?: string; basePaperTags?: string[]; backbone?: string; name: string; description: string; rationale: string; nodes: ModelNode[]; edges: ModelEdge[] };
   let generated: GeneratedModel[] = [];
   const callTimeoutMs = PARALLEL_MODE ? 50_000 : 55_000;
-  // 5000 → 8000. gpt-5.4 is a reasoning model: the hidden chain-of-thought
-  // tokens count against `max_completion_tokens` along with the visible
-  // output. With a ~25-30k token prompt, reasoning can eat 3-4k of a 5k
-  // budget before the visible JSON even starts, leaving the JSON truncated
-  // (finish_reason="length") and unparseable. We've observed this in
-  // production: 3 parallel calls all returning fulfilled in ~2s each with
-  // empty/truncated content. 8000 gives reasoning room AND a real output
-  // budget; 3 calls × 8k = 24k tokens, still well under proxy limits.
-  const perCallMaxTokens = PARALLEL_MODE ? 8_000 : 12_000;
+  // gpt-5.4 is a reasoning model: hidden chain-of-thought tokens count
+  // against `max_completion_tokens` along with the visible output. With a
+  // ~25-30k token prompt, reasoning can eat 3-4k tokens before JSON even
+  // starts. Bumped to 12_000 per call so reasoning has room AND there's a
+  // real output budget for one full model. 3 calls × 12k = 36k tokens, still
+  // well under proxy per-request limits.
+  const perCallMaxTokens = 12_000;
 
   const callOpenAI = async (variantIdx: number) => {
     const completion = await openai.chat.completions.create(
       {
         model: "gpt-5.4",
         max_completion_tokens: perCallMaxTokens,
+        // JSON mode: forces the model to emit syntactically valid JSON at
+        // the token-generation layer (not a post-hoc check). This eliminates
+        // the entire class of "AI returned prose / truncated brackets /
+        // markdown fence" failures we kept hitting. Requires that the prompt
+        // ask for a JSON OBJECT (we use {"models": [...]}); a bare array
+        // root is not allowed by the spec.
+        response_format: { type: "json_object" },
         messages: [{ role: "user", content: buildPrompt(variantSeedFor(variantIdx)) }],
       },
       { signal: AbortSignal.timeout(callTimeoutMs) },
@@ -954,13 +961,35 @@ OUTPUT FORMAT — return ONLY a JSON array, no markdown:
           req.log.info({ callIdx: idx, finishReason, contentLen: content.length }, "Recovered model JSON via truncation repair");
         }
       }
+      // The new prompt + JSON mode returns {"models": [...]}. Tolerate three
+      // shapes for forward/backward compat:
+      //   {"models": [...]}  — current contract
+      //   [...]              — legacy bare array (still produced by the
+      //                        repair fallback if the model ignored the
+      //                        envelope)
+      //   {...}              — single bare model object
       let pushed = 0;
-      if (Array.isArray(parsed)) {
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && Array.isArray((parsed as { models?: unknown }).models)) {
+        const arr = (parsed as { models: unknown[] }).models as GeneratedModel[];
+        generated.push(...arr);
+        pushed = arr.length;
+      } else if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && "models" in parsed) {
+        // Envelope present but `.models` isn't an array — diagnostic only,
+        // fallthrough below will still try the bare-object shape check.
+        req.log.warn({ callIdx: idx, modelsType: typeof (parsed as { models: unknown }).models }, "JSON envelope had non-array models field");
+      }
+      if (pushed === 0 && Array.isArray(parsed)) {
         generated.push(...(parsed as GeneratedModel[]));
         pushed = parsed.length;
-      } else if (parsed && typeof parsed === "object") {
-        generated.push(parsed as GeneratedModel);
-        pushed = 1;
+      } else if (pushed === 0 && parsed && typeof parsed === "object") {
+        // Bare model object — only push if it has the required shape, else
+        // skip (an empty {} from JSON mode that ran out of tokens shouldn't
+        // be treated as a successful model).
+        const obj = parsed as Partial<GeneratedModel>;
+        if (obj.name && Array.isArray(obj.nodes)) {
+          generated.push(parsed as GeneratedModel);
+          pushed = 1;
+        }
       }
       perCallStats.push({ idx, finishReason, contentLen: content.length, recovered, pushed });
     }
