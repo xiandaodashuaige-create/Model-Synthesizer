@@ -70,6 +70,35 @@ function safeForPrompt(token: string): string | null {
   return token;
 }
 
+// Sentence-level sanitizer for free-form user text (e.g. chat turns) that we
+// inject into the generation prompt as a SINGLE QUOTED string. Unlike
+// `safeForPrompt`, this is for full sentences — we strip control chars,
+// markdown fences, and brackets that could break out of the surrounding quote
+// context, and drop turns that look like prompt-injection attempts. Returns
+// null when the message is empty after cleanup or trips the injection guard.
+export function safeForPromptText(text: string, maxLen = 240): string | null {
+  if (!text) return null;
+  // Replace BOTH straight quote variants with their curly counterparts. The
+  // chat-intent block in routes/models.ts wraps each turn in `'${t}'`, so an
+  // unescaped `'` inside the user's message would close the quoted-data
+  // framing and let arbitrary text bleed back into the prompt as if it were
+  // an instruction. Curly quotes are visually identical to readers but are
+  // not the framing delimiter, so the wrapping stays intact.
+  let s = text
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/`{1,}/g, "")
+    .replace(/[<>{}|\\]/g, " ")
+    .replace(/"/g, "\u201c") // " → "
+    .replace(/'/g, "\u2019"); // ' → ’
+  s = s.replace(/\s+/g, " ").trim();
+  if (!s) return null;
+  if (/(ignore (?:all |the )?(?:previous|above)|disregard (?:previous|above|the system)|system prompt|new instructions?|jailbreak|act as (?:a |an )?(?:dan|developer|admin))/i.test(s)) {
+    return null;
+  }
+  if (s.length > maxLen) s = s.slice(0, maxLen) + "…";
+  return s;
+}
+
 function topN<T extends string>(items: T[], n: number): Array<{ token: T; count: number }> {
   const counts = new Map<T, number>();
   for (const it of items) counts.set(it, (counts.get(it) ?? 0) + 1);
