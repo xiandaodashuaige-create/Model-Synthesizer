@@ -14,7 +14,7 @@ import {
   getListSessionVariablesQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Loader2, Plus, X, AlertTriangle, BookOpen, ArrowRight, Sparkles, GitBranch, Search, FileDown, FileText, ImageDown } from "lucide-react";
+import { Loader2, Plus, X, AlertTriangle, BookOpen, ArrowRight, Sparkles, GitBranch, Search, FileDown, FileText, ImageDown, RotateCcw, Trash2 } from "lucide-react";
 import { exportMarkdown, exportDocx } from "@/lib/export-live-model";
 import { toPng } from "html-to-image";
 import { useToast } from "@/hooks/use-toast";
@@ -108,6 +108,56 @@ export default function LiveModelPage({ params }: { params?: { id: string } }) {
   });
   const [isExportingDocx, setIsExportingDocx] = useState(false);
   const [isExportingPng, setIsExportingPng] = useState(false);
+
+  // ---------------------------------------------------------------------------
+  // Edge recycle bin (per-session, localStorage-persisted).
+  //
+  // Two intertwined concerns:
+  //  (1) Sync — the user reported that deleting an edge from the bottom list
+  //      sometimes "doesn't update" the canvas. The data flow is correct
+  //      (delete -> invalidate -> refetch -> re-render) but visually there's a
+  //      brief gap. We close that gap with an OPTIMISTIC cache update so both
+  //      the canvas and the list update the same frame the user clicks ×.
+  //  (2) Recovery — accidental deletes happen, and AI-generated edges carry
+  //      provenance the user does NOT want to lose. We snapshot every removed
+  //      edge into a per-session trash bin so the user can restore it.
+  //      Restore re-creates via the existing addEdge endpoint (provenance
+  //      metadata is currently lost on restore — surfaced in the panel hint).
+  // ---------------------------------------------------------------------------
+  type TrashedEdge = {
+    trashId: string;
+    fromVariableId: number;
+    fromVariableName: string;
+    toVariableId: number;
+    toVariableName: string;
+    relationship: "positive" | "negative" | "mediates" | "moderates";
+    moderatesEdgeId: number | null;
+    hadProvenance: boolean;
+    deletedAt: number;
+  };
+  const TRASH_CAP = 20;
+  const trashKey = sessionId ? `liveModelTrash:${sessionId}` : "";
+  const [trash, setTrash] = useState<TrashedEdge[]>(() => {
+    if (typeof window === "undefined" || !trashKey) return [];
+    try {
+      const raw = window.localStorage.getItem(trashKey);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? (parsed as TrashedEdge[]) : [];
+    } catch {
+      return [];
+    }
+  });
+  useEffect(() => {
+    if (typeof window === "undefined" || !trashKey) return;
+    try {
+      window.localStorage.setItem(trashKey, JSON.stringify(trash));
+    } catch {
+      // Quota exceeded or storage disabled — silently ignore; the bin still
+      // works for the current session, just doesn't survive a refresh.
+    }
+  }, [trash, trashKey]);
+  const pruneTrash = (next: TrashedEdge[]) => next.slice(0, TRASH_CAP);
   // Wraps <EditableModelGraph> so we can locate the inner `.react-flow` subtree
   // for PNG export. Capturing only `.react-flow` skips the absolute-positioned
   // toolbar (Add Variable + hint) that lives in the same wrapper but outside
@@ -242,6 +292,44 @@ export default function LiveModelPage({ params }: { params?: { id: string } }) {
   };
 
   const handleRemoveEdge = (edgeId: number) => {
+    const liveKey = getGetLiveModelQueryKey(sessionId);
+    // Snapshot current detail BEFORE we mutate so we can (a) record the edge
+    // into the trash bin with full context (names + provenance flag) and
+    // (b) roll the cache back if the server rejects the delete.
+    const prev = queryClient.getQueryData<typeof detail>(liveKey);
+    const target = prev?.edges?.find((e) => e.id === edgeId);
+    if (!target || !prev) {
+      // Edge no longer in cache — fall back to plain mutate without trash.
+      removeEdge.mutate(
+        { id: sessionId, edgeId },
+        {
+          onSuccess: () => {
+            invalidate();
+            toast({ title: t("live.toast.edgeRemoved" as any) });
+          },
+          onError: () => toast({ title: t("live.toast.failed" as any), variant: "destructive" }),
+        },
+      );
+      return;
+    }
+    // OPTIMISTIC: drop the edge from the live-model query cache immediately
+    // so canvas + list both update on the same frame as the click.
+    queryClient.setQueryData(liveKey, {
+      ...prev,
+      edges: prev.edges.filter((e) => e.id !== edgeId),
+    });
+    const trashEntry: TrashedEdge = {
+      trashId: `${edgeId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      fromVariableId: target.fromVariableId,
+      fromVariableName: target.fromVariableName,
+      toVariableId: target.toVariableId,
+      toVariableName: target.toVariableName,
+      relationship: target.relationship as TrashedEdge["relationship"],
+      moderatesEdgeId: target.moderatesEdgeId ?? null,
+      hadProvenance: !!target.hasProvenance,
+      deletedAt: Date.now(),
+    };
+    setTrash((cur) => pruneTrash([trashEntry, ...cur]));
     removeEdge.mutate(
       { id: sessionId, edgeId },
       {
@@ -249,10 +337,69 @@ export default function LiveModelPage({ params }: { params?: { id: string } }) {
           invalidate();
           toast({ title: t("live.toast.edgeRemoved" as any) });
         },
-        onError: () => toast({ title: t("live.toast.failed" as any), variant: "destructive" }),
+        onError: () => {
+          // Roll back: restore the cache and pull this entry back out of trash.
+          queryClient.setQueryData(liveKey, prev);
+          setTrash((cur) => cur.filter((tr) => tr.trashId !== trashEntry.trashId));
+          toast({ title: t("live.toast.failed" as any), variant: "destructive" });
+        },
       },
     );
   };
+
+  // Restore an edge from the trash bin: re-create via addEdge. Marks userAdded
+  // so the server accepts it without provenance (provenance is genuinely lost).
+  // If the original was a "moderates" edge whose target edge has since also
+  // been deleted, the server will 400 — we retry once without moderatesEdgeId
+  // so the user at least gets a plain moderates edge back.
+  const handleRestoreEdge = (entry: TrashedEdge, options?: { withoutModeratesRef?: boolean }) => {
+    const payload: Parameters<typeof addEdge.mutate>[0]["data"] = {
+      fromVariableId: entry.fromVariableId,
+      toVariableId: entry.toVariableId,
+      relationship: entry.relationship,
+      userAdded: true,
+    };
+    if (
+      entry.relationship === "moderates" &&
+      entry.moderatesEdgeId != null &&
+      !options?.withoutModeratesRef
+    ) {
+      payload.moderatesEdgeId = entry.moderatesEdgeId;
+    }
+    addEdge.mutate(
+      { id: sessionId, data: payload },
+      {
+        onSuccess: () => {
+          invalidate();
+          setTrash((cur) => cur.filter((tr) => tr.trashId !== entry.trashId));
+          toast({ title: t("live.trash.toastRestored" as any) });
+        },
+        onError: (err: any) => {
+          const status = err?.response?.status ?? err?.status;
+          if (status === 409) {
+            // Already exists — pull it out of trash so the panel reflects reality.
+            setTrash((cur) => cur.filter((tr) => tr.trashId !== entry.trashId));
+            toast({ title: t("live.toast.edgeExists" as any) });
+            return;
+          }
+          if (
+            status === 400 &&
+            entry.relationship === "moderates" &&
+            entry.moderatesEdgeId != null &&
+            !options?.withoutModeratesRef
+          ) {
+            handleRestoreEdge(entry, { withoutModeratesRef: true });
+            return;
+          }
+          toast({ title: t("live.toast.failed" as any), variant: "destructive" });
+        },
+      },
+    );
+  };
+  const handleClearTrashEntry = (trashId: string) => {
+    setTrash((cur) => cur.filter((tr) => tr.trashId !== trashId));
+  };
+  const handleClearTrashAll = () => setTrash([]);
 
   const handleSubmitEdge = () => {
     if (edgeFrom === "" || edgeTo === "" || edgeFrom === edgeTo) return;
@@ -747,6 +894,76 @@ export default function LiveModelPage({ params }: { params?: { id: string } }) {
                 </ul>
               )}
             </div>
+
+            {/* Recycle bin: lets the user restore an edge they just × off the
+                list. Hidden when empty so it doesn't add noise to fresh models.
+                Cap at 20 most-recent deletions; survives refresh via
+                localStorage keyed by sessionId. */}
+            {trash.length > 0 && (
+              <div data-testid="live-trash-panel" className="bg-card border border-dashed border-border rounded-lg overflow-hidden">
+                <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <Trash2 className="w-3.5 h-3.5 text-muted-foreground" />
+                    <h3 className="text-sm font-semibold text-foreground">
+                      {t("live.trash.title" as any)}
+                    </h3>
+                    <span className="text-[11px] text-muted-foreground">({trash.length})</span>
+                  </div>
+                  <button
+                    type="button"
+                    data-testid="button-trash-clear-all"
+                    onClick={handleClearTrashAll}
+                    className="text-[11px] text-muted-foreground hover:text-destructive transition-colors"
+                  >
+                    {t("live.trash.clearAll" as any)}
+                  </button>
+                </div>
+                <p className="px-4 pt-2 text-[11px] text-muted-foreground italic">
+                  {t("live.trash.hint" as any)}
+                </p>
+                <ul className="divide-y divide-border">
+                  {trash.map((tr) => (
+                    <li key={tr.trashId} data-testid={`trash-row-${tr.trashId}`} className="flex items-start gap-3 px-4 py-3 group">
+                      <div className="flex-1 min-w-0 text-sm">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-medium text-foreground">{tr.fromVariableName}</span>
+                          <span className="text-muted-foreground">{REL_STYLE[tr.relationship]?.label ?? tr.relationship}</span>
+                          <span className="font-medium text-foreground">{tr.toVariableName}</span>
+                          {tr.hadProvenance && (
+                            <span
+                              title={t("live.trash.lostProvenance" as any) as string}
+                              className="inline-flex items-center gap-1 text-[10px] font-medium text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded"
+                            >
+                              <AlertTriangle className="w-2.5 h-2.5" />
+                              {t("live.trash.lostProvenance.badge" as any)}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        data-testid={`button-trash-restore-${tr.trashId}`}
+                        onClick={() => handleRestoreEdge(tr)}
+                        disabled={addEdge.isPending}
+                        className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-2 py-1 rounded transition-colors disabled:opacity-50"
+                      >
+                        <RotateCcw className="w-3 h-3" />
+                        {t("live.trash.restore" as any)}
+                      </button>
+                      <button
+                        type="button"
+                        data-testid={`button-trash-clear-${tr.trashId}`}
+                        onClick={() => handleClearTrashEntry(tr.trashId)}
+                        className="p-1 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover:opacity-100 transition-opacity"
+                        aria-label={t("live.trash.clear" as any) as string}
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
 
           {/* Variable pool sidebar */}
