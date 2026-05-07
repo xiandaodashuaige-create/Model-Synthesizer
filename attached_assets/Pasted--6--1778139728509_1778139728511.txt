@@ -1,0 +1,213 @@
+一、先理解：学术创新性到底是什么
+在博士论文语境下，"创新性"不是指模型长得不一样，而是指你的模型在学术对话中做出了什么增量贡献。具体来说有 6 种创新类型：
+表格
+创新类型	通俗解释	举例
+填补空白 (Extension)	前人研究到一半，你把它补全	已有文献验证了A→B，但没人检验过M的中介作用 → 你补上A→M→B
+边界条件发现 (Boundary Condition)	前人说的"普遍成立"，你发现了它只在某种情况下成立	已有文献说A→B总是正向 → 你发现当C高时A→B更强，C低时消失
+机制揭示 (Mechanism)	前人只看到了"相关"，你解释了"为什么"	已有文献发现A和B相关 → 你揭示了D是中介变量
+理论嫁接 (Integration)	两个老死不相往来的理论，被你第一次连起来了	把心理学JD-R理论和营销TAM理论嫁接，解释主播 burnout
+情境拓展 (Contextualization)	把西方的模型拿到中国/新场景检验	把西方直播电商的模型拿到AI主播场景
+修正/反转 (Correction)	前人错了，或者不完全对	已有文献说A→B是正向 → 你发现实际是负向
+核心洞察：你的系统目前擅长"组合变量"，但缺少对"这个组合属于哪种创新"的自动识别和论证能力。
+二、当前系统距离"创新定位"还差什么
+差距 1：系统不知道"文献的共同盲区"
+你添加了 10 篇论文，系统能提取变量和假设，但它不会分析这 10 篇论文 collectively 遗漏了什么。
+例子：10 篇研究"AI主播→购买意愿"的论文，全部用了"感知信任"做中介，但没有一篇引入"准社会互动"。系统应该能自动发现这个盲区，并提示你："你的文献库中，所有论文都绕过了准社会互动这个变量——这是一个潜在的gap。"
+差距 2：生成的模型没有"创新类型标签"
+系统生成 3 个候选模型，但只告诉你"这是用EXTEND操作符做的"。用户不知道：
+模型A = "填补空白型"创新（在某个链条上加了一个前人没加的中介）
+模型B = "边界条件型"创新（引入了一个前人没考虑过的调节变量）
+模型C = "理论嫁接型"创新（把两个从未结合过的骨架首次整合）
+这导致用户选择模型时没有创新维度的决策依据。
+差距 3：没有"增量贡献值"评估
+对模型中的每条边，系统应该回答：
+这条边在已有文献中被验证过多少次？（100次 = 经典知识，0次 = 创新但冒险）
+引入这条边，相对于"基础模型"增加了什么理论贡献？
+现在系统有 evidencePaperId，但没有跨论文的统计聚合，所以无法判断"这条边是常识还是空白"。
+差距 4：不会自动生成"Theoretical Contributions"段落
+博士论文需要写"本文的理论贡献"部分。系统应该能基于模型的创新类型，自动生成：
+"虽然已有文献验证了AI主播特征对购买意愿的正向影响（Wang, 2023; Li, 2024），但均未考虑准社会互动的中介作用。本研究首次将准社会互动引入该链条，拓展了SOR理论在AI直播电商情境中的应用边界..."
+现在系统有 literature-review 端点，但生成的是"文献综述"，不是"理论贡献论证"。
+三、提升方案：让系统成为"创新定位引擎"
+以下 8 个设计方案，按实施难度和影响力排序：
+方案 1：文献盲区热力图（Gap Heatmap）
+核心思想：把你研究方向的所有变量关系画成一张矩阵，颜色深浅表示该关系在已有文献中的研究密度。空白格子就是gap。
+具体实现：
+plain
+复制
+           IV1      IV2      IV3      IV4      Med1     Med2     Mod1     DV
+IV1        ░░░      ████     ░░░      ░░░      ████     ░░░      ░░░      ████
+IV2        -        ░░░      ░░░      ░░░      ░░░      ████     ░░░      ░░░
+Med1       -        -        -        -        ░░░      ░░░      ░░░      ████
+Mod1       -        -        -        -        -        -        ░░░      ░░░
+████ = 已有3+篇文献验证（饱和区，不值得再做）
+░░░ = 0-1篇文献（空白区，潜在gap）
+系统优先推荐从空白格子出发构建模型
+前端体验：
+在"变量图谱"页面新增一个"Gap热力图"标签页
+用户 hover 空白格子时显示："已有0篇文献研究IV2→Med2的关系，建议考虑"
+点击空白格子可直接将其加入"待探索关系池"
+方案 2：跨论文变量关系统计库（核心数据基础设施）
+核心思想：聚合所有用户论文中的假设，形成全局的"关系频率知识库"。
+数据库设计：
+TypeScript
+复制
+interface ConstructRelationship {
+  canonicalFrom: string;        // "ai_streamer_characteristics"
+  canonicalTo: string;            // "purchase_intention"
+  relationshipType: "positive" | "negative" | "mediates" | "moderates";
+  totalOccurrences: number;       // 这条关系在多少篇论文中出现
+  supportingPapers: Array<{paperId, hypothesisId, effectSize, year}>;
+  avgEffectSize: string;          // 平均β值
+  primaryDomains: string[];       // 主要在哪些领域被研究
+  earliestYear: number;
+  latestYear: number;
+  // 关键新增字段
+  innovationScore: number;        // 100 = 从未被研究过, 0 = 被研究过100+次
+}
+对模型生成的影响：
+生成候选模型时，不只验证结构合法性，还要计算模型整体创新分
+创新分 = 所有边的 innovationScore 平均值
+系统返回：模型A（创新分72，高创新但证据弱）vs 模型B（创新分35，稳妥但新意不足）
+方案 3：生成模型的创新类型自动分类
+核心思想：模型生成后，系统自动判断它属于 6 种创新类型中的哪一种（或混合）。
+分类逻辑（程序化，不依赖AI猜测）：
+TypeScript
+复制
+function classifyInnovation(model, relationshipDB): InnovationProfile {
+  const profile = {
+    type: [] as string[],
+    explanation: "",
+    gapAddressed: [] as string[],
+  };
+
+  // 判断1：是否填补了中介空白？
+  const mediatedPaths = model.edges.filter(e => e.relationship === "mediates");
+  for (const path of mediatedPaths) {
+    const directRelation = relationshipDB.get(path.from, path.to, "positive");
+    if (directRelation && directRelation.totalOccurrences > 3) {
+      // 已有直接效应，现在加了中介
+      profile.type.push("mechanism_revelation"); // 机制揭示型
+      profile.gapAddressed.push(
+        `已有${directRelation.totalOccurrences}篇文献直接验证${path.from}→${path.to}，但均未揭示中介机制`
+      );
+    }
+  }
+
+  // 判断2：是否引入了新的调节变量？
+  const moderatedEdges = model.edges.filter(e => e.relationship === "moderates");
+  for (const mod of moderatedEdges) {
+    profile.type.push("boundary_condition"); // 边界条件型
+    profile.gapAddressed.push(
+      `首次将${mod.fromVariableName}作为${mod.toVariableName}关系的边界条件`
+    );
+  }
+
+  // 判断3：是否理论嫁接？
+  if (model.backbone && model.secondaryBackbone) {
+    profile.type.push("theory_integration"); // 理论嫁接型
+  }
+
+  // 判断4：是否引入了全新变量？
+  const novelVariables = model.nodes.filter(n => 
+    relationshipDB.getAllRelationsInvolving(n.variableName).length === 0
+  );
+  if (novelVariables.length > 0) {
+    profile.type.push("novel_variable_introduction");
+  }
+
+  return profile;
+}
+前端体验：
+每个候选模型卡片上显示创新类型 badge：
+🧩 机制揭示型
+🚧 边界条件型
+🔗 理论嫁接型
+✨ 新变量引入型
+鼠标 hover badge 显示具体解释："该模型填补了5篇文献共同忽略的中介空白"
+方案 4：反事实基础模型对照（Counterfactual Baseline）
+核心思想：自动生成"如果没有你的创新，最朴素的模型长什么样"，让用户直观看到自己的增量贡献。
+实现逻辑：
+系统找出用户文献中被最多论文共同验证的"最小公共模型"（即所有人的共识部分）
+这作为"基础模型（Base Model）"
+用户的新模型与基础模型并排对比
+差异部分 = 你的增量贡献
+例子：
+plain
+复制
+基础模型（已有文献共识）：
+  AI主播特征 → 感知信任 → 购买意愿
+  [已有5篇文献支持]
+
+你的创新模型：
+  AI主播特征 → 准社会互动 → 感知信任 → 购买意愿
+              ↘ 主播吸引力（调节）
+  
+增量贡献：
+  + 新增变量：准社会互动（文献中从未在此链条中出现）
+  + 新增机制：揭示了AI主播通过"准社会互动"影响信任的机制
+  + 新增边界条件：主播吸引力强化了准社会互动→信任的关系
+前端体验：
+在模型详情页增加"与基础模型对比"按钮
+差异边用金色高亮，并标注"你的增量贡献"
+方案 5：自动生成"理论贡献"论证段落
+核心思想：基于模型的创新类型和gap分析，自动生成可以直接放进论文的"Theoretical Contributions"段落。
+Prompt设计思路：
+plain
+复制
+已知：
+- 模型的创新类型：[mechanism_revelation, boundary_condition]
+- 填补的gap：已有5篇文献直接研究A→B，但均未考虑M的中介作用
+- 引入的新变量：M（在该领域首次出现）
+- 理论骨架：基于SOR理论
+
+生成：
+"本研究的理论贡献主要体现在三个方面。首先，虽然已有文献广泛验证了A对B的正向影响（Wang, 2023; Li, 2024; Zhang, 2025），但均未揭示其作用机制。本研究首次将M纳入A→B关系链条，基于SOR理论揭示了...（约200字，中英文可选）"
+API端点：POST /models/:id/theoretical-contributions
+方案 6：审稿人视角预检（Reviewer Simulator）
+核心思想：模拟审稿人会提出的质疑，让用户提前准备回应。
+实现方式：
+对模型的每条"创新边"（innovationScore高的边），AI生成可能的审稿质疑：
+"为什么引入M作为中介而不是N？已有文献显示N在此领域更常见。"
+"调节变量W的理论依据是什么？它与DV之间似乎没有直接的理论联系。"
+"这条关系在已有文献中从未被验证过，你如何确保它不是伪关系？"
+同时给出建议回应策略和可能需要补充的文献方向
+前端体验：
+在模型质量报告旁边新增"审稿人视角"面板
+每条质疑可标记"已准备回应" / "需要补充文献"
+方案 7：创新度可视化编码
+核心思想：在模型图上直接展示每条边的"创新vs保守"属性。
+编码方案：
+深绿色实线（████）：3+篇文献支持的"经典关系"——基础扎实，但贡献低
+橙色虚线（▒▒▒▒）：1-2篇文献支持的"前沿关系"——有探索价值，风险适中
+红色点线（░░░░）：0篇文献支持/系统推断的"创新关系"——贡献高，但需要你在论文中充分论证
+金色高亮边：相对于"基础模型"新增的增量贡献边
+交互设计：
+点击红色边时，弹出警告："这条边缺乏直接文献支持，建议：①补充文献搜索 ②在论文中增加理论论证段落 ③考虑改为探索性假设"
+方案 8：学术对话定位器（Conversation Positioning）
+核心思想：帮助用户回答"你在和谁对话？你在修正/拓展/挑战谁？"
+实现方式：
+系统分析用户文献库中的高频引用作者/论文
+生成"学术对话地图"：
+plain
+复制
+你的模型定位：
+├─ 基础共识：Wang (2023) 和 Li (2024) 都支持 A→B
+├─ 你在拓展：首次引入 M 作为中介（Wang 和 Li 均未考虑）
+├─ 你在挑战：Zhang (2025) 认为 A→B 是直接的，你反驳说这忽略了 M 的中介作用
+└─ 你在补充：Chen (2024) 研究了 M→B，但从未将其与 A 联系起来
+系统自动生成 Research Question：
+"在AI直播电商情境下，准社会互动是否在AI主播特征与购买意愿之间起中介作用？"
+"主播吸引力是否调节了准社会互动对感知信任的影响强度？"
+四、总结：建议的演进路线图
+表格
+阶段	功能	解决的问题	对博士论文的帮助
+Phase 1（数据层）	跨论文关系统计库 + Gap热力图	系统知道"什么被研究了、什么没研究"	让你一眼看到文献盲区
+Phase 2（生成层）	创新类型自动分类 + 创新度评分	生成时就知道"这个模型是什么类型的创新"	帮助你选择最有理论贡献的模型方向
+Phase 3（论证层）	反事实对照 + 理论贡献自动生成	系统帮你写"Theoretical Contributions"	直接产出论文章节
+Phase 4（防御层）	审稿人视角预检	提前发现会被质疑的地方	提高论文投稿通过率
+最核心的转变：
+从"帮你组合出一个结构合理的模型" → "帮你定位一个有学术增量贡献的模型"
+你现在做的是"拼乐高"——把已有积木拼出新形状。但专家说的是"你的乐高作品要在玩具展上获奖"——评委不看你拼得对不对，而看你解决了什么别人没解决的问题。
+以上 8 个方案不需要一次性全部实现。我建议从 Phase 1 的 Gap 热力图 开始，因为它只需要在现有 paperHypothesesTable 上做聚合统计，就能立刻让用户看到"哪里是空白"，这是后续所有创新分析的数据基础。
+如果你需要我针对其中某个方案展开更详细的数据库表结构、API设计或前端交互方案，可以告诉我。
