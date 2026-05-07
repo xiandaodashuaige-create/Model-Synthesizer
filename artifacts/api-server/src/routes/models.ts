@@ -2372,7 +2372,7 @@ OUTPUT FORMAT — return a JSON object with key "models" containing an array of 
     // we never lower the bar, we just stop punishing the whole model for
     // one cleanly-removable defect.
     const ALL_OPS = ["EXTEND", "INSERT_MODERATOR", "PARALLEL_MEDIATORS", "SWAP_MEDIATOR", "THEORY_GRAFT"] as const;
-    const repairStats = { droppedNodes: 0, droppedEdges: 0, droppedModeratorEdges: 0, droppedUngroundedEdges: 0, filledSecondaryOp: 0, rescuedFocusOrphans: 0, rescuedDanglingMediators: 0 };
+    const repairStats = { droppedNodes: 0, droppedEdges: 0, droppedModeratorEdges: 0, droppedUngroundedEdges: 0, filledSecondaryOp: 0, rescuedStrandedIvs: 0, rescuedDanglingMediators: 0 };
     for (const m of generated) {
       if (!m || typeof m !== "object") continue;
       if (Array.isArray(m.nodes)) {
@@ -2424,73 +2424,46 @@ OUTPUT FORMAT — return a JSON object with key "models" containing an array of 
           return true;
         });
         repairStats.droppedEdges += before - m.edges.length;
-        // After edge cleanup, prune any node that no longer participates in
-        // any edge. Pre-fix these orphans rendered as floating boxes on the
-        // canvas (the user's "片段化" complaint). We never drop focus-pick
-        // nodes here — if a focus pick ends up orphaned, we want the
-        // existing focus-pick connectivity check to hard-reject the model
-        // so the user sees a meaningful regeneration rather than a quietly
-        // shrunken model that no longer honors their picks.
-        const incidentRepair = new Set<number>();
-        for (const e of m.edges) { incidentRepair.add(e.fromVariableId); incidentRepair.add(e.toVariableId); }
-        const beforeNodes = m.nodes.length;
-        m.nodes = m.nodes.filter((n) => {
-          if (incidentRepair.has(n.variableId)) return true;
-          // keep focus picks even when orphaned, so the focus-pick orphan
-          // check below produces a meaningful rejection reason
-          if (focusVarIdSet.has(n.variableId)) return true;
-          const v = varById.get(n.variableId);
-          if (v?.canonicalConstructId && focusCanonSet.has(v.canonicalConstructId)) return true;
-          const nm = (n.variableName ?? v?.name ?? "").toLowerCase().trim();
-          if (nm && focusNameSet.has(nm)) return true;
-          return false;
-        });
-        repairStats.droppedNodes += beforeNodes - m.nodes.length;
       }
-      // ── FOCUS-PICK ORPHAN RESCUE ───────────────────────────────────────
-      // When a focus-pick stimulus IV ends up with NO incident edges (the
-      // user pinned it BUT the AI couldn't figure out how to wire it into
-      // the path), try to rescue by cloning the strongest outgoing edge
-      // from another connected stimulus IV in the model. The clone uses the
-      // orphan as the source and keeps the same downstream target —
-      // semantically asserting that this parallel stimulus drives the same
-      // outcome chain (which is exactly what users mean when they pin 2+
-      // stimulus IVs: "compare these stimuli on the same outcome"). The
-      // cloned edge inherits the donor's verbatim evidence text, which
-      // still passes isEvidenceGrounded() because grounding checks the text
-      // vs the paper corpus, not vs the variable names. Hypothesis-id is
-      // cleared because the cited hypothesis named the donor IV, not the
-      // orphan — keeping it would mis-attribute the row in the UI.
-      // Without this rescue, models with 2+ pinned stimulus IVs were
-      // systematically hard-rejected (the user-reported "[502] AI 生成的
-      // 模型都没通过基础数据校验 ... focus pick(s) included as nodes but
-      // not connected by any edge: AI-chatbot service quality" failure).
-      if (Array.isArray(m.nodes) && Array.isArray(m.edges) && focusVarIdSet.size > 0) {
-        const incidentNow = new Set<number>();
-        for (const e of m.edges) { incidentNow.add(e.fromVariableId); incidentNow.add(e.toVariableId); }
-        const isFocusNode = (nid: number, nname?: string): boolean => {
-          if (focusVarIdSet.has(nid)) return true;
-          const v = varById.get(nid);
-          if (v?.canonicalConstructId && focusCanonSet.has(v.canonicalConstructId)) return true;
-          const nm = (nname ?? v?.name ?? "").toLowerCase().trim();
-          return !!nm && focusNameSet.has(nm);
-        };
+      // ── STRANDED-IV OUTGOING RESCUE (runs BEFORE the floating-node prune) ──
+      // When a stimulus IV ends up with NO outgoing non-moderator edge — the
+      // AI included it as a node but forgot to wire it into the path — try
+      // to rescue by cloning the strongest outgoing edge from another
+      // connected stimulus IV in the model. The clone uses the stranded IV
+      // as the source and keeps the same downstream target, semantically
+      // asserting that this parallel stimulus drives the same outcome
+      // chain. The cloned edge inherits the donor's verbatim evidence text,
+      // which still passes isEvidenceGrounded() because grounding checks
+      // the text vs the paper corpus, not vs the variable names.
+      // Hypothesis-id is cleared because the cited hypothesis named the
+      // donor IV, not the stranded one.
+      //
+      // Pre-fix this rescue only fired for FOCUS-PICK orphans (i.e. when
+      // the user had personally pinned the stranded IV). User-reported
+      // "[502] ... edge count out of range (3, need ≥4)" failures showed
+      // dual-path models where the AI itself decided to use 2 stimulus IVs
+      // (driven by the topic / model-name "X and Y") but only wired ONE.
+      // The unpinned orphan got pruned by NO-FLOATING-NODE, edge count
+      // dropped from 4 to 3, hard-reject. Generalizing the rescue to all
+      // stimulus IVs (regardless of focus-pick status) closes that hole.
+      // The rescue MUST run BEFORE the floating-node prune so the
+      // newly-wired orphan survives the prune step.
+      if (Array.isArray(m.nodes) && Array.isArray(m.edges)) {
+        const outgoingNonMod = new Set<number>();
+        for (const e of m.edges) {
+          if (e.relationship === "moderates") continue;
+          outgoingNonMod.add(e.fromVariableId);
+        }
         for (const orphan of m.nodes) {
-          if (incidentNow.has(orphan.variableId)) continue;
-          if (!isFocusNode(orphan.variableId, orphan.variableName)) continue;
-          // Only rescue stimulus IVs — other roles (mediator/moderator/DV)
-          // need bidirectional fixes that are riskier without a strong
-          // donor signal, and those failure modes are far rarer in
-          // practice. They still hard-reject so users get a meaningful
-          // regeneration prompt.
           if (orphan.type !== "independent" && orphan.type !== "antecedent") continue;
-          // Find a donor: another connected IV node with at least one
-          // outgoing non-moderator edge.
+          if (outgoingNonMod.has(orphan.variableId)) continue;
+          // Find a donor: another IV node with at least one outgoing
+          // non-moderator edge.
           let donorEdge: ModelEdge | null = null;
           for (const cand of m.nodes) {
             if (cand.variableId === orphan.variableId) continue;
             if (cand.type !== "independent" && cand.type !== "antecedent") continue;
-            if (!incidentNow.has(cand.variableId)) continue;
+            if (!outgoingNonMod.has(cand.variableId)) continue;
             const out = m.edges.find((e) => e.fromVariableId === cand.variableId && e.relationship !== "moderates");
             if (out) { donorEdge = out; break; }
           }
@@ -2502,14 +2475,34 @@ OUTPUT FORMAT — return a JSON object with key "models" containing an array of 
             ...donorEdge,
             fromVariableId: orphan.variableId,
             fromVariableName: orphanName,
-            // Cited hypothesis named the donor IV; clearing avoids the UI
-            // showing "H2a" next to a relationship that no actual H2a covers.
             evidenceHypothesisId: null,
           };
           m.edges.push(cloned);
-          incidentNow.add(orphan.variableId);
-          repairStats.rescuedFocusOrphans++;
+          outgoingNonMod.add(orphan.variableId);
+          repairStats.rescuedStrandedIvs++;
         }
+      }
+      if (Array.isArray(m.nodes) && Array.isArray(m.edges)) {
+        // After edge cleanup + IV rescue, prune any node that still doesn't
+        // participate in any edge. Pre-fix these orphans rendered as
+        // floating boxes on the canvas (the user's "片段化" complaint). We
+        // keep focus-pick nodes even when orphaned so the focus-pick
+        // connectivity validator below can produce a meaningful rejection
+        // reason (rather than a silently shrunken model that drops the
+        // user's pin).
+        const incidentRepair = new Set<number>();
+        for (const e of m.edges) { incidentRepair.add(e.fromVariableId); incidentRepair.add(e.toVariableId); }
+        const beforeNodes = m.nodes.length;
+        m.nodes = m.nodes.filter((n) => {
+          if (incidentRepair.has(n.variableId)) return true;
+          if (focusVarIdSet.has(n.variableId)) return true;
+          const v = varById.get(n.variableId);
+          if (v?.canonicalConstructId && focusCanonSet.has(v.canonicalConstructId)) return true;
+          const nm = (n.variableName ?? v?.name ?? "").toLowerCase().trim();
+          if (nm && focusNameSet.has(nm)) return true;
+          return false;
+        });
+        repairStats.droppedNodes += beforeNodes - m.nodes.length;
       }
       // ── DANGLING-MEDIATOR OUTGOING RESCUE ──────────────────────────────
       // Companion to the focus-pick orphan rescue above. When a mediator
@@ -2595,7 +2588,7 @@ OUTPUT FORMAT — return a JSON object with key "models" containing an array of 
         }
       }
     }
-    if (repairStats.droppedNodes || repairStats.droppedEdges || repairStats.droppedModeratorEdges || repairStats.filledSecondaryOp || repairStats.rescuedFocusOrphans || repairStats.rescuedDanglingMediators) {
+    if (repairStats.droppedNodes || repairStats.droppedEdges || repairStats.droppedModeratorEdges || repairStats.filledSecondaryOp || repairStats.rescuedStrandedIvs || repairStats.rescuedDanglingMediators) {
       req.log.info({ sessionId, ...repairStats }, "Auto-repair pass cleaned generated models before validation");
     }
 
