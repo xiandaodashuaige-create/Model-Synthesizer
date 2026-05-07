@@ -35,19 +35,27 @@ function formatVariable(v: typeof variablesTable.$inferSelect, paper: typeof pap
 // (For now we use a string-equality scheme; embedding-based merging is a follow-up.)
 function canonicalize(name: string): string {
   // Unicode-aware: keep letters/numbers from any script (incl. CJK) plus
-  // whitespace and hyphens. The previous `\w` was ASCII-only, so Chinese
-  // construct names like "感知信任" got stripped to empty — every Chinese
-  // variable then collapsed to the SAME canonical id and the variable graph
-  // showed false "shared variable" overlaps across papers.
+  // whitespace. The previous `\w` was ASCII-only, so Chinese construct names
+  // like "感知信任" got stripped to empty — every Chinese variable then
+  // collapsed to the SAME canonical id and the variable graph showed false
+  // "shared variable" overlaps across papers.
   // NFKC normalization first so visually-identical CJK characters with
   // different code-point compositions (e.g. composed vs decomposed, fullwidth
   // vs halfwidth latin) collapse to the same canonical form.
+  // PUNCTUATION-AS-NOISE: hyphens, em/en dashes, underscores, and slashes
+  // are normalized to spaces BEFORE the strip step so trivially-different
+  // paper wordings collapse into ONE canonical id (the user-reported
+  // "重复举例变量" bug — "AI-chatbot service quality" vs "AI chatbot service
+  // quality" used to mint two separate canonical ids and rendered as two
+  // independent pinnable cards). Must mirror clusterKey() in
+  // artifacts/research-model/src/lib/focus-selection.ts.
   return name
     .normalize("NFKC")
     .toLowerCase()
-    .replace(/\s+/g, " ")
+    .replace(/[\u2010-\u2015\-_/]+/g, " ")
     .replace(/^(perceived|the|a|an)\s+/g, "")
-    .replace(/[^\p{L}\p{N}\s-]/gu, "")
+    .replace(/[^\p{L}\p{N}\s]/gu, "")
+    .replace(/\s+/g, " ")
     .trim();
 }
 
@@ -613,9 +621,14 @@ router.get("/sessions/:id/variable-graph", async (req, res): Promise<void> => {
     .where(eq(papersTable.sessionId, params.data.id));
   const paperMap = new Map(papers.map((p) => [p.id, p]));
 
+  // Use canonicalize() so graph-node grouping matches the variable-list
+  // cluster grouping (otherwise hyphen/dash variants produce two graph nodes
+  // for what the list shows as one cluster — same root cause as the
+  // "重复举例变量" bug). Falls back to lowercase-only for empty results so
+  // we never lose a node entirely.
   const nodeMap = new Map<string, { id: string; label: string; type: string; paperCount: number }>();
   for (const v of variables) {
-    const key = v.name.toLowerCase().trim();
+    const key = canonicalize(v.name) || v.name.toLowerCase().trim();
     if (nodeMap.has(key)) {
       nodeMap.get(key)!.paperCount++;
     } else {
@@ -632,7 +645,9 @@ router.get("/sessions/:id/variable-graph", async (req, res): Promise<void> => {
     .from(paperHypothesesTable)
     .where(eq(paperHypothesesTable.sessionId, params.data.id));
 
-  const norm = (s: string) => s.toLowerCase().trim();
+  // Same normalizer as nodeMap above so hypothesis from/to/via strings
+  // resolve to the same node ids the graph rendered.
+  const norm = (s: string) => canonicalize(s) || s.toLowerCase().trim();
   type EdgeRel = "positive" | "negative" | "moderates" | "mediates";
   const edges: Array<{ source: string; target: string; paperId: number; paperTitle: string; relationship: EdgeRel; statement: string }> = [];
   const seen = new Set<string>();

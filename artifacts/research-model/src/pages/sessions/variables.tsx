@@ -631,14 +631,16 @@ export default function SessionVariables({ params: routeParams }: { params?: { i
     );
   }
 
-  // Cluster variables by canonical name (case-insensitive, whitespace-normalized)
-  // so the same concept extracted from multiple papers shows as ONE entry with all sources.
-  const norm = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim();
+  // Cluster variables by canonical name (case-insensitive, whitespace-normalized,
+  // hyphen/dash/punctuation-normalized) so the same concept extracted from
+  // multiple papers shows as ONE entry with all sources. Delegates to
+  // clusterKey() so the same normalization rules apply everywhere (focus
+  // selection + this list grouping + persisted localStorage keys).
   type V = (typeof variables)[number];
   type Cluster = { key: string; type: string; name: string; sources: V[] };
   const clusterMap = new Map<string, Cluster>();
   for (const v of variables) {
-    const key = `${v.type}|${norm(v.name)}`;
+    const key = clusterKey(v.type, v.name);
     if (!clusterMap.has(key)) {
       clusterMap.set(key, { key, type: v.type, name: v.name, sources: [] });
     }
