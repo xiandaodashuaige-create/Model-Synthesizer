@@ -16,7 +16,13 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { Loader2, Plus, X, AlertTriangle, BookOpen, ArrowRight, Sparkles, GitBranch, Search, FileDown, FileText, ImageDown, RotateCcw, Trash2 } from "lucide-react";
 import { exportMarkdown, exportDocx } from "@/lib/export-live-model";
-import { toPng } from "html-to-image";
+import {
+  renderModelSvg,
+  svgToPngDataUrl,
+  downloadDataUrl,
+  type ExportNode,
+  type ExportEdge,
+} from "@/lib/export-live-model-image";
 import { useToast } from "@/hooks/use-toast";
 import { useT } from "@/lib/i18n";
 import { EditableModelGraph, type CanvasNode, type CanvasEdge, type VariablePoolEntry } from "@/components/editable-model-graph";
@@ -158,110 +164,51 @@ export default function LiveModelPage({ params }: { params?: { id: string } }) {
     }
   }, [trash, trashKey]);
   const pruneTrash = (next: TrashedEdge[]) => next.slice(0, TRASH_CAP);
-  // Wraps <EditableModelGraph> so we can locate the inner `.react-flow` subtree
-  // for PNG export. Capturing only `.react-flow` skips the absolute-positioned
-  // toolbar (Add Variable + hint) that lives in the same wrapper but outside
-  // the flow viewport — exactly what we want for a clean exported figure.
-  const canvasExportRef = useRef<HTMLDivElement>(null);
+  // PNG export — built from the live-model data, NOT screenshotted from the
+  // DOM. See `lib/export-live-model-image.ts` for the rationale (html-to-image
+  // kept failing on Replit due to cross-origin stylesheet walks and 520s on
+  // proxied font fetches; the data-driven SVG path is bulletproof).
   const handleExportPng = async () => {
     if (!detail || isExportingPng) return;
-    const wrapper = canvasExportRef.current;
-    if (!wrapper) {
-      toast({ title: t("live.export.toastFailed" as any), variant: "destructive" });
-      return;
-    }
-    const flowRoot = wrapper.querySelector<HTMLElement>(".react-flow");
-    const viewport = wrapper.querySelector<HTMLElement>(".react-flow__viewport");
-    if (!flowRoot || !viewport) {
-      toast({ title: t("live.export.toastFailed" as any), variant: "destructive" });
-      return;
-    }
-    const nodeEls = Array.from(viewport.querySelectorAll<HTMLElement>(".react-flow__node"));
-    if (nodeEls.length === 0) {
+    const liveNodes = detail.nodes ?? [];
+    const liveEdges = detail.edges ?? [];
+    if (liveNodes.length === 0 && liveEdges.length === 0) {
       toast({ title: t("live.export.empty" as any), variant: "destructive" });
       return;
     }
 
     setIsExportingPng(true);
-    // Save state we mutate so we can restore even if toPng throws.
-    const originalViewportTransform = viewport.style.transform;
-    const originalRootWidth = flowRoot.style.width;
-    const originalRootHeight = flowRoot.style.height;
     try {
-      // Bounding box from each node's translate(x,y) inline style — this is
-      // the un-zoomed coordinate inside the viewport.
-      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-      for (const el of nodeEls) {
-        const match = /translate\(\s*(-?\d+(?:\.\d+)?)px,\s*(-?\d+(?:\.\d+)?)px\)/.exec(el.style.transform);
-        if (!match) continue;
-        const x = parseFloat(match[1]!);
-        const y = parseFloat(match[2]!);
-        const w = el.offsetWidth || 200;
-        const h = el.offsetHeight || 80;
-        if (x < minX) minX = x;
-        if (y < minY) minY = y;
-        if (x + w > maxX) maxX = x + w;
-        if (y + h > maxY) maxY = y + h;
-      }
-      if (!isFinite(minX)) {
-        toast({ title: t("live.export.toastFailed" as any), variant: "destructive" });
-        return;
-      }
-      const PADDING = 48;
-      const width = Math.ceil(maxX - minX + PADDING * 2);
-      const height = Math.ceil(maxY - minY + PADDING * 2);
-
-      // MUTATE the live DOM briefly so the screenshot context is exactly what
-      // would render on screen — this avoids the "isolated clone has no CSS
-      // variables / no container size" problem of capturing the viewport
-      // standalone. We restore in finally{}.
-      flowRoot.style.width = `${width}px`;
-      flowRoot.style.height = `${height}px`;
-      viewport.style.transform = `translate(${PADDING - minX}px, ${PADDING - minY}px) scale(1)`;
-      // Wait one frame so React Flow's resize observers settle before snapshot.
-      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-
-      const dataUrl = await toPng(flowRoot, {
-        backgroundColor: "#ffffff",
-        pixelRatio: 2,
-        cacheBust: true,
-        width,
-        height,
-        // CORS-locked Google Fonts CSS makes html-to-image's font-inline step
-        // throw and silently degrade to a blank PNG. Skip it — the OS will
-        // substitute a sans-serif fallback.
-        skipFonts: true,
-        // Drop the dotted background, controls, minimap, panels, and the
-        // attribution badge so the figure is just nodes + edges on white.
-        filter: (node) => {
-          if (!(node instanceof Element)) return true;
-          const cls = node.classList;
-          if (!cls) return true;
-          if (cls.contains("react-flow__background")) return false;
-          if (cls.contains("react-flow__controls")) return false;
-          if (cls.contains("react-flow__minimap")) return false;
-          if (cls.contains("react-flow__panel")) return false;
-          if (cls.contains("react-flow__attribution")) return false;
-          return true;
-        },
-      });
-      const safeName = (sessionData?.name ?? "research-model").replace(/[\\/:*?"<>|]+/g, "_").trim() || "research-model";
+      const exportNodes: ExportNode[] = liveNodes.map((n) => ({
+        id: n.id,
+        variableId: n.variableId,
+        variableName: n.variableName,
+        variableType: n.variableType,
+        positionX: n.positionX ?? null,
+        positionY: n.positionY ?? null,
+      }));
+      const exportEdges: ExportEdge[] = liveEdges.map((e) => ({
+        id: e.id,
+        fromVariableId: e.fromVariableId,
+        toVariableId: e.toVariableId,
+        relationship: e.relationship,
+        moderatesEdgeId: e.moderatesEdgeId ?? null,
+        hTag: hTagByEdgeId.get(e.id),
+      }));
+      const safeName = (sessionData?.name ?? "research-model")
+        .replace(/[\\/:*?"<>|]+/g, "_")
+        .trim() || "research-model";
+      const svg = renderModelSvg(exportNodes, exportEdges, { title: safeName });
+      const dataUrl = await svgToPngDataUrl(svg, 2);
       const filename = `${safeName}.png`;
-      const a = document.createElement("a");
-      a.href = dataUrl;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
+      downloadDataUrl(dataUrl, filename);
       toast({ title: t("live.export.toastDone" as any, { filename }) });
     } catch (err) {
+      // We rendered the SVG ourselves so failures here are extremely rare —
+      // typically only an OOM on huge models. Surface the message in dev.
       console.error("[export-png] failed:", err);
       toast({ title: t("live.export.toastFailed" as any), variant: "destructive" });
     } finally {
-      // ALWAYS restore the original layout so the user's view is unchanged.
-      viewport.style.transform = originalViewportTransform;
-      flowRoot.style.width = originalRootWidth;
-      flowRoot.style.height = originalRootHeight;
       setIsExportingPng(false);
     }
   };
@@ -751,22 +698,20 @@ export default function LiveModelPage({ params }: { params?: { id: string } }) {
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-6">
           {/* Graph + edges */}
           <div className="space-y-4 min-w-0">
-            <div ref={canvasExportRef}>
-              <EditableModelGraph
-                nodes={canvasNodes}
-                edges={canvasEdges}
-                variablePool={variablePool}
-                height={520}
-                onNodeMove={handleCanvasNodeMove}
-                onNodeDelete={handleCanvasNodeDelete}
-                onEdgeDelete={(edgeId) => handleRemoveEdge(parseInt(edgeId, 10))}
-                onEdgeCreate={handleCanvasEdgeCreate}
-                onEdgeCreateOnEdge={handleCanvasEdgeOnEdge}
-                onAddVariable={handleAddVar}
-                highlightEdgeId={hoveredEdgeId}
-                onEdgeHover={setHoveredEdgeId}
-              />
-            </div>
+            <EditableModelGraph
+              nodes={canvasNodes}
+              edges={canvasEdges}
+              variablePool={variablePool}
+              height={520}
+              onNodeMove={handleCanvasNodeMove}
+              onNodeDelete={handleCanvasNodeDelete}
+              onEdgeDelete={(edgeId) => handleRemoveEdge(parseInt(edgeId, 10))}
+              onEdgeCreate={handleCanvasEdgeCreate}
+              onEdgeCreateOnEdge={handleCanvasEdgeOnEdge}
+              onAddVariable={handleAddVar}
+              highlightEdgeId={hoveredEdgeId}
+              onEdgeHover={setHoveredEdgeId}
+            />
 
             {/* Pending edge picker — choose relationship before persisting */}
             {pendingEdge && (
