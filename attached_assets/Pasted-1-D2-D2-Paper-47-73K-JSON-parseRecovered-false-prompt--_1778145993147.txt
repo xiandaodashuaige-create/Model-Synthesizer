@@ -1,0 +1,187 @@
+1. 对D2 的判断
+结论：D2 通过
+你给出的Paper 47 结果是比较理想的：
+
+73K 全文能一次返回干净JSON；
+parseRecovered=false，说明prompt 稳定性不错；
+theoryBackbone 不是泛泛的SOR/TAM，而是：
+线索利用理论
+线索诊断框架
+认知负荷理论
+情绪传染理论
+每条theory 都带citationText；
+statedGaps 6 条，覆盖integration / construct / boundary / context；
+studyContext 字段较完整；
+umbrella variablelivestreaming e-commerce出现；
+hypotheses 增加；
+H7/H8 moderation 能落到具体被调节路径。
+这说明Phase 1 的提取prompt 不是只“填字段”，而是确实开始抽到对innovation layer 有用的信息。
+
+但我建议人工再看3 个点
+1. statedGaps 是否真是论文自述
+你说“全部是论文自述的研究缺口”，这是关键。如果确实是原文或接近原文，不是AI 总结，那非常好。
+
+2. studyContext 全字段非空不一定永远是好事
+这次全字段非空很好，但长期看要允许null。否则AI 会为了填满而乱猜。
+
+例如：
+
+样本类型=其他
+这个值信息量不高，可以接受，但后续最好细化。
+
+3. theoryBackbone 四条是否会太“散”
+一篇论文抽出4 个理论/框架是可以的，但后面theory cluster 要区分：
+
+基本理论
+次要理论
+方法/线索框架
+否则Phase 2 的“理论整合” 可能把同一篇论文内部多个概念框架误判成跨理论整合。
+
+2. 对D3 的判断
+结论：D3 只能说明管道通了，还不能说明landscape 全量可信
+你现在D3 的结果：
+
+relationship rows = 489
+occ_overflow = 0
+theoryClusters = 4
+4 个cluster 都来自paper 47
+其余49 篇新字段为null
+这说明：
+
+新字段提取→ landscape rebuild → clusters 写入
+链路是通的。
+
+但它还不能证明：
+
+整个session 的文献全景已经可靠。
+因为theoryBackbone / statedGaps / studyContext 只有paper 47 有，其他49 篇为空。
+
+所以D3 目前是“机制验证通过”，不是“全量landscape 通过”。
+
+3. 对架构师三处修复的判断
+1. 路由错误语义恢复
+通过。这个重要，避免重构后用户看到奇怪错误。
+
+2.paper-extraction.ts单一来源
+通过。这个非常正确。
+
+后续变量提取逻辑会越来越复杂，如果路由、probe、自检各自一份逻辑，一定会分叉。
+
+3.hypothesesInsertedCount用returning()
+通过。这个修得对。
+
+否则AI 返回重复hypothesis id 时，会虚报成功写入数量，影响D2/D3 统计判断。
+
+4. 是否可以进入Phase 2？
+我的判断是：
+
+可以进入Phase 2 的“代码设计和非硬阈值部分”
+比如可以做：
+
+OpenAPI 字段扩展；
+模型输出contributionStatement；
+novelty 标签UI；
+贡献用户界面；
+score 计算函数；
+landscape 查询接口；
+模型卡展示早期占位。
+但不要立刻启用这些硬拒逻辑
+尤其不要马上上线：
+
+noveltyScore < 25 → 硬拒
+innovationTypes 为空→ 硬拒
+原因是现在landscape 数据还不全，49 篇旧论文缺theory/gap/context。此时打分会偏：
+
+很多关系可能被误判为 novel；
+很多 context gap 无法判断；
+theory integration 只能基于 paper 47；
+innovationTypes 会不稳定。
+建议Phase 2 先以：
+
+仅分析/咨询模式
+运行，不做硬拒。
+
+5. 要不要现在全 50 篇重抽？
+我的建议：不要马上全50 篇无脑重抽；先跑一个小批量分层样本。
+
+虽然你说成本约$1.5、时间8 分钟，不贵，但问题不是成本，而是：
+
+如果 prompt 在不同类型论文上有系统性偏差，全量重抽会把偏差批量写进 landscape。
+
+建议先选6-8 篇做pilot：
+
+抽样建议
+选：
+
+1 篇全文很长的实证论文；
+1 篇只有摘要的论文；
+1 篇理论/综述类论文；
+1 篇 SEM/PLS-SEM 论文；
+1 篇实验论文；
+1 篇没有明显模型的论文；
+1 篇中文/中国情境强的论文；
+1 篇与你主题最核心的论文。
+看这些字段是否稳定：
+
+theoryBackbone 是否乱猜；
+statedGaps 是否真实；
+studyContext 是否过度填充；
+hypotheses 是否过多或过少；
+umbrella variable 是否合理；
+moderation / mediation metadata 是否保留。
+如果这6-8 篇都过，再全量50 篇重抽。
+
+6. 如果你急着进入Phase 2，我建议这样做
+推荐路径
+现在：
+先跑6-8 篇pilot 重抽
+如果通过：
+全50 篇重抽
+然后：
+重建landscape
+抽查顶级关系/符号冲突/集群/差距分布
+再进入：
+Phase 2 硬性创新校验
+不推荐路径
+只凭Paper 47 一个D2 样本
+→ 直接进Phase 2
+→ 开启noveltyScore 硬拒
+风险太大。
+
+7. 我建议D3 全量前输出一个pilot 报告
+让脚本输出：
+
+论文重试次数：8
+成功：8
+解析已恢复：0/8
+avgVariables：
+平均假设：
+avgTheoryBackbones：
+avgStatedGaps：
+emptyStudyContextCount：
+疑似幻觉间隙计数：
+审核元数据保留计数：
+mediationMetaPreservedCount：
+landscapeRowsBefore：
+landscapeRowsAfter：
+理论集群：
+signConflictCount：
+这样你能判断是不是“质量稳定”，不是只看“跑完了”。
+
+最终建议
+我接受D2
+Paper 47 的结果很好，可以视为Phase 1 prompt 在真实长文上的成功样本。
+
+我接受D3 的机制验证
+landscape 能吸收新字段、能聚cluster，说明链路通。
+
+但我不建议马上全量重抽50 篇
+建议先跑6-8 篇分层pilot。 pilot 过了，再全量重抽。
+
+是否进入Phase 2？
+可以进入Phase 2 的设计和展示部分；
+但Phase 2 的硬拒逻辑必须等全量landscape 或至少pilot landscape 通过后再启用。
+
+一句话：
+
+D2 通过，D3 管道通过；现在最稳的下一步不是直接Phase 2，也不是直接全量50，而是先跑6-8 篇分层pilot，确认prompt 在不同论文类型上都稳，再全量重抽并进入Phase 2 硬校验。
