@@ -388,6 +388,9 @@ const dict = {
     "papers.toast.extractedDesc": "在《{title}》中识别出 {count} 个变量",
     "papers.toast.extractFailed": "提取失败",
     "papers.toast.extractFailedDesc": "AI 无法从这篇论文中提取变量，可能是摘要过短。",
+    "papers.toast.err.no_variables": "这篇论文里没有可识别的研究变量（多见于综述、技术应用类或非实证论文）。可以从项目里移除，或换一篇实证研究。",
+    "papers.toast.err.parse_failed": "AI 返回的内容这次没读懂，请稍后再点一次「提取变量」重试。",
+    "papers.toast.err.timeout": "AI 处理这篇论文超时了，可能文章太长，请稍后单独重试。",
 
     "vars.empty.title": "还没有提取到任何变量",
     "vars.empty.body": "请先到『添加论文』那一步，对每篇论文点击『提取变量』。",
@@ -1041,6 +1044,9 @@ const dict = {
     "papers.toast.extractedDesc": "Found {count} variables in \"{title}\"",
     "papers.toast.extractFailed": "Extraction failed",
     "papers.toast.extractFailedDesc": "AI couldn't extract variables — abstract may be too short.",
+    "papers.toast.err.no_variables": "No measurable research variables were found in this paper (often the case for reviews, technical/applied articles, or non-empirical work). You can remove it, or swap in an empirical study.",
+    "papers.toast.err.parse_failed": "AI's reply couldn't be parsed this time. Please click \"Extract variables\" again.",
+    "papers.toast.err.timeout": "AI timed out on this paper — it may be very long. Please retry it on its own later.",
 
     "vars.empty.title": "No variables extracted yet",
     "vars.empty.body": "Go back to \"Add Papers\" and click \"Extract Variables\" on each one.",

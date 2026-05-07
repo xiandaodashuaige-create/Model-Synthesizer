@@ -90,7 +90,12 @@ function ReExtractAllButton({ sessionId }: { sessionId: number }) {
         if (failToastsShown < 3) {
           failToastsShown++;
           const title = (paper as any).title ?? `#${paper.id}`;
-          const reason = err?.data?.error ?? err?.response?.data?.error ?? err?.message ?? "";
+          const code = err?.data?.code ?? err?.response?.data?.code;
+          const friendly = code ? t(`papers.toast.err.${code}` as any) : "";
+          const rawReason = err?.data?.error ?? err?.response?.data?.error ?? err?.message ?? "";
+          const reason = (friendly && !friendly.startsWith("papers.toast.err."))
+            ? friendly
+            : rawReason;
           toast({
             title: t("papers.toast.extractOneFailed" as any, { title: String(title).slice(0, 60) }),
             description: reason ? String(reason).slice(0, 200) : undefined,

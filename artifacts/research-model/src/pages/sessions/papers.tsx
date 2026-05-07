@@ -394,10 +394,16 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
           // Surface a per-paper toast immediately — without this the user
           // only sees the aggregate "成功 X 失败 Y" at the end and can't
           // tell which paper to retry. Body shows the server's actual error.
-          const e = err as { data?: { error?: string }; message?: string };
+          const e = err as { data?: { error?: string; code?: string }; message?: string };
+          const code = e?.data?.code;
+          const friendly = code ? t(`papers.toast.err.${code}` as any) : "";
+          // Use the i18n string if we recognise the code; otherwise fall back
+          // to the server's raw error text. Either way the user never sees
+          // bare English server strings like "AI returned no variables".
+          const desc = (friendly && !friendly.startsWith("papers.toast.err.")) ? friendly : (e?.data?.error ?? e?.message ?? "");
           toast({
             title: t("papers.toast.extractOneFailed" as any, { title: p.title.slice(0, 60) }),
-            description: e?.data?.error ?? e?.message ?? "",
+            description: desc,
             variant: "destructive",
           });
         }

@@ -254,12 +254,12 @@ NOTICE: the chatbot characteristics are kept as separate IV rows even though the
           req.log.warn({ paperId: paper.id, finishReason: completion.choices[0]?.finish_reason }, "Recovered truncated extraction JSON");
         } catch {
           req.log.warn({ content, finishReason: completion.choices[0]?.finish_reason }, "Failed to parse AI extraction JSON (repair also failed)");
-          res.status(500).json({ error: "Failed to parse AI extraction result" });
+          res.status(500).json({ error: "AI 返回的内容无法解析，请稍后再试。", code: "parse_failed" });
           return;
         }
       } else {
         req.log.warn({ content, finishReason: completion.choices[0]?.finish_reason }, "Failed to parse AI extraction JSON");
-        res.status(500).json({ error: "Failed to parse AI extraction result" });
+        res.status(500).json({ error: "AI 返回的内容无法解析，请稍后再试。", code: "parse_failed" });
         return;
       }
     }
@@ -268,7 +268,10 @@ NOTICE: the chatbot characteristics are kept as separate IV rows even though the
     const extractedHyps = Array.isArray(parsed.hypotheses) ? parsed.hypotheses : [];
 
     if (extractedVars.length === 0) {
-      res.status(422).json({ error: "AI returned no variables" });
+      res.status(422).json({
+        error: "这篇论文里没有可识别的研究变量（多见于综述、技术应用类或非实证论文）。",
+        code: "no_variables",
+      });
       return;
     }
 
