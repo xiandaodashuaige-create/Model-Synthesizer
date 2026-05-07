@@ -61,6 +61,14 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
   // click that arrives while empty restarts it.
   const pdfQueueRef = useRef<File[]>([]);
   const pdfWorkerRunningRef = useRef(false);
+  // Persistent list of upload failures so the user can decide later whether to
+  // retry or dismiss each one. Without this the user only sees a transient
+  // toast and the file disappears — if 3 of 10 fail in a batch, by the time
+  // the run is done the 3 failure toasts have scrolled past and the user has
+  // no record of which files need attention. We keep the actual `File`
+  // reference so "retry" can re-upload without a fresh file picker.
+  type FailedUpload = { id: string; file: File; reason: string };
+  const [failedPdfs, setFailedPdfs] = useState<FailedUpload[]>([]);
   // Track WHICH paper is currently being extracted so a single click only
   // spins that one button. Without this, every card shares
   // `extractVariables.isPending` and lights up together — visually it looks
@@ -214,13 +222,28 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
     );
   };
 
+  // Record a failure so it shows up in the persistent failed-uploads panel.
+  // Also fires the same destructive toast the user is used to. We dedupe by
+  // file name so retrying the same file doesn't stack two failure rows.
+  const recordPdfFailure = (file: File, reason: string) => {
+    toast({
+      title: t("papers.pdf.toast.failed" as any, { name: file.name }),
+      description: reason,
+      variant: "destructive",
+    });
+    setFailedPdfs((prev) => {
+      const without = prev.filter((f) => f.file.name !== file.name);
+      return [...without, { id: `${file.name}-${Date.now()}`, file, reason }];
+    });
+  };
+
   const uploadOnePdf = async (file: File): Promise<boolean> => {
     if (!file.name.toLowerCase().endsWith(".pdf") && file.type !== "application/pdf") {
-      toast({ title: t("papers.pdf.toast.notPdf" as any, { name: file.name }), variant: "destructive" });
+      recordPdfFailure(file, t("papers.pdf.toast.notPdf" as any, { name: file.name }));
       return false;
     }
     if (file.size > 25 * 1024 * 1024) {
-      toast({ title: t("papers.pdf.toast.tooLarge" as any, { name: file.name }), variant: "destructive" });
+      recordPdfFailure(file, t("papers.pdf.toast.tooLarge" as any, { name: file.name }));
       return false;
     }
     setPdfUploading(file.name);
@@ -230,11 +253,7 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
       const resp = await fetch(`/api/sessions/${sessionId}/papers/upload-pdf`, { method: "POST", body: fd });
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({ error: "" }));
-        toast({
-          title: t("papers.pdf.toast.failed" as any, { name: file.name }),
-          description: err.error || `HTTP ${resp.status}`,
-          variant: "destructive",
-        });
+        recordPdfFailure(file, err.error || `HTTP ${resp.status}`);
         return false;
       }
       const paper = await resp.json();
@@ -244,9 +263,12 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
       // know nothing got duplicated and the update was intentional.
       const key = paper.alreadyExisted ? "papers.pdf.toast.alreadyExisted" : "papers.pdf.toast.added";
       toast({ title: t(key as any, { title: paper.title }) });
+      // If this same file was previously in the failed list, clear it now —
+      // it's no longer "failed".
+      setFailedPdfs((prev) => prev.filter((f) => f.file.name !== file.name));
       return true;
-    } catch {
-      toast({ title: t("papers.pdf.toast.failed" as any, { name: file.name }), variant: "destructive" });
+    } catch (err) {
+      recordPdfFailure(file, (err as Error)?.message ?? "network error");
       return false;
     }
   };
@@ -584,6 +606,70 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
               {t("papers.pdf.working" as any, { name: pdfUploading })}
               {pdfQueueProgress && pdfQueueProgress.total > 1 ? ` (${pdfQueueProgress.done}/${pdfQueueProgress.total})` : ""}
             </span>
+          </div>
+        )}
+
+        {failedPdfs.length > 0 && (
+          <div className="mt-4 border border-destructive/30 bg-destructive/5 rounded-md p-3" data-testid="panel-failed-pdfs">
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <div className="text-xs font-semibold text-destructive">
+                {t("papers.pdf.failed.title" as any, { count: failedPdfs.length })}
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const files = failedPdfs.map((f) => f.file);
+                    setFailedPdfs([]);
+                    handlePdfFiles(files);
+                  }}
+                  className="text-[11px] rounded-md border border-input bg-background px-2 py-1 hover:bg-accent"
+                  data-testid="button-retry-all-failed-pdfs"
+                >
+                  {t("papers.pdf.failed.retryAll" as any)}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFailedPdfs([])}
+                  className="text-[11px] rounded-md border border-input bg-background px-2 py-1 hover:bg-accent"
+                  data-testid="button-dismiss-all-failed-pdfs"
+                >
+                  {t("papers.pdf.failed.dismissAll" as any)}
+                </button>
+              </div>
+            </div>
+            <p className="text-[11px] text-muted-foreground mb-2">{t("papers.pdf.failed.hint" as any)}</p>
+            <ul className="space-y-1.5">
+              {failedPdfs.map((f) => (
+                <li key={f.id} className="flex items-start justify-between gap-2 text-xs">
+                  <div className="min-w-0 flex-1">
+                    <div className="font-medium text-foreground truncate" title={f.file.name}>{f.file.name}</div>
+                    <div className="text-[11px] text-muted-foreground line-clamp-2" title={f.reason}>{f.reason}</div>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFailedPdfs((prev) => prev.filter((x) => x.id !== f.id));
+                        handlePdfFiles([f.file]);
+                      }}
+                      className="text-[11px] rounded-md bg-primary text-primary-foreground hover:bg-primary/90 px-2 py-1"
+                      data-testid={`button-retry-failed-${f.id}`}
+                    >
+                      {t("papers.pdf.failed.retry" as any)}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFailedPdfs((prev) => prev.filter((x) => x.id !== f.id))}
+                      className="text-[11px] rounded-md border border-input bg-background hover:bg-accent px-2 py-1"
+                      data-testid={`button-dismiss-failed-${f.id}`}
+                    >
+                      {t("papers.pdf.failed.dismiss" as any)}
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
           </div>
         )}
       </div>
