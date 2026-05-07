@@ -417,6 +417,12 @@ router.post("/sessions/:id/live-model/import-from-model", async (req, res) => {
     fromVariableId: number; toVariableId: number; relationship: string;
     fromVariableName?: string; toVariableName?: string;
     evidencePaperId?: number; evidenceCitationText?: string;
+    // P0 fix: AI-generated edges with relationship="moderates" carry a
+    // moderatedEdge pointer naming the A→B causal path being conditioned.
+    // We must preserve this so the canvas can route the moderator's arrow
+    // tip to the midpoint of the moderated path (otherwise it renders as
+    // "moderator → DV", which is semantically wrong per Hard Rule #12).
+    moderatedEdge?: { fromVariableId?: number; toVariableId?: number } | null;
   }>) ?? [];
 
   // Build a remap from the model's stored variableIds → currently-existing variable IDs in this session.
@@ -476,10 +482,24 @@ router.post("/sessions/:id/live-model/import-from-model", async (req, res) => {
     const existingKey = new Set(existingEdges.map((e) =>
       `${e.fromVariableId}->${e.toVariableId}:${e.relationship}`));
 
+    // P0 FIX — TWO-PASS edge insert so moderator edges can name the live
+    // edge they condition. Pass 1: insert every non-moderator edge so they
+    // are guaranteed to exist in the DB when pass 2 looks them up. Pass 2:
+    // resolve each moderator edge's `moderatedEdge.{from,to}VariableId`
+    // against the post-pass-1 edge set, then insert the moderator with
+    // moderatesEdgeId pointing at the matching row id. Without this the
+    // canvas renders "moderator → DV" instead of routing the arrow tip to
+    // the midpoint of the conditioned A→B path.
+    const moderatorEdges: Array<typeof sourceEdges[number] & { _fromId: number; _toId: number }> = [];
     for (const e of sourceEdges) {
       const fromId = resolve(e.fromVariableId, e.fromVariableName);
       const toId = resolve(e.toVariableId, e.toVariableName);
       if (fromId == null || toId == null) { skippedEdges++; continue; }
+      if (e.relationship === "moderates") {
+        // Defer until pass 2 so the path it points at is already inserted.
+        moderatorEdges.push({ ...e, _fromId: fromId, _toId: toId });
+        continue;
+      }
       const key = `${fromId}->${toId}:${e.relationship}`;
       if (existingKey.has(key)) { skippedEdges++; continue; }
       existingKey.add(key); // guard against duplicates within sourceEdges itself
@@ -496,6 +516,61 @@ router.post("/sessions/:id/live-model/import-from-model", async (req, res) => {
       }).onConflictDoNothing({
         target: [liveModelEdgesTable.liveModelId, liveModelEdgesTable.fromVariableId, liveModelEdgesTable.toVariableId, liveModelEdgesTable.relationship],
       });
+    }
+
+    // Pass 2 — moderator edges. Re-query the live edges so we see both the
+    // ones we just inserted and any pre-existing ones (when replace=false).
+    if (moderatorEdges.length > 0) {
+      const allEdges = await tx.select({
+        id: liveModelEdgesTable.id,
+        fromVariableId: liveModelEdgesTable.fromVariableId,
+        toVariableId: liveModelEdgesTable.toVariableId,
+        relationship: liveModelEdgesTable.relationship,
+      }).from(liveModelEdgesTable).where(eq(liveModelEdgesTable.liveModelId, liveModel.id));
+      const idByPath = new Map<string, number>();
+      // Deterministic resolution when the same variable pair has multiple
+      // non-moderator edges (e.g. both 'positive' and 'mediates'): the AI
+      // moderator pointer carries only {from, to} variable ids, never the
+      // relationship type, so we cannot disambiguate from the source side.
+      // We therefore (a) sort edges by id ascending — pass-1 inserts in
+      // source order, so smallest id ≈ first sourceEdges occurrence —
+      // and (b) keep only the lowest id per pair. Result is fully
+      // reproducible across imports of the same source model.
+      const sortedAll = [...allEdges].sort((a, b) => a.id - b.id);
+      for (const ee of sortedAll) {
+        if (ee.relationship === "moderates") continue; // moderators don't moderate moderators
+        const k = `${ee.fromVariableId}->${ee.toVariableId}`;
+        if (!idByPath.has(k)) idByPath.set(k, ee.id);
+      }
+      for (const e of moderatorEdges) {
+        const key = `${e._fromId}->${e._toId}:moderates`;
+        if (existingKey.has(key)) { skippedEdges++; continue; }
+        // Resolve the moderated path via remap (source variableIds → live ids).
+        let moderatesEdgeId: number | null = null;
+        const me = e.moderatedEdge;
+        if (me?.fromVariableId != null && me?.toVariableId != null) {
+          const meFrom = resolve(me.fromVariableId);
+          const meTo = resolve(me.toVariableId);
+          if (meFrom != null && meTo != null) {
+            moderatesEdgeId = idByPath.get(`${meFrom}->${meTo}`) ?? null;
+          }
+        }
+        existingKey.add(key);
+        await tx.insert(liveModelEdgesTable).values({
+          liveModelId: liveModel.id,
+          fromVariableId: e._fromId,
+          toVariableId: e._toId,
+          relationship: "moderates",
+          provenancePaperId: e.evidencePaperId ?? null,
+          provenanceCitationText: e.evidenceCitationText ?? null,
+          sourceModelId: modelId,
+          userAdded: false,
+          confidence: "medium",
+          moderatesEdgeId,
+        }).onConflictDoNothing({
+          target: [liveModelEdgesTable.liveModelId, liveModelEdgesTable.fromVariableId, liveModelEdgesTable.toVariableId, liveModelEdgesTable.relationship],
+        });
+      }
     }
 
     await tx.update(liveModelsTable)

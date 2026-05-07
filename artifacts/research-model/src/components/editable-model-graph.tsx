@@ -106,6 +106,12 @@ export interface EditableModelGraphProps {
   // Read-only mode disables all editing handles + callbacks.
   readOnly?: boolean;
   height?: number;
+  // P3 cross-highlight: when set, the edge with this id renders thicker and
+  // fully opaque so the user can see the canvas counterpart of a list row
+  // they're hovering. `onEdgeHover` lets the canvas push hover events back
+  // up so the matching list row can highlight in reverse.
+  highlightEdgeId?: string | null;
+  onEdgeHover?: (edgeId: string | null) => void;
   // Editing callbacks (only invoked when !readOnly).
   onNodeMove?: (canvasNodeId: string, variableId: number, x: number, y: number) => void;
   onNodeDelete?: (canvasNodeId: string, variableId: number) => void;
@@ -219,6 +225,10 @@ interface RelEdgeData extends Record<string, unknown> {
   warning?: boolean;
   readOnly: boolean;
   onDelete?: (edgeId: string) => void;
+  // P3 cross-highlight flag — set per-edge when the parent's highlightEdgeId
+  // matches. Lives on the edge data (not a context) so RF's per-edge memo
+  // diff catches changes correctly without re-rendering every edge.
+  highlighted?: boolean;
   // For "moderates" edges: when present, the moderator's arrow is rerouted to
   // land on the midpoint of the primary edge between these two nodes,
   // visually indicating that it moderates the *relationship* (not a node).
@@ -269,7 +279,13 @@ function RelEdge(props: EdgeProps<RelEdge>) {
         id={id}
         path={path}
         markerEnd={useMidpoint ? undefined : markerEnd}
-        style={{ stroke: color, strokeWidth: 1.8, strokeDasharray: dash, opacity: 0.85 }}
+        style={{
+          stroke: color,
+          // P3: thicker + fully opaque when this edge is the cross-highlight target.
+          strokeWidth: data?.highlighted ? 3.2 : 1.8,
+          strokeDasharray: dash,
+          opacity: data?.highlighted ? 1 : 0.85,
+        }}
       />
       {useMidpoint && (
         // Small filled disc at the attachment point so it visibly "lands on" the moderated edge.
@@ -378,7 +394,7 @@ const edgeTypes = { rel: RelEdge };
 
 function EditableModelGraphInner(props: EditableModelGraphProps) {
   const { t } = useT();
-  const { nodes: inputNodes, edges: inputEdges, variablePool, readOnly = false, height = 480, onNodeMove, onNodeDelete, onEdgeDelete, onEdgeCreate, onEdgeCreateOnEdge, onAddVariable } = props;
+  const { nodes: inputNodes, edges: inputEdges, variablePool, readOnly = false, height = 480, onNodeMove, onNodeDelete, onEdgeDelete, onEdgeCreate, onEdgeCreateOnEdge, onAddVariable, highlightEdgeId = null, onEdgeHover } = props;
   const rfInstance = useReactFlow();
 
   // Compute initial positions once per node-set change. We keep an internal
@@ -462,6 +478,7 @@ function EditableModelGraphInner(props: EditableModelGraphProps) {
           warning: e.warning,
           readOnly,
           onDelete: onEdgeDelete,
+          highlighted: highlightEdgeId != null && e.id === highlightEdgeId,
         };
         if (e.relationship === "moderates") {
           // Prefer the EXPLICIT pointer from the user's drop-on-edge interaction.
@@ -497,7 +514,7 @@ function EditableModelGraphInner(props: EditableModelGraphProps) {
         } as Edge;
       })
       .filter((x): x is Edge => !!x);
-  }, [inputNodes, inputEdges, readOnly, onEdgeDelete]);
+  }, [inputNodes, inputEdges, readOnly, onEdgeDelete, highlightEdgeId]);
 
   // Drag handling — mutate internal state on every change, fire callback only on dragStop.
   const onNodesChange = useCallback(
@@ -657,6 +674,8 @@ function EditableModelGraphInner(props: EditableModelGraphProps) {
         onNodeDragStop={handleNodeDragStop}
         onConnect={handleConnect}
         onConnectEnd={handleConnectEnd}
+        onEdgeMouseEnter={onEdgeHover ? (_, edge) => onEdgeHover(edge.id) : undefined}
+        onEdgeMouseLeave={onEdgeHover ? () => onEdgeHover(null) : undefined}
         nodesConnectable={!readOnly}
         nodesDraggable={!readOnly}
         elementsSelectable={!readOnly}

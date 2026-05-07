@@ -317,6 +317,10 @@ export default function LiveModelPage({ params }: { params?: { id: string } }) {
   // (case-insensitive, whitespace-trimmed) so users can find a construct fast
   // even when the pool has 100+ entries after a multi-paper extraction.
   const [poolQuery, setPoolQuery] = useState("");
+  // P3: cross-highlight between the edge list and the canvas. Hovering a row
+  // sets the canvas edge's stroke to a thicker primary tint (and vice-versa).
+  // String-typed because RF edge ids are strings even though our DB ids are numbers.
+  const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null);
   const [isAddingEdge, setIsAddingEdge] = useState(false);
   const [edgeFrom, setEdgeFrom] = useState<number | "">("");
   const [edgeTo, setEdgeTo] = useState<number | "">("");
@@ -759,6 +763,8 @@ export default function LiveModelPage({ params }: { params?: { id: string } }) {
                 onEdgeCreate={handleCanvasEdgeCreate}
                 onEdgeCreateOnEdge={handleCanvasEdgeOnEdge}
                 onAddVariable={handleAddVar}
+                highlightEdgeId={hoveredEdgeId}
+                onEdgeHover={setHoveredEdgeId}
               />
             </div>
 
@@ -890,10 +896,26 @@ export default function LiveModelPage({ params }: { params?: { id: string } }) {
                 <div className="p-6 text-center text-sm text-muted-foreground">{t("live.edges.empty" as any)}</div>
               ) : (
                 <ul className="divide-y divide-border">
-                  {sortedEdges.map((e) => (
-                    <li key={e.id} data-testid={`edge-row-${e.id}`} className="flex items-start gap-3 px-4 py-3 group">
+                  {sortedEdges.map((e) => {
+                    // P1: when this is a moderator edge with a known target,
+                    // render "X moderates [A → B]" so the user can see WHICH
+                    // path is being conditioned (instead of the misleading
+                    // "moderator → DV" rendering). Falls back to plain
+                    // from/to if the target id isn't in the current edges.
+                    const moderatedTarget = e.relationship === "moderates" && e.moderatesEdgeId != null
+                      ? edges.find((ed) => ed.id === e.moderatesEdgeId)
+                      : null;
+                    const isHighlighted = hoveredEdgeId === String(e.id);
+                    return (
+                    <li
+                      key={e.id}
+                      data-testid={`edge-row-${e.id}`}
+                      onMouseEnter={() => setHoveredEdgeId(String(e.id))}
+                      onMouseLeave={() => setHoveredEdgeId((cur) => cur === String(e.id) ? null : cur)}
+                      className={`flex items-start gap-3 px-4 py-3 group transition-colors ${isHighlighted ? "bg-primary/5" : ""}`}
+                    >
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 text-sm">
+                        <div className="flex items-center gap-2 text-sm flex-wrap">
                           {hTagByEdgeId.get(e.id) && (
                             <span
                               className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-violet-50 text-violet-700 border border-violet-200"
@@ -904,7 +926,19 @@ export default function LiveModelPage({ params }: { params?: { id: string } }) {
                           )}
                           <span className="font-medium text-foreground">{e.fromVariableName}</span>
                           <span className="text-muted-foreground">{REL_STYLE[e.relationship]?.label ?? e.relationship}</span>
-                          <span className="font-medium text-foreground">{e.toVariableName}</span>
+                          {moderatedTarget ? (
+                            <span
+                              data-testid={`edge-moderated-path-${e.id}`}
+                              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] bg-violet-50 text-violet-700 border border-violet-200"
+                              title={t("live.edge.moderatedPathTip" as any) as string}
+                            >
+                              <span className="font-medium">{moderatedTarget.fromVariableName}</span>
+                              <span className="opacity-70">→</span>
+                              <span className="font-medium">{moderatedTarget.toVariableName}</span>
+                            </span>
+                          ) : (
+                            <span className="font-medium text-foreground">{e.toVariableName}</span>
+                          )}
                           {!e.hasProvenance && (
                             <>
                               <span
@@ -954,7 +988,8 @@ export default function LiveModelPage({ params }: { params?: { id: string } }) {
                         <X className="w-4 h-4" />
                       </button>
                     </li>
-                  ))}
+                    );
+                  })}
                 </ul>
               )}
             </div>
