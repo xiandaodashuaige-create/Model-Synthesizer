@@ -843,7 +843,7 @@ HARD RULES (violations = invalid output):
 9. **Variety**: each model must have a clearly different theoretical focus (different DV, different mediator chain, or different moderator).
 10. **Construct-layer ordering (CRITICAL — anti "logic jump")**: every directed edge MUST go FORWARD in the standard psychology pipeline (stimulus → cognitive → affective → intention → behavior). Backward edges (e.g. behavior → cognition) and 2-step jumps (e.g. stimulus → behavior with no cognitive/affective mediator) are PROHIBITED unless your rationale explicitly invokes a feedback-loop theory. Mediator chains MUST NOT exceed 3 hops between the IV and the DV — chains longer than 3 are diluted and will be rejected.
 11. **One role per canonical construct**: a single canonicalConstruct may NOT appear with two different roles in the same model (e.g. you cannot use "trust" as both a mediator AND a moderator in the same model). This prevents nonsensical self-moderation.
-12. **Moderator justification (REQUIRED when relationship = "moderates")**: every moderator edge MUST include a non-empty \`moderatorJustification\` field (≥ 1 sentence) explaining (a) WHY this variable can theoretically condition the moderated path (e.g. it's a contextual factor, individual difference, or boundary condition) and (b) WHICH paper grounds this moderating role. Without justification, the moderator edge is rejected.
+12. **Moderator targets a PATH, not a node (CRITICAL)**: a moderator does not act on the dependent variable directly — it conditions a CAUSAL PATH between two other variables (e.g. "social overload moderates the engagement → impulse buying link" is correct; "social overload moderates impulse buying" is WRONG and will be rejected). When relationship = "moderates", you MUST: (a) provide a non-empty \`moderatorJustification\` field (≥ 1 sentence) explaining WHY this variable can theoretically condition the path AND WHICH paper grounds this moderating role; (b) provide a \`moderatedEdge\` object \`{ "fromVariableId": <int>, "toVariableId": <int> }\` naming the EXISTING non-moderator edge in this same model whose effect is being conditioned. The two ids in \`moderatedEdge\` MUST exactly match a positive/negative/mediates edge already present in the \`edges\` array; the moderator's own \`from\` is the moderator variable; its own \`to\` SHOULD be \`moderatedEdge.toVariableId\` (the receiving end of the moderated path), NEVER the dependent variable when there's a mediator on the path. Without these fields, or when \`moderatedEdge\` references a path that doesn't exist as a real edge in the model, the moderator edge is rejected.
 13. **Hypothesis-grounded evidence (preferred)**: when an edge corresponds to a row in the FORMAL HYPOTHESES POOL above, set \`evidenceHypothesisId\` to that row's id (e.g. "H2a"), copy \`statement\` verbatim into \`evidenceCitationText\`, copy \`effectSize\` and \`pageOrSection\` if available. Edges grounded in formal hypotheses are stronger than those grounded only in narrative citations.
 14. **Topic alignment (enforced by the UNIFIED USER INTENT block at the top)**: every generated model MUST visibly advance the user's stated research topic and respect the DOMAIN LOCK + OUTCOME LOCK rules. The model's \`description\` MUST open with one sentence in the user's language that explicitly names BOTH the topic's domain (e.g. "AI 客服机器人") AND its outcome family (e.g. "消费者冲动购买"), and states how this model preserves both. Drifting the domain (e.g. swapping "AI chatbot" for "AI streamer") OR the outcome family (e.g. swapping "impulse purchase" for "purchase intention") is INVALID and the model will be REJECTED. If the topic is so narrow that only 2 papers are clearly relevant, override Hard Rule #4's "≥3 papers" requirement and prefer a topically-tight 2-paper combination over a topically-loose 3-paper one — call this out in [TOPIC FIT].
 15. **Enrichment beyond focus picks (CRITICAL — the user explicitly asked for this)**: focus picks are the SPINE of the model, NOT the entire skeleton. Every model MUST add AT LEAST ONE non-pick variable drawn from the EXTRACTED VARIABLES POOL (above) that the literature evidences as theoretically relevant — typically a mediator that explains HOW the picked IV reaches the picked DV, or a moderator that conditions WHEN it does. The added variable MUST come from a different paper than the focus picks when possible (this is what gives the model its cross-paper synthesis value). A model whose nodes consist of focus picks ONLY (no enrichment) is a copy of what the user already chose, not a synthesized model — REJECTED. The added variable MUST appear in the FOCUS FIT line of the rationale labeled as "[ENRICHMENT]" (e.g. "[ENRICHMENT] 在用户选择的『拟人化感知 → 冲动购买』之上，从 P3 引入『心流体验』作为情感中介，因为 P3 显示该构念是冲动行为的重要前置因子").
@@ -864,7 +864,7 @@ OUTPUT FORMAT — return ONLY a JSON object (NOT a bare array) whose single top-
         { "variableId": <int>, "variableName": "<name>", "type": "independent|mediator|moderator|dependent", "paperId": <int>, "paperTitle": "<title>", "paperAuthors": ["<author>"], "paperYear": <year or null> }
       ],
       "edges": [
-        { "fromVariableId": <int>, "toVariableId": <int>, "fromVariableName": "<name>", "toVariableName": "<name>", "relationship": "positive|negative|moderates|mediates", "evidencePaperId": <int>, "evidencePaperTitle": "<title>", "evidencePaperAuthors": ["<author>"], "evidencePaperYear": <year or null>, "evidenceCitationText": "<verbatim sentence from the paper>", "evidenceHypothesisId": "<H1|H2a|null>", "effectSize": "<β=.34, p<.001 | null>", "evidenceLocation": "<p.412 | Section 3.2 | null>", "moderatorJustification": "<REQUIRED when relationship=moderates; null otherwise>" }
+        { "fromVariableId": <int>, "toVariableId": <int>, "fromVariableName": "<name>", "toVariableName": "<name>", "relationship": "positive|negative|moderates|mediates", "evidencePaperId": <int>, "evidencePaperTitle": "<title>", "evidencePaperAuthors": ["<author>"], "evidencePaperYear": <year or null>, "evidenceCitationText": "<verbatim sentence from the paper>", "evidenceHypothesisId": "<H1|H2a|null>", "effectSize": "<β=.34, p<.001 | null>", "evidenceLocation": "<p.412 | Section 3.2 | null>", "moderatorJustification": "<REQUIRED when relationship=moderates; null otherwise>", "moderatedEdge": {"fromVariableId": <int>, "toVariableId": <int>} /* REQUIRED when relationship=moderates: the existing causal edge being conditioned; must match a non-moderator edge in this same edges[] array */ }
       ]
     }
   ]
@@ -1530,10 +1530,33 @@ OUTPUT FORMAT — return a JSON object with key "models" containing an array of 
         if (!nodeIds.has(e.fromVariableId) || !nodeIds.has(e.toVariableId)) return { ok: false, reason: "edge references unknown node" };
         if (!e.evidenceCitationText || e.evidenceCitationText.trim().length < 12) return { ok: false, reason: "missing/too-short evidence text" };
         if (!validPaperIds.has(e.evidencePaperId)) return { ok: false, reason: `unknown evidencePaperId ${e.evidencePaperId}` };
-        // RULE 12: moderator edges MUST have justification.
+        // RULE 12: moderator edges MUST have justification AND target a real path.
         if (e.relationship === "moderates") {
           const just = (e as { moderatorJustification?: string | null }).moderatorJustification;
           if (!just || String(just).trim().length < 12) return { ok: false, reason: `moderator edge ${e.fromVariableName} → ${e.toVariableName} missing moderatorJustification` };
+          // The moderator must condition a real A→B path that exists as a
+          // separate non-moderator edge in this same model. Pre-fix the AI
+          // would emit `from=moderator, to=DV` and the visual rendered as
+          // "moderator moderates DV" which is semantically wrong — moderators
+          // act on a relationship between two other variables, not on the DV
+          // itself. Now we require an explicit moderatedEdge pointer and
+          // verify that path exists.
+          const me = (e as { moderatedEdge?: { fromVariableId?: number; toVariableId?: number } | null }).moderatedEdge;
+          if (!me || typeof me.fromVariableId !== "number" || typeof me.toVariableId !== "number") {
+            return { ok: false, reason: `moderator edge ${e.fromVariableName} → ${e.toVariableName} missing moderatedEdge (which A→B path is being conditioned?)` };
+          }
+          if (me.fromVariableId === e.fromVariableId || me.toVariableId === e.fromVariableId) {
+            return { ok: false, reason: `moderator edge ${e.fromVariableName} → ${e.toVariableName} cannot moderate a path that includes itself` };
+          }
+          const matched = m.edges.some((other) =>
+            other !== e &&
+            other.relationship !== "moderates" &&
+            other.fromVariableId === me.fromVariableId &&
+            other.toVariableId === me.toVariableId,
+          );
+          if (!matched) {
+            return { ok: false, reason: `moderator edge ${e.fromVariableName} → ${e.toVariableName} references moderatedEdge ${me.fromVariableId}→${me.toVariableId} that doesn't exist as a non-moderator edge in this model` };
+          }
         }
         // RULE 10a: construct-layer ordering — non-moderator edges must go FORWARD.
         if (e.relationship !== "moderates") {
@@ -1654,6 +1677,24 @@ OUTPUT FORMAT — return a JSON object with key "models" containing an array of 
           if (e.relationship === "moderates") {
             const just = (e as { moderatorJustification?: string | null }).moderatorJustification;
             if (!just || String(just).trim().length < 12) {
+              repairStats.droppedModeratorEdges++;
+              return false;
+            }
+            // Drop moderator edges that don't reference a real A→B path —
+            // they render as the semantically-wrong "moderates the DV" arrow.
+            // Dropping in repair (rather than hard-rejecting the whole model)
+            // means a model with one bad moderator can survive cleanly; one
+            // with too many will fail the ≥4-edges floor and be regenerated.
+            const me = (e as { moderatedEdge?: { fromVariableId?: number; toVariableId?: number } | null }).moderatedEdge;
+            const ok = !!me && typeof me.fromVariableId === "number" && typeof me.toVariableId === "number"
+              && me.fromVariableId !== e.fromVariableId && me.toVariableId !== e.fromVariableId
+              && (m.edges as typeof m.edges).some((other) =>
+                other !== e &&
+                other.relationship !== "moderates" &&
+                other.fromVariableId === me.fromVariableId &&
+                other.toVariableId === me.toVariableId,
+              );
+            if (!ok) {
               repairStats.droppedModeratorEdges++;
               return false;
             }
