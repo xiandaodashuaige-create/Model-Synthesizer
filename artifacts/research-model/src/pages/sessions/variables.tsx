@@ -639,7 +639,59 @@ export default function SessionVariables({ params: routeParams }: { params?: { i
     }
     clusterMap.get(key)!.sources.push(v);
   }
-  const clusters = [...clusterMap.values()].sort((a, b) => b.sources.length - a.sources.length);
+  // Importance scoring. Pure source-count sorting was misleading: demographic
+  // covariates like "age" / "gender" appear in many papers as CONTROLS, not as
+  // theoretical IVs of interest, and they were dominating the top of the IV
+  // list while the actual treatment / system-characteristic IVs (which a paper
+  // may only have one or two of) got buried. We layer three signals:
+  //   1. Hard demote: demographic / control-variable terms always sink to the
+  //      bottom regardless of how many papers used them as covariates.
+  //   2. Construct-layer boost: the AI extractor tags every variable with a
+  //      psychology-pipeline layer. Per type, certain layers ARE the canonical
+  //      "main" role for that type, and we promote them:
+  //        - IV: stimulus (treatment / system feature / design characteristic)
+  //        - mediator: cognitive / affective (perception / attitude shifts)
+  //        - moderator: stimulus / cognitive (boundary conditions)
+  //        - DV: behavior > intention (enacted outcome > stated willingness)
+  //   3. Source count as the within-tier tiebreak — more replication = stronger
+  //      signal once the role is right.
+  const DEMOGRAPHIC_RE = /\b(age|gender|sex|education|income|race|ethnicity|nationality|country|region|marital|household|occupation|employment|salary|tenure|seniority|religion|language|residence|year of birth|birth year)\b/i;
+  const CONTROL_RE = /\b(control variable|covariate|demographic|control(s)?:)\b/i;
+  const isControlLike = (c: Cluster): boolean => {
+    if (DEMOGRAPHIC_RE.test(c.name)) return true;
+    // Definition often says "used as a covariate" / "control variable" — that
+    // signal is more reliable than the name alone (e.g. "experience" can be a
+    // real IV in one paper and a control in another).
+    return c.sources.some((s) => CONTROL_RE.test(s.definition ?? ""));
+  };
+  const layerBoost = (type: string, layer: string | null | undefined): number => {
+    const l = (layer ?? "").toLowerCase().trim();
+    if (type === "independent") return l === "stimulus" ? 50 : 0;
+    if (type === "mediator") return l === "cognitive" || l === "affective" ? 40 : 0;
+    if (type === "moderator") return l === "stimulus" || l === "cognitive" ? 30 : 0;
+    if (type === "dependent") {
+      if (l === "behavior") return 50;
+      if (l === "intention") return 30;
+      return 0;
+    }
+    return 0;
+  };
+  const importanceScore = (c: Cluster): number => {
+    if (isControlLike(c)) return -1000 + c.sources.length;
+    // Use the most-favourable layer tag across sources (different papers may
+    // tag the same construct slightly differently — e.g. "trust" as cognitive
+    // in one, affective in another; reward whichever tag is canonical for the
+    // role).
+    const bestBoost = Math.max(...c.sources.map((s) => layerBoost(c.type, s.constructLayer)));
+    return bestBoost + c.sources.length * 2;
+  };
+  const clusters = [...clusterMap.values()].sort((a, b) => {
+    const sa = importanceScore(a);
+    const sb = importanceScore(b);
+    if (sa !== sb) return sb - sa;
+    if (b.sources.length !== a.sources.length) return b.sources.length - a.sources.length;
+    return a.name.localeCompare(b.name);
+  });
 
   const grouped: Record<string, Cluster[]> = {};
   for (const c of clusters) {
@@ -648,6 +700,11 @@ export default function SessionVariables({ params: routeParams }: { params?: { i
 
   const typeOrder = ["independent", "mediator", "moderator", "dependent"];
   const PRIMARY_THRESHOLD = 2;
+  // A cluster is "primary" only if it has 2+ sources AND isn't a demographic
+  // control. This keeps the spotlight on substantive variables — controls
+  // still appear, but in the collapsed "次要变量" group at the bottom where
+  // they belong.
+  const isPrimary = (c: Cluster): boolean => c.sources.length >= PRIMARY_THRESHOLD && !isControlLike(c);
 
   return (
     <div className="space-y-8">
@@ -721,8 +778,8 @@ export default function SessionVariables({ params: routeParams }: { params?: { i
         {typeOrder.filter((tp) => grouped[tp]?.length).map((type) => {
           const meta = TYPE_META[type]!;
           const list = grouped[type] ?? [];
-          const primary = list.filter((c) => c.sources.length >= PRIMARY_THRESHOLD);
-          const secondary = list.filter((c) => c.sources.length < PRIMARY_THRESHOLD);
+          const primary = list.filter(isPrimary);
+          const secondary = list.filter((c) => !isPrimary(c));
           return (
             <div key={type}>
               <h2 className={`text-sm font-semibold uppercase tracking-wider mb-3 flex items-center gap-2 ${meta.color}`}>
