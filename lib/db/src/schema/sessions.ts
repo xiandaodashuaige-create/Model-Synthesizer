@@ -94,12 +94,23 @@ export const papersTable = pgTable("papers", {
   // - scopeStatus: "in_scope" | "out_of_scope" | "uncertain" — kept verbatim
   //   from the AI's scopeCheck even when we DON'T tangential-flag (so a
   //   reviewer can audit borderline calls).
-  // - scopeScore: 0–100 confidence of the scopeStatus verdict.
+  // - topicFitScore: 0–100 — how well the paper's research object/variables
+  //   FIT the session topic (semantic match, NOT confidence in the verdict).
+  //   high = strong fit; low = weak fit. Independent of scopeStatus.
+  // - scopeConfidence: 0–100 — how confident the AI is in the scopeStatus
+  //   verdict ITSELF. e.g. "uncertain + scopeConfidence=90" means "I am very
+  //   sure this is borderline", NOT "90% topic fit".
+  // - scopeScore: DEPRECATED — kept for back-compat reads. New writes set
+  //   scopeScore = scopeConfidence so existing callers see no behavior change
+  //   while we migrate read sites. Will be removed once all readers move to
+  //   topicFitScore + scopeConfidence.
   // - tangentialReason: short human-readable rationale for the UI badge.
   tangential: boolean("tangential").notNull().default(false),
   tangentialReason: text("tangential_reason"),
   scopeStatus: text("scope_status"),
   scopeScore: integer("scope_score"),
+  topicFitScore: integer("topic_fit_score"),
+  scopeConfidence: integer("scope_confidence"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

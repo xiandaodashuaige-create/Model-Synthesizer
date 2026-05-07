@@ -1,0 +1,151 @@
+我判断：这轮 A+B 三态门控思路通过，paper 37 的修复结果也说明方向正确；但“Phase 1 完成”要分两层说：工程能力完成，可以进入 Phase 2 设计；全量数据底座还没完成，不建议马上启用 Phase 2 的硬评分/硬拒。
+另外说明：我拉到当前远端 f1cc58a 后，还没看到你说的 paper-extraction.ts、tangential schema、probe 脚本等新文件，所以以下判断基于你贴出的运行报告，不是源码逐行验收。
+1. A+B 三态门控：我认可
+你们现在的门控结果：
+paper	scope	vars/hyps	判断
+37	out_of_scope	0/0	正确拦截
+35	uncertain	12/9	未误杀
+46	in_scope	9/12	正常
+57	in_scope	9/13	正常
+70	uncertain	6/6	未误杀
+80	uncertain	9/16	未误杀
+39	in_scope	8/19	正常
+59	旧数据保留	9/20	未完成重跑
+这个结果说明你采用的策略是对的：
+out_of_scope 高置信 → tangential
+uncertain → 正常保留
+in_scope → 正常提取
+尤其是 uncertain 不触发 tangential，这点很重要，能避免误杀理论迁移型论文。
+2. paper 37 修复是关键通过点
+paper 37 之前是严重污染源：
+分布式 AI 网络通信论文 → 被抽成 14 个研究变量和 9 条关系
+现在结果：
+out_of_scope
+score=30
+vars=0
+hyps=0
+tangential=true
+landscape 488 → 479
+paperCount 50 → 49
+这个说明：
+tangential 过滤生效；
+landscape 会剔除污染关系；
+session paper count 会排除 tangential；
+变量/假设没有继续污染模型生成。
+这一步可以认为是 Phase 1 的关键风险被控制住了。
+3. 但我看到一个需要澄清的问题：uncertain score=90
+你报告里：
+35 uncertain 90
+70 uncertain 88
+80 uncertain 85
+这里要小心。
+如果 score 表示“in-scope 置信度”，那 uncertain=90 语义矛盾。
+如果 score 表示“模型对判断的置信度”，那就没问题。
+我建议字段拆成两个：
+scopeStatus: "in_scope" | "out_of_scope" | "uncertain"
+scopeConfidence: 0-100 // 对这个判断的置信度
+topicFitScore: 0-100   // 与 session topic 的贴合度
+否则后面 Phase 2 用这个分数做 context gap / tangential 判断时，会混淆。
+比如：
+uncertain + confidence 90
+意思可能是“我很确定这是 uncertain”，不是“它 90% 贴合主题”。
+这个必须在 schema / taxonomy 里说清楚。
+4. paper 59 没有完整重跑，pilot 严格说是 7.5/8
+你说：
+59 mid-extract 被超时打断，旧数据保留，未误判
+我建议不要把它算成完整 pilot 通过。
+它可以算：
+未发现误杀
+但不能算：
+新门控 + 新提取完整通过
+建议单独补跑 paper 59 一次，或者把 pilot 报告写成：
+7/8 完整新提取通过；
+1/8 保留旧数据，未验证新提取完整链路。
+这不是大问题，但验收口径要准确。
+5. “按需懒回放”可以接受，但要加 coverage 提示
+你们决定不全量 50 篇重抽，改为按需触发。这个在工程上可以接受，尤其当前 bash 有 2 分钟限制。
+但对 Phase 2 来说有个风险：
+landscape 里新字段覆盖率不完整
+如果 49 篇里很多还没新字段，那么：
+theoryClusters 不完整；
+statedGaps 不完整；
+studyContext 不完整；
+innovationTypes 可能偏；
+noveltyScore 可能误判；
+gap report 会偏向已重抽论文。
+所以我建议新增一个 landscapeCoverage 概念：
+landscapeMeta: {
+  relationshipCount,
+  theoryClusterCount,
+  extractedWithInnovationFieldsCount,
+  totalEligiblePaperCount,
+  coverageRate
+}
+前端或 Phase 2 评分时显示：
+当前创新分析覆盖 8/49 篇文献，结果为初步分析。
+这样用户不会误以为 landscape 已经完整代表 50 篇文献。
+6. evidence-matching 加 tangential 过滤：正确
+你们修了：
+loadLibraryCandidates 加 manual:% 哨兵 + tangential IS NOT TRUE
+这个必须做。否则虽然 landscape 过滤了 tangential，但 evidence search 还能把 off-topic paper 找回来当证据。
+这项修复我认可。
+后续还要确认这些地方都过滤 tangential：
+paper list count；
+model generation paper pool；
+variable extraction aggregate；
+assistant context；
+image query context；
+personalization profile；
+evidence matching；
+landscape rebuild；
+model figure search per paper。
+你们之前对 manual sentinel 做过全链路过滤，tangential 应该复用同一套策略。
+7. 是否可以宣布 Phase 1 完成？
+我的判断：
+可以宣布“Phase 1 工程能力完成”
+因为你们已经完成：
+schema；
+prompt；
+shared extraction；
+A+B scope gate；
+tangential 落库；
+landscape 剔除；
+pilot 验证；
+evidence matching 过滤；
+api-server 重启验证。
+但不要宣布“Phase 1 数据全量完成”
+因为：
+全 50 篇没有重抽；
+paper 59 这次没有完整重跑；
+landscape coverage 不是 100%。
+建议对外措辞：
+Phase 1 infrastructure completed and pilot-validated.
+Full corpus backfill is deferred / lazy.
+8. 能不能进入 Phase 2？
+可以进入 Phase 2 的非硬性部分
+可以做：
+contributionStatement schema；
+edgeNoveltyTags；
+noveltyScore 计算；
+innovationTypes 分类；
+模型卡 UI；
+landscape/gap 页面；
+早期模型兼容；
+analysis-only 展示。
+暂时不要启用硬拒
+不要立刻启用：
+noveltyScore < 25 硬拒
+innovationTypes 空硬拒
+contributionStatement 空硬拒
+直到至少满足：
+landscapeCoverage >= 70%
+或者用户明确点击“重建/回填创新分析”。
+9. 我的最终建议
+我建议你回复执行方：
+同意 Phase 1 收尾，认可 A+B 三态门控。paper 37 的 tangential 修复证明门控有效，evidence matching 过滤也修对了。可以进入 Phase 2 的展示和 analysis-only 实现，但 Phase 2 的硬拒阈值暂缓。请补充 scopeScore 语义拆分为 topicFitScore / scopeConfidence，或至少在文档中明确 score 含义；并将 landscape coverage 写入 landscapeMeta，避免用户把部分回填的数据当成全量分析。paper 59 建议单独补跑一次，但不阻塞 Phase 2 设计。
+简短拍板
+批准进入 Phase 2，但有三个条件：
+scope score 语义要澄清，最好拆成 topicFitScore + scopeConfidence；
+增加 landscapeCoverage，标记当前创新分析覆盖率；
+Phase 2 先 analysis-only，不开硬拒阈值。
+一句话：A+B 成功，paper 37 blocker 已解除；Phase 1 工程通过，数据全量回填延后；Phase 2 可以开始，但先做展示和评分，不要马上用评分拦截模型。

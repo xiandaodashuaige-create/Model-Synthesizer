@@ -310,6 +310,28 @@ export async function rebuildLandscape(sessionId: number): Promise<{
   const stampedRows = aggregatedRows.map((r) => ({ ...r, sessionId, landscapeVersion: nextVersion }));
   const theoryClusters = aggregateTheoryClusters(realPapers);
 
+  // Innovation-coverage signal: how many of the eligible (non-tangential,
+  // non-sentinel) papers carry the Phase 1 "innovation fields" — at least one
+  // of theoryBackbone / statedGaps / studyContext populated by the new
+  // extraction prompt. Surfaced in the UI as a "this analysis covers N/M
+  // papers" disclaimer so users don't mistake a partially-backfilled corpus
+  // for a complete one. Phase 2 hard-rejection thresholds will key off
+  // coverageRate >= some floor.
+  const hasInnovationFields = (p: Paper): boolean => {
+    const tb = p.theoryBackbone;
+    const sg = p.statedGaps;
+    const sx = p.studyContext as { objectType?: unknown } | null;
+    if (Array.isArray(tb) && tb.length > 0) return true;
+    if (Array.isArray(sg) && sg.length > 0) return true;
+    if (sx && typeof sx === "object" && typeof sx.objectType === "string" && sx.objectType.trim().length > 0) return true;
+    return false;
+  };
+  const extractedWithInnovationFieldsCount = realPapers.filter(hasInnovationFields).length;
+  const totalEligiblePaperCount = realPapers.length;
+  const coverageRate = totalEligiblePaperCount > 0
+    ? Math.round((extractedWithInnovationFieldsCount / totalEligiblePaperCount) * 1000) / 1000
+    : 0;
+
   await db.transaction(async (tx) => {
     await tx.delete(constructRelationshipsTable).where(eq(constructRelationshipsTable.sessionId, sessionId));
     if (stampedRows.length > 0) {
@@ -332,6 +354,13 @@ export async function rebuildLandscape(sessionId: number): Promise<{
         paperCount: realPapers.length,
         hypothesisCount: realHypotheses.length,
         relationshipCount: stampedRows.length,
+        // Innovation-analysis coverage. Phase 2 surfaces this in the UI and
+        // gates hard-reject thresholds on it.
+        landscapeCoverage: {
+          extractedWithInnovationFieldsCount,
+          totalEligiblePaperCount,
+          coverageRate, // 0..1, 3 decimals
+        },
       },
     }).where(eq(sessionsTable.id, sessionId));
   });

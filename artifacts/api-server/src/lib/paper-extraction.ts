@@ -128,7 +128,8 @@ Return ONLY this JSON (no markdown, no commentary):
 {
   "scopeCheck": {
     "status": "in_scope|out_of_scope|uncertain",
-    "confidence": 0-100,
+    "topicFitScore": 0-100,    // semantic FIT to the SESSION TOPIC. 100 = paper's research object/variables match the topic perfectly. 0 = clearly different field. Independent of 'confidence'.
+    "confidence": 0-100,        // your confidence in the 'status' verdict ITSELF. e.g. an obvious distributed-systems paper → status:'out_of_scope', topicFitScore:5, confidence:95. A borderline tourism paper using 'trust' → status:'uncertain', topicFitScore:40, confidence:90 (you are very sure it's borderline).
     "reason": "One short sentence explaining the verdict.",
     "matchedTopicTerms": ["..."],
     "mismatchedSignals": ["..."]
@@ -236,6 +237,7 @@ NOTICE: the chatbot characteristics are kept as separate IV rows even though the
 interface ParsedScopeCheck {
   status?: string;
   confidence?: number;
+  topicFitScore?: number;
   reason?: string;
   matchedTopicTerms?: unknown;
   mismatchedSignals?: unknown;
@@ -257,18 +259,29 @@ interface ParsedExtraction {
 function assessTopicScope(parsed: ParsedExtraction, paper: Paper): {
   tangential: boolean;
   scopeStatus: ScopeStatus;
-  scopeScore: number;
+  // CONFIDENCE in the scopeStatus verdict itself (0-100).
+  scopeConfidence: number;
+  // SEMANTIC FIT to the session topic (0-100), independent of confidence.
+  // Falls back to a verdict-based default when the AI omits the field, so
+  // older prompt outputs still produce a sensible value.
+  topicFitScore: number;
   tangentialReason: string | null;
 } {
   const sc = parsed.scopeCheck ?? {};
   const rawStatus = typeof sc.status === "string" ? sc.status.trim().toLowerCase() : "";
   const aiStatus: ScopeStatus = rawStatus === "in_scope" || rawStatus === "out_of_scope" ? rawStatus : "uncertain";
   const rawConf = typeof sc.confidence === "number" && Number.isFinite(sc.confidence) ? sc.confidence : 50;
-  const aiScore = Math.max(0, Math.min(100, Math.round(rawConf)));
+  const scopeConfidence = Math.max(0, Math.min(100, Math.round(rawConf)));
+  // topicFitScore is independent of confidence. If the AI didn't supply it
+  // (e.g. legacy prompt output), derive a reasonable default from the
+  // verdict so downstream sorting/filtering still works.
+  const fitDefault = aiStatus === "in_scope" ? 80 : aiStatus === "uncertain" ? 50 : 15;
+  const rawFit = typeof sc.topicFitScore === "number" && Number.isFinite(sc.topicFitScore) ? sc.topicFitScore : fitDefault;
+  const topicFitScore = Math.max(0, Math.min(100, Math.round(rawFit)));
   const reason = typeof sc.reason === "string" ? sc.reason.trim().slice(0, 280) : null;
 
   if (aiStatus !== "out_of_scope") {
-    return { tangential: false, scopeStatus: aiStatus, scopeScore: aiScore, tangentialReason: null };
+    return { tangential: false, scopeStatus: aiStatus, scopeConfidence, topicFitScore, tangentialReason: null };
   }
 
   // High-confidence out_of_scope corroboration. Lowercase haystacks.
@@ -290,15 +303,14 @@ function assessTopicScope(parsed: ParsedExtraction, paper: Paper): {
   // Multi-signal: AI says OOS AND at least one of (no behavioral terms in title/abstract,
   // no behavioral terms in extracted vars, engineering objectType).
   const corroborated = (!titleHasBehavioral && !varsHaveBehavioral) || objectIsEngineering || (!titleHasBehavioral && objectIsEngineering);
-  const highConfidence = aiScore >= 60; // AI's own confidence in its OOS verdict
+  const highConfidence = scopeConfidence >= 60; // AI's own confidence in its OOS verdict
 
   if (corroborated && highConfidence) {
     return {
       tangential: true,
       scopeStatus: "out_of_scope",
-      // Persist the AI's actual confidence in its OOS verdict so audit / threshold
-      // checks downstream can interpret >=60 as "high-confidence out-of-scope".
-      scopeScore: aiScore,
+      scopeConfidence,
+      topicFitScore,
       tangentialReason: reason ?? "Out-of-scope: paper sits in an engineering / non-applied domain with no behavioral constructs.",
     };
   }
@@ -308,7 +320,8 @@ function assessTopicScope(parsed: ParsedExtraction, paper: Paper): {
   return {
     tangential: false,
     scopeStatus: "uncertain",
-    scopeScore: aiScore,
+    scopeConfidence,
+    topicFitScore,
     tangentialReason: null,
   };
 }
@@ -414,13 +427,16 @@ export async function extractAndStorePaperVariables(
         tangential: true,
         tangentialReason: scope.tangentialReason,
         scopeStatus: scope.scopeStatus,
-        scopeScore: scope.scopeScore,
+        topicFitScore: scope.topicFitScore,
+        scopeConfidence: scope.scopeConfidence,
+        // Back-compat: mirror confidence into the deprecated scopeScore column.
+        scopeScore: scope.scopeConfidence,
       }).where(eq(papersTable.id, paper.id));
     });
     // Rebuild landscape so any prior in-scope rows from this paper are dropped.
     scheduleLandscapeRebuild(paper.sessionId);
     log.warn(
-      { paperId: paper.id, sessionId: paper.sessionId, title: paper.title, scopeScore: scope.scopeScore, reason: scope.tangentialReason },
+      { paperId: paper.id, sessionId: paper.sessionId, title: paper.title, topicFitScore: scope.topicFitScore, scopeConfidence: scope.scopeConfidence, reason: scope.tangentialReason },
       "Paper flagged tangential by scope check — extraction skipped",
     );
     return {
@@ -554,7 +570,10 @@ export async function extractAndStorePaperVariables(
       tangential: false,
       tangentialReason: null,
       scopeStatus: scope.scopeStatus,
-      scopeScore: scope.scopeScore,
+      topicFitScore: scope.topicFitScore,
+      scopeConfidence: scope.scopeConfidence,
+      // Back-compat: mirror confidence into the deprecated scopeScore column.
+      scopeScore: scope.scopeConfidence,
     }).where(eq(papersTable.id, paper.id));
     return insertedRows;
   });
