@@ -571,6 +571,47 @@ router.post("/sessions/:id/models/generate", async (req, res): Promise<void> => 
     (b) => `  - ${b.id} | ${b.name} (${b.domain})\n    Shape: ${b.shape}\n    When to use: ${b.description}`,
   ).join("\n");
 
+  // Build a "backbones the user's actual papers already use" tally — the AI's
+  // first-stage extractor tagged each paper with a backboneGuess (SOR, TAM,
+  // UTAUT, ELM, TPB, ...), so we can tell the synthesizer "papers P1+P3 are
+  // SOR studies, P2 is a TAM study — choose your backbone from THIS evidenced
+  // list, not from a generic preference for SOR." Without this, the AI tends
+  // to default to whatever backbone it saw most in pre-training (usually SOR
+  // for consumer-behavior topics) regardless of what the source papers do.
+  const KNOWN_BACKBONE_IDS = new Set(THEORY_BACKBONES.map((b) => b.id));
+  // Normalize the AI's free-form backboneGuess so e.g. "sor", "S-O-R ", "S O R"
+  // all collapse to "SOR"; values that don't match any catalog entry are dropped
+  // (better to show fewer evidenced backbones than a polluted list that
+  // includes hallucinated framework names).
+  const normalizeBackbone = (raw: string): string | null => {
+    const s = raw.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (!s) return null;
+    if (KNOWN_BACKBONE_IDS.has(s)) return s;
+    for (const id of KNOWN_BACKBONE_IDS) {
+      if (id.replace(/[^A-Z0-9]/g, "") === s) return id;
+    }
+    return null;
+  };
+  const backboneByPaper = new Map<number, string>();
+  for (const { paper, model } of perPaperModels) {
+    if (!model?.backboneGuess) continue;
+    const norm = normalizeBackbone(model.backboneGuess);
+    if (norm) backboneByPaper.set(paper.id, norm);
+  }
+  const backboneTally = new Map<string, string[]>();
+  for (const [pid, bb] of backboneByPaper) {
+    const tag = paperTagById.get(pid) ?? "?";
+    if (!backboneTally.has(bb)) backboneTally.set(bb, []);
+    backboneTally.get(bb)!.push(tag);
+  }
+  const evidencedBackboneIds = new Set(backboneTally.keys());
+  const evidencedBackbonesBlock = backboneTally.size > 0
+    ? Array.from(backboneTally.entries())
+        .sort((a, b) => b[1].length - a[1].length)
+        .map(([bb, tags]) => `  - ${bb} — used by ${tags.join(", ")} (${tags.length} paper${tags.length > 1 ? "s" : ""})`)
+        .join("\n")
+    : "  (none of the source papers were tagged with a recognizable backbone — fall back to the recommended list above)";
+
   // Build per-paper variable lists (fallback signal when typed-graph extraction is empty).
   const varsByPaper = new Map<number, typeof variables>();
   for (const v of variables) {
@@ -774,6 +815,9 @@ ${variableList}
 CLASSICAL THEORY BACKBONES you may graft onto (operator THEORY_GRAFT) — RECOMMENDED for this session's dependent variables (try these FIRST, but you may use any of the 17 backbones):
 ${recommendedBackbonesBlock}
 
+BACKBONES ALREADY EVIDENCED IN THIS SESSION'S SOURCE PAPERS (STRONGLY PREFER ONE OF THESE — the user's papers concretely demonstrate them, so a model built on one of these can cite real evidence; a backbone with no evidenced source paper means you're inventing a framework the literature here doesn't support):
+${evidencedBackbonesBlock}
+
 (Full backbone catalog if none of the above fit:
 ${backbonesAsPromptBlock()}
 )
@@ -802,6 +846,8 @@ HARD RULES (violations = invalid output):
 12. **Moderator justification (REQUIRED when relationship = "moderates")**: every moderator edge MUST include a non-empty \`moderatorJustification\` field (≥ 1 sentence) explaining (a) WHY this variable can theoretically condition the moderated path (e.g. it's a contextual factor, individual difference, or boundary condition) and (b) WHICH paper grounds this moderating role. Without justification, the moderator edge is rejected.
 13. **Hypothesis-grounded evidence (preferred)**: when an edge corresponds to a row in the FORMAL HYPOTHESES POOL above, set \`evidenceHypothesisId\` to that row's id (e.g. "H2a"), copy \`statement\` verbatim into \`evidenceCitationText\`, copy \`effectSize\` and \`pageOrSection\` if available. Edges grounded in formal hypotheses are stronger than those grounded only in narrative citations.
 14. **Topic alignment (enforced by the UNIFIED USER INTENT block at the top)**: every generated model MUST visibly advance the user's stated research topic and respect the DOMAIN LOCK + OUTCOME LOCK rules. The model's \`description\` MUST open with one sentence in the user's language that explicitly names BOTH the topic's domain (e.g. "AI 客服机器人") AND its outcome family (e.g. "消费者冲动购买"), and states how this model preserves both. Drifting the domain (e.g. swapping "AI chatbot" for "AI streamer") OR the outcome family (e.g. swapping "impulse purchase" for "purchase intention") is INVALID and the model will be REJECTED. If the topic is so narrow that only 2 papers are clearly relevant, override Hard Rule #4's "≥3 papers" requirement and prefer a topically-tight 2-paper combination over a topically-loose 3-paper one — call this out in [TOPIC FIT].
+15. **Enrichment beyond focus picks (CRITICAL — the user explicitly asked for this)**: focus picks are the SPINE of the model, NOT the entire skeleton. Every model MUST add AT LEAST ONE non-pick variable drawn from the EXTRACTED VARIABLES POOL (above) that the literature evidences as theoretically relevant — typically a mediator that explains HOW the picked IV reaches the picked DV, or a moderator that conditions WHEN it does. The added variable MUST come from a different paper than the focus picks when possible (this is what gives the model its cross-paper synthesis value). A model whose nodes consist of focus picks ONLY (no enrichment) is a copy of what the user already chose, not a synthesized model — REJECTED. The added variable MUST appear in the FOCUS FIT line of the rationale labeled as "[ENRICHMENT]" (e.g. "[ENRICHMENT] 在用户选择的『拟人化感知 → 冲动购买』之上，从 P3 引入『心流体验』作为情感中介，因为 P3 显示该构念是冲动行为的重要前置因子").
+16. **Backbone instantiation (must match what the source papers actually use)**: the chosen \`backbone\` value MUST come from the BACKBONES ALREADY EVIDENCED block above whenever that block is non-empty — do not invent a framework the literature here doesn't support. The rationale's [BACKBONE: ...] header must match the \`backbone\` field. If the model's structure visibly violates the backbone's shape (e.g. claims SOR but has no organism/cognitive layer between the stimulus IV and the behavior DV; claims TAM but has no perceived-usefulness/ease-of-use mediator), REJECTED — pick the backbone whose canonical shape your nodes actually instantiate. Different models in the same batch SHOULD prefer different evidenced backbones when more than one is available, so the user sees real theoretical variety (e.g. one SOR model + one TAM model) rather than three slight variations of the same framework.
 
 OUTPUT FORMAT — return ONLY a JSON object (NOT a bare array) whose single top-level key is "models" and whose value is an array of model objects. This is REQUIRED by the API's JSON-mode constraint. Do NOT wrap in markdown.
 {
@@ -1429,6 +1475,24 @@ OUTPUT FORMAT — return a JSON object with key "models" containing an array of 
         if (edgesTouchingFocus < requiredFocusEdges) {
           return { ok: false, reason: `focus-pick connectivity too weak — only ${edgesTouchingFocus} edge(s) touch a focus variable (need ≥ ${requiredFocusEdges})` };
         }
+        // Enrichment rule (Hard Rule #15): focus picks are the SPINE, not the
+        // entire skeleton. The model must include ≥1 STRUCTURAL node that is
+        // NOT a focus pick — typically a mediator or moderator drawn from the
+        // wider extracted-variables pool to explain HOW or WHEN the picked IV
+        // reaches the picked DV. Without this, the model is just a copy of
+        // what the user already chose, with no AI synthesis value.
+        const nonFocusStructuralCount = m.nodes.filter((n) => !focusNodeIds.has(n.variableId)).length;
+        if (nonFocusStructuralCount < 1) {
+          return { ok: false, reason: `enrichment missing — model contains only focus-pick nodes (${m.nodes.length}) with no AI-added variables drawn from the literature pool (need ≥ 1 non-pick structural node)` };
+        }
+      }
+      // Backbone instantiation (Hard Rule #16, soft-fail): when at least one
+      // source paper was tagged with a recognizable theoretical backbone,
+      // models SHOULD pick a backbone the literature actually evidences. We
+      // make this soft so a noisy backboneGuess pass doesn't blank the user's
+      // result — rescue mode keeps the model visible with a flagged rationale.
+      if (evidencedBackboneIds.size > 0 && m.backbone && m.backbone !== "NONE" && !evidencedBackboneIds.has(m.backbone)) {
+        return { ok: false, reason: `backbone "${m.backbone}" not evidenced in any source paper (evidenced: ${Array.from(evidencedBackboneIds).join(", ")})` };
       }
       if (!m.operator || !ALLOWED_OPERATORS.has(m.operator)) return { ok: false, reason: `invalid operator: ${m.operator}` };
       if (!m.secondaryOperator || !ALLOWED_OPERATORS.has(m.secondaryOperator)) return { ok: false, reason: `missing/invalid secondaryOperator: ${m.secondaryOperator}` };
@@ -1544,6 +1608,8 @@ OUTPUT FORMAT — return a JSON object with key "models" containing an array of 
       /focus-pick contract violated/i,
       /focus-pick connectivity too weak/i,
       /focus pick.*not connected by any edge/i,
+      /enrichment missing/i,
+      /backbone .* not evidenced/i,
     ];
     const isSoftFail = (reason: string) => SOFT_FAIL_PATTERNS.some((re) => re.test(reason));
 
