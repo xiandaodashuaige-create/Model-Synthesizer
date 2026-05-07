@@ -32,7 +32,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { useQueryClient } from "@tanstack/react-query";
-import { Loader2, Share2, Sparkles, CheckCircle, ArrowRight, BookOpen, Wand2, GitBranch, AlertTriangle, Columns2 } from "lucide-react";
+import { Loader2, Share2, Sparkles, CheckCircle, ArrowRight, BookOpen, Wand2, GitMerge, AlertTriangle, Columns2 } from "lucide-react";
 import { useLocation } from "wouter";
 import { useToast } from "@/hooks/use-toast";
 import { useT } from "@/lib/i18n";
@@ -143,6 +143,15 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
     query: { enabled: !!sessionId, queryKey: getGetLiveModelQueryKey(sessionId) },
   });
   const manualEdgeCount = (liveModel?.edges ?? []).filter((e) => e.userAdded).length;
+  // "替换" is destructive only when there is something to replace. If the live
+  // model has no nodes AND no edges, "选用并替换" is semantically just "采用",
+  // and we render it as a normal primary button without warning styling.
+  // Loading-safe: treat as non-empty (i.e. show the destructive warning) until
+  // we've actually loaded the live model. Otherwise the warning chrome would
+  // briefly disappear on first paint even when there IS content to overwrite.
+  const liveModelIsEmpty = liveModel !== undefined
+    && (liveModel.nodes?.length ?? 0) === 0
+    && (liveModel.edges?.length ?? 0) === 0;
   const hasNoVariables = variables !== undefined && variables.length === 0;
 
   const [userPrompt, setUserPrompt] = useState("");
@@ -754,21 +763,37 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
                     data-testid={`button-use-as-base-${model.id}`}
                     onClick={() => handleUseAsBase(model.id, model.name)}
                     disabled={importLiveModel.isPending}
-                    title={t("models.useAsBase.tip" as any)}
+                    title={t("models.merge.tip" as any)}
                     className="inline-flex items-center gap-1.5 rounded-md text-xs font-semibold h-8 px-3 bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
                   >
-                    <GitBranch className="w-3.5 h-3.5" />
-                    {t("models.useAsBase" as any)}
+                    <GitMerge className="w-3.5 h-3.5" />
+                    {t("models.merge" as any)}
                   </button>
                   {!model.selected && (
-                    <button
-                      data-testid={`button-select-model-${model.id}`}
-                      onClick={() => handleSelect(model.id, model.name)}
-                      disabled={selectModel.isPending}
-                      className="inline-flex items-center gap-1.5 rounded-md text-xs font-medium h-8 px-3 bg-primary/10 text-primary hover:bg-primary/20 transition-colors disabled:opacity-50"
-                    >
-                      {t("common.select" as any)}
-                    </button>
+                    liveModelIsEmpty ? (
+                      // Nothing to replace → render as a plain primary action with no warning chrome.
+                      <button
+                        data-testid={`button-select-model-${model.id}`}
+                        onClick={() => handleSelect(model.id, model.name)}
+                        disabled={selectModel.isPending}
+                        title={t("models.replaceMine.tip.empty" as any)}
+                        className="inline-flex items-center gap-1.5 rounded-md text-xs font-semibold h-8 px-3 bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
+                      >
+                        {t("models.useThis" as any)}
+                      </button>
+                    ) : (
+                      // Destructive: rose outline + warning icon so users see the cost before clicking.
+                      <button
+                        data-testid={`button-select-model-${model.id}`}
+                        onClick={() => handleSelect(model.id, model.name)}
+                        disabled={selectModel.isPending}
+                        title={t("models.replaceMine.tip.destructive" as any)}
+                        className="inline-flex items-center gap-1.5 rounded-md text-xs font-medium h-8 px-3 border border-rose-300 text-rose-700 bg-white hover:bg-rose-50 transition-colors disabled:opacity-50"
+                      >
+                        <AlertTriangle className="w-3.5 h-3.5" />
+                        {t("models.replaceMine" as any)}
+                      </button>
+                    )
                   )}
                 </div>
               </div>

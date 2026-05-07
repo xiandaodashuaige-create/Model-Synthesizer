@@ -133,6 +133,13 @@ const dict = {
 
     "models.useAsBase": "作为我的研究模型基础",
     "models.useAsBase.tip": "一键把这个候选模型的所有变量和关系（含原文出处）导入到「我的研究模型」",
+    "models.merge": "合并到我的模型",
+    "models.merge.tip": "在『我的研究模型』已有内容的基础上，追加这个候选模型的变量与关系（不会删除你已有的内容）",
+    "models.replaceMine": "选用并替换我的模型",
+    "models.replaceMine.tip.destructive": "将完全替换『我的研究模型』里的现有内容（含你手动添加的变量和关系），无法直接撤销",
+    "models.replaceMine.tip.empty": "把这个候选模型作为你的研究模型（当前『我的研究模型』为空，无破坏风险）",
+    "models.useThis": "选用此模型",
+    "models.useThis.tip": "把这个候选模型作为你的研究模型（当前『我的研究模型』为空）",
 
     "live.title": "我的研究模型",
     "live.intro": "在这里收集你认可的变量与关系，每条关系都保留原文出处，未来可作为论文的理论框架。",
@@ -740,6 +747,13 @@ const dict = {
 
     "models.useAsBase": "Use as my research model base",
     "models.useAsBase.tip": "One-click: import all variables and relationships (with citations) from this candidate into 'My Research Model'",
+    "models.merge": "Merge into my model",
+    "models.merge.tip": "Append this candidate's variables and relationships to your existing 'My Research Model' (your current content is preserved)",
+    "models.replaceMine": "Select & replace my model",
+    "models.replaceMine.tip.destructive": "This will completely replace the current contents of 'My Research Model' (including any variables and edges you added manually). Cannot be directly undone.",
+    "models.replaceMine.tip.empty": "Adopt this candidate as your research model ('My Research Model' is currently empty — no destructive risk)",
+    "models.useThis": "Use this model",
+    "models.useThis.tip": "Adopt this candidate as your research model ('My Research Model' is currently empty)",
 
     "live.title": "My Research Model",
     "live.intro": "Curate the variables and relationships you believe in. Every edge keeps its paper citation — ready to become your theoretical framework.",
