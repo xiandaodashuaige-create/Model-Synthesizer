@@ -669,18 +669,39 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
               ))}
             </select>
           </div>
+          {/* Partial-pass UX: when some papers haven't been extracted yet but
+              ≥2 are ready, the main button is NOT disabled — clicking it
+              opens the confirm dialog so the user can decide right here.
+              Pre-fix the only escape hatch was a small amber button buried
+              under the pending-papers banner; users coming back to a
+              historical project would see a grey "重新生成" and assume the
+              feature was broken (the exact failure the user just reported). */}
           <button
             data-testid="button-generate-models"
-            onClick={() => handleGenerate()}
-            disabled={generateModels.isPending || hasNoVariables || generationBlocked}
+            onClick={() => {
+              if (!isExtracting && hasPendingPapers && extractedPapersCount >= 2) {
+                setConfirmPartialOpen(true);
+                return;
+              }
+              handleGenerate();
+            }}
+            disabled={
+              generateModels.isPending
+              || hasNoVariables
+              || guardLoading
+              || isExtracting
+              || (hasPendingPapers && extractedPapersCount < 2)
+            }
             title={
               hasNoVariables
                 ? t("models.guard.noVars.body" as any)
                 : isExtracting
                   ? t("models.guard.extracting.body" as any)
-                  : hasPendingPapers
+                  : hasPendingPapers && extractedPapersCount < 2
                     ? t("models.guard.pending.body" as any)
-                    : undefined
+                    : hasPendingPapers
+                      ? t("models.guard.partial.cta" as any, { n: extractedPapersCount }) as string
+                      : undefined
             }
             className="inline-flex items-center gap-2 rounded-md text-sm font-semibold bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-5 disabled:opacity-50 disabled:pointer-events-none transition-colors"
           >
