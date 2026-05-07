@@ -434,6 +434,11 @@ router.post("/sessions/:id/models/generate", async (req, res): Promise<void> => 
   const perCallNumModels = PARALLEL_MODE ? 1 : numModels;
 
   const sessionId = params.data.id;
+  // Up-front diagnostic: pin down WHY callCount is whatever it is. If we ever
+  // see `numModels: 1, parallelMode: false` but the UI shows 3, it's a
+  // frontend payload bug, not a backend one — surfacing both here makes
+  // that mismatch trivially greppable next time it happens.
+  req.log.info({ sessionId, numModels, parallelMode: PARALLEL_MODE, perCallNumModels, bodyOk: bodyParse.success }, "models/generate request shape");
 
   // Load session metadata + content in parallel. The session row carries
   // `topic` (the user's stated research direction from session creation) —
@@ -837,6 +842,55 @@ OUTPUT FORMAT — return ONLY a JSON object (NOT a bare array) whose single top-
     return `\n\nVARIANT HINT (parallel batch ${i + 1} of ${numModels}): to keep the batch diverse from the other parallel variants you cannot see, PREFER this operator pair unless the user's primary directive demands a different one — pair: ${pair}.`;
   };
 
+  // PERMISSIVE FALLBACK PROMPT — fired only when the strict prompt above
+  // produces zero models (gpt-5.4 in JSON mode sometimes returns
+  // {"models":[]} when the 14 hard rules + alignment contract + anti-drift
+  // locks combine into something it can't satisfy with confidence). This
+  // permissive variant strips ALL hard constraints and just asks for ONE
+  // coherent research model from the available papers. Strictly worse on
+  // alignment, strictly better on "the user gets SOMETHING instead of a
+  // toast saying they failed".
+  const buildPermissivePrompt = (): string => `You are a senior researcher in academic methodology. Produce ONE plausible research model proposal from the source materials below. Do NOT return an empty list — even if the materials are thin, synthesize the best model you can.
+
+Topic context (best-effort guidance, NOT a strict filter):
+${sessionTopic ? `Topic: "${sessionTopic}"` : "(no explicit topic)"}
+${userPrompt ? `User direction: """${userPrompt}"""` : ""}
+${focusPicks.length > 0 ? `Variables the user pinned (try to use ≥1 as nodes, but skip if they don't fit):\n${focusListing}` : ""}
+
+================================================================
+PAPER REFERENCES:
+${paperRefs.map((r) => r.short).join("\n")}
+
+================================================================
+EACH PAPER'S OWN RESEARCH MODEL:
+${originalGraphsBlock || "(no extractable original models)"}
+
+================================================================
+EXTRACTED VARIABLES POOL:
+${variableList}
+
+================================================================
+OUTPUT FORMAT — return a JSON object with key "models" containing an array of EXACTLY ONE model. Do NOT return an empty array.
+{
+  "models": [
+    {
+      "operator": "EXTEND",
+      "secondaryOperator": "INSERT_MODERATOR",
+      "basePaperTags": ["P1", "P2"],
+      "backbone": "NONE",
+      "name": "concise model name",
+      "description": "1-2 sentences",
+      "rationale": "3-5 sentences explaining the model",
+      "nodes": [
+        { "variableId": <int>, "variableName": "<name>", "type": "independent|mediator|moderator|dependent", "paperId": <int>, "paperTitle": "<title>", "paperAuthors": ["<author>"], "paperYear": <year or null> }
+      ],
+      "edges": [
+        { "fromVariableId": <int>, "toVariableId": <int>, "fromVariableName": "<name>", "toVariableName": "<name>", "relationship": "positive|negative|moderates|mediates", "evidencePaperId": <int>, "evidencePaperTitle": "<title>", "evidencePaperAuthors": ["<author>"], "evidencePaperYear": <year or null>, "evidenceCitationText": "<verbatim sentence from the paper>", "evidenceHypothesisId": null, "effectSize": null, "evidenceLocation": null, "moderatorJustification": null }
+      ]
+    }
+  ]
+}`;
+
   // Replit Autoscale Deployments terminate any HTTP request that takes longer
   // than 60 seconds with a 502, regardless of what the server is doing. To
   // stay under the 60s budget *while* generating multiple models, we fan out
@@ -877,6 +931,11 @@ OUTPUT FORMAT — return ONLY a JSON object (NOT a bare array) whose single top-
   };
 
   const callCount = PARALLEL_MODE ? numModels : 1;
+  // Track route-level wall-clock so the permissive retry below can self-skip
+  // when there's no time left in the 60s autoscale budget. Without this guard,
+  // a slow first round (~50s) + a 25s retry would deterministically blow the
+  // budget and the user would get a platform 502 instead of our targeted error.
+  const tRouteStart = Date.now();
   const settled = await Promise.allSettled(
     Array.from({ length: callCount }, (_, i) => callOpenAI(i)),
   );
@@ -991,6 +1050,18 @@ OUTPUT FORMAT — return ONLY a JSON object (NOT a bare array) whose single top-
           pushed = 1;
         }
       }
+      // CRITICAL diagnostic: if parse succeeded but pushed nothing, the model
+      // returned a syntactically-valid-but-semantically-empty response (e.g.
+      // {"models":[]}). Without dumping the actual content we'd be blind to
+      // this — exactly the case we just hit (13-char content, finishReason=stop).
+      // Content is at most a few hundred chars in this case so logging it in
+      // full is cheap.
+      if (pushed === 0 && parsed !== null) {
+        req.log.warn(
+          { callIdx: idx, finishReason, contentLen: content.length, content: content.slice(0, 2000) },
+          "AI returned valid JSON but with zero usable models (gave up)",
+        );
+      }
       perCallStats.push({ idx, finishReason, contentLen: content.length, recovered, pushed });
     }
     // Always log per-call stats — invaluable for diagnosing future regressions
@@ -998,17 +1069,94 @@ OUTPUT FORMAT — return ONLY a JSON object (NOT a bare array) whose single top-
     req.log.info({ sessionId, callCount: fulfilled.length, perCallStats, totalGenerated: generated.length }, "Model-generation per-call parse stats");
 
     if (generated.length === 0) {
-      // Surface what we actually saw so the user gets a meaningful error
-      // instead of "Failed to parse AI model generation result" (which
-      // told them nothing actionable).
-      const allLength = perCallStats.every((s) => s.finishReason === "length");
-      const allEmpty = perCallStats.every((s) => s.contentLen === 0);
-      req.log.warn({ sessionId, perCallStats }, "All parallel calls returned but none produced parseable model JSON");
-      let hint = "AI 返回的内容无法解析为模型 JSON。";
-      if (allLength) hint = "AI 输出在生成 JSON 中途因 token 预算耗尽被截断（这通常发生在论文/变量过多时）。建议：(1) 在『自定义提示词』里更聚焦地描述方向；(2) 减少『重点变量』数量；(3) 减少会话内论文数量后重试。";
-      else if (allEmpty) hint = "AI 返回了空内容（可能被安全策略拦截或推理超时）。请稍等几秒后重试一次。";
-      res.status(502).json({ error: hint });
-      return;
+      // We hit one of two distinct failure modes:
+      //   (A) AI gave up — at least one call returned valid JSON but pushed=0
+      //       (the {"models":[]} pattern observed in production logs). The
+      //       prompt's hard rules combined with JSON mode constraints made the
+      //       model emit "I have nothing" instead of trying. Recoverable via
+      //       a permissive-prompt retry below.
+      //   (B) Genuine failure — content was empty, truncated, or unparseable.
+      //       Permissive retry might still help, but odds are lower.
+      // We attempt the permissive retry in BOTH cases; the cost is one extra
+      // call and the user gets at least something instead of a hard 502.
+      // High-confidence "AI gave up" signal: finishReason=stop (natural end,
+      // not truncation), pushed=0 (parsed but produced no usable models), and
+      // contentLen<200 (short — consistent with `{"models":[]}` rather than a
+      // partial/garbled output). Tighter than the prior heuristic to reduce
+      // the chance of paying for a retry on cases where retry is unlikely
+      // to help (e.g., genuine truncation, schema-violating output).
+      const aiGaveUp = perCallStats.some((s) => s.finishReason === "stop" && s.pushed === 0 && s.contentLen > 0 && s.contentLen < 200);
+      // Elapsed-time guard: Replit autoscale kills the request at 60s. Strict
+      // round can take 25-50s on its own. Skip the retry if we've already
+      // burned > 40s — the retry would either time out or push us into the
+      // platform-level 502 (worse than our targeted error). 18s leaves room
+      // for the retry's own 15s timeout + JSON parse + response serialization.
+      const elapsedMs = Date.now() - tRouteStart;
+      const haveTimeForRetry = elapsedMs < 40_000;
+      // Only retry on the high-confidence give-up signal. Other failure modes
+      // (truncation, empty content, unparseable) have low retry payoff and the
+      // 12k-token call costs real money on every regeneration attempt.
+      const shouldRetry = aiGaveUp && haveTimeForRetry;
+      req.log.warn({ sessionId, perCallStats, aiGaveUp, elapsedMs, shouldRetry }, "Initial generation produced 0 models");
+
+      if (shouldRetry) try {
+        const retry = await openai.chat.completions.create(
+          {
+            model: "gpt-5.4",
+            // Permissive prompt is much shorter (~5k input vs ~30k strict),
+            // so reasoning has plenty of headroom and we don't need 12k out.
+            // 8k keeps wall-clock well under the 18s remaining in the worst
+            // case.
+            max_completion_tokens: 8_000,
+            response_format: { type: "json_object" },
+            messages: [{ role: "user", content: buildPermissivePrompt() }],
+          },
+          { signal: AbortSignal.timeout(15_000) },
+        );
+        logAiUsageFromOpenAI(retry, { route: "models/generate-retry", sessionId, userId: req.user?.id ?? null });
+        const retryChoice = retry.choices[0];
+        const retryContent = retryChoice?.message?.content ?? "";
+        const retryFinish = retryChoice?.finish_reason;
+        let retryParsed: unknown = null;
+        try { retryParsed = JSON.parse(retryContent); }
+        catch { retryParsed = extractAndRepairJson(retryContent); }
+        let retryPushed = 0;
+        if (retryParsed && typeof retryParsed === "object" && !Array.isArray(retryParsed) && Array.isArray((retryParsed as { models?: unknown }).models)) {
+          const arr = (retryParsed as { models: unknown[] }).models as GeneratedModel[];
+          generated.push(...arr);
+          retryPushed = arr.length;
+        } else if (Array.isArray(retryParsed)) {
+          generated.push(...(retryParsed as GeneratedModel[]));
+          retryPushed = retryParsed.length;
+        } else if (retryParsed && typeof retryParsed === "object") {
+          const obj = retryParsed as Partial<GeneratedModel>;
+          if (obj.name && Array.isArray(obj.nodes)) { generated.push(retryParsed as GeneratedModel); retryPushed = 1; }
+        }
+        req.log.info({ sessionId, retryFinish, retryContentLen: retryContent.length, retryPushed }, "Permissive-prompt retry result");
+        if (retryPushed === 0) {
+          req.log.warn({ sessionId, retryContent: retryContent.slice(0, 2000) }, "Permissive retry ALSO returned zero models");
+        }
+      } catch (retryErr) {
+        req.log.warn({ sessionId, err: (retryErr as Error)?.message }, "Permissive-prompt retry threw");
+      }
+
+      if (generated.length === 0) {
+        // Both attempts produced nothing. Surface a meaningful error.
+        const allLength = perCallStats.every((s) => s.finishReason === "length");
+        const allEmpty = perCallStats.every((s) => s.contentLen === 0);
+        let hint: string;
+        if (aiGaveUp) {
+          hint = "AI 在严格模式和宽松模式下都未能产出模型（已自动重试一次）。这通常说明：(1) 论文之间的主题差距过大，AI 找不到合理的合并方式；(2) 重点变量与论文内容不匹配。建议：移除 1-2 篇与主题相关性较低的论文，或暂时取消 1-2 个重点变量后重试。";
+        } else if (allLength) {
+          hint = "AI 输出在生成 JSON 中途因 token 预算耗尽被截断。建议：减少论文数（先聚焦 10-15 篇核心文献）、缩小重点变量数量。";
+        } else if (allEmpty) {
+          hint = "AI 返回了空内容（可能被安全策略拦截或推理超时）。请稍等几秒后重试。";
+        } else {
+          hint = "AI 返回的内容无法解析为模型 JSON（已自动重试一次）。请稍等后重试。";
+        }
+        res.status(502).json({ error: hint });
+        return;
+      }
     }
 
     // Normalize: AI sometimes confuses display tags ("P4") with DB paperIds. Re-derive the real
