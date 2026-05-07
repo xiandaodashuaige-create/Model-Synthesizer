@@ -1038,6 +1038,34 @@ export const GenerateModelsBody = zod.object({
     ),
 });
 
+export const generateModelsResponseInnovationMetaOneEdgeNoveltyTagsItemEdgeIndexMin = 0;
+
+export const generateModelsResponseInnovationMetaOneEdgeNoveltyTagsItemSubscoreMin = 0;
+export const generateModelsResponseInnovationMetaOneEdgeNoveltyTagsItemSubscoreMax = 100;
+
+export const generateModelsResponseInnovationMetaOneEdgeNoveltyTagsItemMatchedRelationshipOneTotalOccurrencesMin = 0;
+
+export const generateModelsResponseInnovationMetaOneNoveltyScoreMin = 0;
+export const generateModelsResponseInnovationMetaOneNoveltyScoreMax = 100;
+
+export const generateModelsResponseInnovationMetaOneSubScoresDifferentiationMin = 0;
+export const generateModelsResponseInnovationMetaOneSubScoresDifferentiationMax = 100;
+
+export const generateModelsResponseInnovationMetaOneSubScoresGapFitMin = 0;
+export const generateModelsResponseInnovationMetaOneSubScoresGapFitMax = 100;
+
+export const generateModelsResponseInnovationMetaOneSubScoresTheoreticalSoundnessMin = 0;
+export const generateModelsResponseInnovationMetaOneSubScoresTheoreticalSoundnessMax = 100;
+
+export const generateModelsResponseInnovationMetaOneSubScoresEvidenceSupportMin = 0;
+export const generateModelsResponseInnovationMetaOneSubScoresEvidenceSupportMax = 100;
+
+export const generateModelsResponseInnovationMetaOneContributionScoreMin = 0;
+export const generateModelsResponseInnovationMetaOneContributionScoreMax = 100;
+
+export const generateModelsResponseInnovationMetaOneComputedAgainstCoverageRateMin = 0;
+export const generateModelsResponseInnovationMetaOneComputedAgainstCoverageRateMax = 1;
+
 export const GenerateModelsResponseItem = zod.object({
   id: zod.number(),
   sessionId: zod.number(),
@@ -1140,10 +1168,203 @@ export const GenerateModelsResponseItem = zod.object({
       "Present only when this model was generated through the partial-pass flow\n(some session papers had not been extracted at generation time).\n",
     ),
   innovationMeta: zod
-    .record(zod.string(), zod.unknown())
+    .object({
+      edgeNoveltyTags: zod
+        .array(
+          zod
+            .object({
+              edgeIndex: zod
+                .number()
+                .min(
+                  generateModelsResponseInnovationMetaOneEdgeNoveltyTagsItemEdgeIndexMin,
+                )
+                .describe("Index into the parent model's `edges` array."),
+              fromVariableName: zod.string(),
+              toVariableName: zod.string(),
+              relationship: zod
+                .string()
+                .describe(
+                  "Raw model edge relationship (positive \/ negative \/ mediates \/ moderates).",
+                ),
+              tag: zod.enum([
+                "saturated",
+                "established",
+                "underexplored",
+                "context_transferred",
+                "novel",
+                "mechanism_inserted",
+                "boundary_extended",
+                "contradicting",
+              ]),
+              subscore: zod
+                .number()
+                .min(
+                  generateModelsResponseInnovationMetaOneEdgeNoveltyTagsItemSubscoreMin,
+                )
+                .max(
+                  generateModelsResponseInnovationMetaOneEdgeNoveltyTagsItemSubscoreMax,
+                )
+                .describe(
+                  "The actual subscore contributed to `noveltyScore`. For\n`contradicting` this is 80 by default and 95 when the model also\ncontains a moderator\/mediator that resolves the conflict.\n",
+                ),
+              matchedTotalOccurrences: zod
+                .number()
+                .nullable()
+                .describe(
+                  "Convenience copy of `matchedRelationship.totalOccurrences`.",
+                ),
+              matchedRelationship: zod
+                .object({
+                  canonicalFrom: zod.string(),
+                  canonicalTo: zod.string(),
+                  relationshipType: zod.enum([
+                    "direct",
+                    "mediation",
+                    "moderation",
+                  ]),
+                  totalOccurrences: zod
+                    .number()
+                    .min(
+                      generateModelsResponseInnovationMetaOneEdgeNoveltyTagsItemMatchedRelationshipOneTotalOccurrencesMin,
+                    )
+                    .describe(
+                      "Distinct in-scope papers this relationship appears in.",
+                    ),
+                  signConflict: zod.boolean(),
+                  domainsCovered: zod.array(zod.string()),
+                })
+                .describe(
+                  "Snapshot of the `constructRelationships` row that an edge matched\nagainst during scoring. Carried on every `EdgeNoveltyTag` so the UI\ncan explain \*why\* a particular tag was picked (or not picked) without\nround-tripping to the DB. Null when no row matched.\n",
+                )
+                .nullable(),
+              reason: zod
+                .string()
+                .describe(
+                  'zh-CN human-readable explanation of why this tag was chosen.\nStable enough that the UI can display it directly. Includes the\nspecific occurrence count when available so the user understands\nwhy an edge stayed `novel` instead of being upgraded to\n`boundary_extended` (e.g. \"主路径仅在 2 篇文献中出现…\").\n',
+                ),
+            })
+            .describe(
+              "Per-edge novelty classification with explainability payload.\n`tag` follows the single-pick precedence order:\ncontradicting > mechanism_inserted > boundary_extended >\ncontext_transferred > novel > underexplored > established > saturated.\n",
+            ),
+        )
+        .describe("One entry per edge in the parent model, parallel by index."),
+      noveltyScore: zod
+        .number()
+        .min(generateModelsResponseInnovationMetaOneNoveltyScoreMin)
+        .max(generateModelsResponseInnovationMetaOneNoveltyScoreMax)
+        .nullable()
+        .describe(
+          "Mean of `edgeNoveltyTags[].subscore`. Null only when the model has zero edges.",
+        ),
+      innovationTypes: zod
+        .array(
+          zod.enum([
+            "mechanism",
+            "boundary",
+            "integration",
+            "correction",
+            "construct",
+            "context",
+          ]),
+        )
+        .describe(
+          "5 of 6 auto-detected from the landscape; `context` joins in Phase 3 via AI.",
+        ),
+      subScores: zod.object({
+        differentiation: zod
+          .number()
+          .min(
+            generateModelsResponseInnovationMetaOneSubScoresDifferentiationMin,
+          )
+          .max(
+            generateModelsResponseInnovationMetaOneSubScoresDifferentiationMax,
+          )
+          .describe(
+            "Mean of edge subscores. Reflects how novel the edges are vs. the literature.",
+          ),
+        gapFit: zod
+          .number()
+          .min(generateModelsResponseInnovationMetaOneSubScoresGapFitMin)
+          .max(generateModelsResponseInnovationMetaOneSubScoresGapFitMax)
+          .describe(
+            "Floor 30 in slice 1; full computation in Phase 2.x once contributionStatement.gapTypes wires in.",
+          ),
+        theoreticalSoundness: zod
+          .number()
+          .min(
+            generateModelsResponseInnovationMetaOneSubScoresTheoreticalSoundnessMin,
+          )
+          .max(
+            generateModelsResponseInnovationMetaOneSubScoresTheoreticalSoundnessMax,
+          )
+          .describe(
+            "100 if the model's backbone is in the session's evidenced backbones, else floor 30.",
+          ),
+        evidenceSupport: zod
+          .number()
+          .min(
+            generateModelsResponseInnovationMetaOneSubScoresEvidenceSupportMin,
+          )
+          .max(
+            generateModelsResponseInnovationMetaOneSubScoresEvidenceSupportMax,
+          )
+          .describe(
+            "Floor 20 in slice 1; tiered (direct\/analog\/theory) in Phase 2.x.",
+          ),
+      }),
+      contributionScore: zod
+        .number()
+        .min(generateModelsResponseInnovationMetaOneContributionScoreMin)
+        .max(generateModelsResponseInnovationMetaOneContributionScoreMax)
+        .describe("Headline number — geometric mean of the 4 sub-scores."),
+      contributionStatement: zod
+        .record(zod.string(), zod.unknown())
+        .nullable()
+        .describe(
+          "Phase 3 AI-emitted 7-field self-explanation. Always null in slice 1\n— `warnings` will carry `contribution_statement_missing` until the\nAI generation step ships.\n",
+        ),
+      computedAgainst: zod.object({
+        landscapeVersion: zod
+          .number()
+          .nullable()
+          .describe(
+            "Session's `landscapeMeta.landscapeVersion` at compute time.",
+          ),
+        coverageRate: zod
+          .number()
+          .min(
+            generateModelsResponseInnovationMetaOneComputedAgainstCoverageRateMin,
+          )
+          .max(
+            generateModelsResponseInnovationMetaOneComputedAgainstCoverageRateMax,
+          ),
+        computedAt: zod.coerce.date(),
+      }),
+      mode: zod.enum(["analysis_only", "enforced"]),
+      modeReason: zod.enum(["coverage_below_threshold", "ok"]),
+      warnings: zod.array(
+        zod.object({
+          code: zod.enum([
+            "contribution_statement_missing",
+            "no_innovation_type_detected",
+            "all_edges_low_novelty",
+          ]),
+          message: zod.string(),
+        }),
+      ),
+      stale: zod
+        .boolean()
+        .optional()
+        .describe(
+          "True iff the score was computed against an older\n`landscapeVersion` than the session currently has. Decorated by\nthe formatter at read time; not persisted in the JSONB.\n",
+        ),
+    })
+    .describe(
+      "Phase 2 Innovation Layer scoring + provenance for a single research\nmodel. NEVER causes hard rejection — `mode='analysis_only'` is the\ncontract for the whole slice 1 release. The UI MUST display all four\nsub-scores and surface `warnings` non-modally.\n",
+    )
     .nullish()
     .describe(
-      "Phase 2 Innovation Layer scoring + provenance. Always written for\nmodels generated after Phase 2 ships; null for older models. The\nshape mirrors `InnovationMeta` in `lib\/innovation-scoring.ts`.\n`mode='analysis_only'` means the score is descriptive — the system\nwill not reject the model on it. `stale=true` means the score was\ncomputed against an older landscape version and should be\nrecomputed before being trusted for hard decisions.\n",
+      "Phase 2 Innovation Layer scoring + provenance. Always written for\nmodels generated after Phase 2 ships; null for older models.\n`mode='analysis_only'` means the score is descriptive — the system\nwill not reject the model on it. `stale=true` means the score was\ncomputed against an older landscape version and should be\nrecomputed before being trusted for hard decisions.\n",
     ),
   createdAt: zod.string(),
 });
@@ -1155,6 +1376,34 @@ export const GenerateModelsResponse = zod.array(GenerateModelsResponseItem);
 export const ListSessionModelsParams = zod.object({
   id: zod.coerce.number(),
 });
+
+export const listSessionModelsResponseInnovationMetaOneEdgeNoveltyTagsItemEdgeIndexMin = 0;
+
+export const listSessionModelsResponseInnovationMetaOneEdgeNoveltyTagsItemSubscoreMin = 0;
+export const listSessionModelsResponseInnovationMetaOneEdgeNoveltyTagsItemSubscoreMax = 100;
+
+export const listSessionModelsResponseInnovationMetaOneEdgeNoveltyTagsItemMatchedRelationshipOneTotalOccurrencesMin = 0;
+
+export const listSessionModelsResponseInnovationMetaOneNoveltyScoreMin = 0;
+export const listSessionModelsResponseInnovationMetaOneNoveltyScoreMax = 100;
+
+export const listSessionModelsResponseInnovationMetaOneSubScoresDifferentiationMin = 0;
+export const listSessionModelsResponseInnovationMetaOneSubScoresDifferentiationMax = 100;
+
+export const listSessionModelsResponseInnovationMetaOneSubScoresGapFitMin = 0;
+export const listSessionModelsResponseInnovationMetaOneSubScoresGapFitMax = 100;
+
+export const listSessionModelsResponseInnovationMetaOneSubScoresTheoreticalSoundnessMin = 0;
+export const listSessionModelsResponseInnovationMetaOneSubScoresTheoreticalSoundnessMax = 100;
+
+export const listSessionModelsResponseInnovationMetaOneSubScoresEvidenceSupportMin = 0;
+export const listSessionModelsResponseInnovationMetaOneSubScoresEvidenceSupportMax = 100;
+
+export const listSessionModelsResponseInnovationMetaOneContributionScoreMin = 0;
+export const listSessionModelsResponseInnovationMetaOneContributionScoreMax = 100;
+
+export const listSessionModelsResponseInnovationMetaOneComputedAgainstCoverageRateMin = 0;
+export const listSessionModelsResponseInnovationMetaOneComputedAgainstCoverageRateMax = 1;
 
 export const ListSessionModelsResponseItem = zod.object({
   id: zod.number(),
@@ -1258,16 +1507,563 @@ export const ListSessionModelsResponseItem = zod.object({
       "Present only when this model was generated through the partial-pass flow\n(some session papers had not been extracted at generation time).\n",
     ),
   innovationMeta: zod
-    .record(zod.string(), zod.unknown())
+    .object({
+      edgeNoveltyTags: zod
+        .array(
+          zod
+            .object({
+              edgeIndex: zod
+                .number()
+                .min(
+                  listSessionModelsResponseInnovationMetaOneEdgeNoveltyTagsItemEdgeIndexMin,
+                )
+                .describe("Index into the parent model's `edges` array."),
+              fromVariableName: zod.string(),
+              toVariableName: zod.string(),
+              relationship: zod
+                .string()
+                .describe(
+                  "Raw model edge relationship (positive \/ negative \/ mediates \/ moderates).",
+                ),
+              tag: zod.enum([
+                "saturated",
+                "established",
+                "underexplored",
+                "context_transferred",
+                "novel",
+                "mechanism_inserted",
+                "boundary_extended",
+                "contradicting",
+              ]),
+              subscore: zod
+                .number()
+                .min(
+                  listSessionModelsResponseInnovationMetaOneEdgeNoveltyTagsItemSubscoreMin,
+                )
+                .max(
+                  listSessionModelsResponseInnovationMetaOneEdgeNoveltyTagsItemSubscoreMax,
+                )
+                .describe(
+                  "The actual subscore contributed to `noveltyScore`. For\n`contradicting` this is 80 by default and 95 when the model also\ncontains a moderator\/mediator that resolves the conflict.\n",
+                ),
+              matchedTotalOccurrences: zod
+                .number()
+                .nullable()
+                .describe(
+                  "Convenience copy of `matchedRelationship.totalOccurrences`.",
+                ),
+              matchedRelationship: zod
+                .object({
+                  canonicalFrom: zod.string(),
+                  canonicalTo: zod.string(),
+                  relationshipType: zod.enum([
+                    "direct",
+                    "mediation",
+                    "moderation",
+                  ]),
+                  totalOccurrences: zod
+                    .number()
+                    .min(
+                      listSessionModelsResponseInnovationMetaOneEdgeNoveltyTagsItemMatchedRelationshipOneTotalOccurrencesMin,
+                    )
+                    .describe(
+                      "Distinct in-scope papers this relationship appears in.",
+                    ),
+                  signConflict: zod.boolean(),
+                  domainsCovered: zod.array(zod.string()),
+                })
+                .describe(
+                  "Snapshot of the `constructRelationships` row that an edge matched\nagainst during scoring. Carried on every `EdgeNoveltyTag` so the UI\ncan explain \*why\* a particular tag was picked (or not picked) without\nround-tripping to the DB. Null when no row matched.\n",
+                )
+                .nullable(),
+              reason: zod
+                .string()
+                .describe(
+                  'zh-CN human-readable explanation of why this tag was chosen.\nStable enough that the UI can display it directly. Includes the\nspecific occurrence count when available so the user understands\nwhy an edge stayed `novel` instead of being upgraded to\n`boundary_extended` (e.g. \"主路径仅在 2 篇文献中出现…\").\n',
+                ),
+            })
+            .describe(
+              "Per-edge novelty classification with explainability payload.\n`tag` follows the single-pick precedence order:\ncontradicting > mechanism_inserted > boundary_extended >\ncontext_transferred > novel > underexplored > established > saturated.\n",
+            ),
+        )
+        .describe("One entry per edge in the parent model, parallel by index."),
+      noveltyScore: zod
+        .number()
+        .min(listSessionModelsResponseInnovationMetaOneNoveltyScoreMin)
+        .max(listSessionModelsResponseInnovationMetaOneNoveltyScoreMax)
+        .nullable()
+        .describe(
+          "Mean of `edgeNoveltyTags[].subscore`. Null only when the model has zero edges.",
+        ),
+      innovationTypes: zod
+        .array(
+          zod.enum([
+            "mechanism",
+            "boundary",
+            "integration",
+            "correction",
+            "construct",
+            "context",
+          ]),
+        )
+        .describe(
+          "5 of 6 auto-detected from the landscape; `context` joins in Phase 3 via AI.",
+        ),
+      subScores: zod.object({
+        differentiation: zod
+          .number()
+          .min(
+            listSessionModelsResponseInnovationMetaOneSubScoresDifferentiationMin,
+          )
+          .max(
+            listSessionModelsResponseInnovationMetaOneSubScoresDifferentiationMax,
+          )
+          .describe(
+            "Mean of edge subscores. Reflects how novel the edges are vs. the literature.",
+          ),
+        gapFit: zod
+          .number()
+          .min(listSessionModelsResponseInnovationMetaOneSubScoresGapFitMin)
+          .max(listSessionModelsResponseInnovationMetaOneSubScoresGapFitMax)
+          .describe(
+            "Floor 30 in slice 1; full computation in Phase 2.x once contributionStatement.gapTypes wires in.",
+          ),
+        theoreticalSoundness: zod
+          .number()
+          .min(
+            listSessionModelsResponseInnovationMetaOneSubScoresTheoreticalSoundnessMin,
+          )
+          .max(
+            listSessionModelsResponseInnovationMetaOneSubScoresTheoreticalSoundnessMax,
+          )
+          .describe(
+            "100 if the model's backbone is in the session's evidenced backbones, else floor 30.",
+          ),
+        evidenceSupport: zod
+          .number()
+          .min(
+            listSessionModelsResponseInnovationMetaOneSubScoresEvidenceSupportMin,
+          )
+          .max(
+            listSessionModelsResponseInnovationMetaOneSubScoresEvidenceSupportMax,
+          )
+          .describe(
+            "Floor 20 in slice 1; tiered (direct\/analog\/theory) in Phase 2.x.",
+          ),
+      }),
+      contributionScore: zod
+        .number()
+        .min(listSessionModelsResponseInnovationMetaOneContributionScoreMin)
+        .max(listSessionModelsResponseInnovationMetaOneContributionScoreMax)
+        .describe("Headline number — geometric mean of the 4 sub-scores."),
+      contributionStatement: zod
+        .record(zod.string(), zod.unknown())
+        .nullable()
+        .describe(
+          "Phase 3 AI-emitted 7-field self-explanation. Always null in slice 1\n— `warnings` will carry `contribution_statement_missing` until the\nAI generation step ships.\n",
+        ),
+      computedAgainst: zod.object({
+        landscapeVersion: zod
+          .number()
+          .nullable()
+          .describe(
+            "Session's `landscapeMeta.landscapeVersion` at compute time.",
+          ),
+        coverageRate: zod
+          .number()
+          .min(
+            listSessionModelsResponseInnovationMetaOneComputedAgainstCoverageRateMin,
+          )
+          .max(
+            listSessionModelsResponseInnovationMetaOneComputedAgainstCoverageRateMax,
+          ),
+        computedAt: zod.coerce.date(),
+      }),
+      mode: zod.enum(["analysis_only", "enforced"]),
+      modeReason: zod.enum(["coverage_below_threshold", "ok"]),
+      warnings: zod.array(
+        zod.object({
+          code: zod.enum([
+            "contribution_statement_missing",
+            "no_innovation_type_detected",
+            "all_edges_low_novelty",
+          ]),
+          message: zod.string(),
+        }),
+      ),
+      stale: zod
+        .boolean()
+        .optional()
+        .describe(
+          "True iff the score was computed against an older\n`landscapeVersion` than the session currently has. Decorated by\nthe formatter at read time; not persisted in the JSONB.\n",
+        ),
+    })
+    .describe(
+      "Phase 2 Innovation Layer scoring + provenance for a single research\nmodel. NEVER causes hard rejection — `mode='analysis_only'` is the\ncontract for the whole slice 1 release. The UI MUST display all four\nsub-scores and surface `warnings` non-modally.\n",
+    )
     .nullish()
     .describe(
-      "Phase 2 Innovation Layer scoring + provenance. Always written for\nmodels generated after Phase 2 ships; null for older models. The\nshape mirrors `InnovationMeta` in `lib\/innovation-scoring.ts`.\n`mode='analysis_only'` means the score is descriptive — the system\nwill not reject the model on it. `stale=true` means the score was\ncomputed against an older landscape version and should be\nrecomputed before being trusted for hard decisions.\n",
+      "Phase 2 Innovation Layer scoring + provenance. Always written for\nmodels generated after Phase 2 ships; null for older models.\n`mode='analysis_only'` means the score is descriptive — the system\nwill not reject the model on it. `stale=true` means the score was\ncomputed against an older landscape version and should be\nrecomputed before being trusted for hard decisions.\n",
     ),
   createdAt: zod.string(),
 });
 export const ListSessionModelsResponse = zod.array(
   ListSessionModelsResponseItem,
 );
+
+/**
+ * Re-runs Phase 2 scoring against the session's CURRENT
+`landscapeVersion` and persists the result. Used by the "重新计算
+创新分析" button when the persisted score is `stale=true` (i.e. the
+landscape was rebuilt after the model was generated). Auth-gated by
+`loadAuthorizedSession`; additionally rejects if the model does not
+belong to the path's `sessionId` (IDOR defense).
+
+ * @summary Recompute a model's `innovationMeta` against the current landscape
+ */
+export const RecomputeModelInnovationParams = zod.object({
+  id: zod.coerce.number().describe("Session id (must own the model)."),
+  modelId: zod.coerce.number(),
+});
+
+export const recomputeModelInnovationResponseInnovationMetaOneEdgeNoveltyTagsItemEdgeIndexMin = 0;
+
+export const recomputeModelInnovationResponseInnovationMetaOneEdgeNoveltyTagsItemSubscoreMin = 0;
+export const recomputeModelInnovationResponseInnovationMetaOneEdgeNoveltyTagsItemSubscoreMax = 100;
+
+export const recomputeModelInnovationResponseInnovationMetaOneEdgeNoveltyTagsItemMatchedRelationshipOneTotalOccurrencesMin = 0;
+
+export const recomputeModelInnovationResponseInnovationMetaOneNoveltyScoreMin = 0;
+export const recomputeModelInnovationResponseInnovationMetaOneNoveltyScoreMax = 100;
+
+export const recomputeModelInnovationResponseInnovationMetaOneSubScoresDifferentiationMin = 0;
+export const recomputeModelInnovationResponseInnovationMetaOneSubScoresDifferentiationMax = 100;
+
+export const recomputeModelInnovationResponseInnovationMetaOneSubScoresGapFitMin = 0;
+export const recomputeModelInnovationResponseInnovationMetaOneSubScoresGapFitMax = 100;
+
+export const recomputeModelInnovationResponseInnovationMetaOneSubScoresTheoreticalSoundnessMin = 0;
+export const recomputeModelInnovationResponseInnovationMetaOneSubScoresTheoreticalSoundnessMax = 100;
+
+export const recomputeModelInnovationResponseInnovationMetaOneSubScoresEvidenceSupportMin = 0;
+export const recomputeModelInnovationResponseInnovationMetaOneSubScoresEvidenceSupportMax = 100;
+
+export const recomputeModelInnovationResponseInnovationMetaOneContributionScoreMin = 0;
+export const recomputeModelInnovationResponseInnovationMetaOneContributionScoreMax = 100;
+
+export const recomputeModelInnovationResponseInnovationMetaOneComputedAgainstCoverageRateMin = 0;
+export const recomputeModelInnovationResponseInnovationMetaOneComputedAgainstCoverageRateMax = 1;
+
+export const RecomputeModelInnovationResponse = zod.object({
+  id: zod.number(),
+  sessionId: zod.number(),
+  name: zod.string(),
+  description: zod.string(),
+  rationale: zod.string(),
+  selected: zod.boolean(),
+  nodes: zod.array(
+    zod.object({
+      variableId: zod.number(),
+      variableName: zod.string(),
+      type: zod.string(),
+      paperId: zod.number(),
+      paperTitle: zod.string(),
+      paperAuthors: zod.array(zod.string()),
+      paperYear: zod.number().nullish(),
+      positionX: zod
+        .number()
+        .nullish()
+        .describe(
+          "User-arranged X position on the editable canvas (null = use auto layout).",
+        ),
+      positionY: zod
+        .number()
+        .nullish()
+        .describe(
+          "User-arranged Y position on the editable canvas (null = use auto layout).",
+        ),
+    }),
+  ),
+  edges: zod.array(
+    zod.object({
+      fromVariableId: zod.number(),
+      toVariableId: zod.number(),
+      fromVariableName: zod.string(),
+      toVariableName: zod.string(),
+      relationship: zod.string(),
+      evidencePaperId: zod.number(),
+      evidencePaperTitle: zod.string(),
+      evidencePaperAuthors: zod.array(zod.string()),
+      evidencePaperYear: zod.number().nullish(),
+      evidenceCitationText: zod.string(),
+      evidenceHypothesisId: zod
+        .string()
+        .nullish()
+        .describe(
+          'References paper_hypotheses.hypothesis_id (e.g. \"H2a\") when the edge is grounded in a formal hypothesis.',
+        ),
+      effectSize: zod
+        .string()
+        .nullish()
+        .describe(
+          'Reported effect size (e.g. \"β=.34, p<.001\") when extracted from the source paper.',
+        ),
+      evidenceLocation: zod
+        .string()
+        .nullish()
+        .describe(
+          'Where in the source paper the edge is supported (e.g. \"p. 412\", \"Section 3.2\").',
+        ),
+      moderatorJustification: zod
+        .string()
+        .nullish()
+        .describe(
+          'REQUIRED when relationship=\"moderates\". Explains theoretically why the variable can condition the moderated path.',
+        ),
+      additionalEvidence: zod
+        .array(
+          zod.object({
+            paperId: zod.number(),
+            paperTitle: zod.string(),
+            paperAuthors: zod.array(zod.string()).optional(),
+            paperYear: zod.number().nullish(),
+            citationText: zod.string(),
+            source: zod.enum(["library", "web"]),
+            score: zod.number().nullish(),
+            addedAt: zod.coerce.date().optional(),
+          }),
+        )
+        .optional()
+        .describe(
+          "Extra supporting papers attached after-the-fact via the AI evidence-matching feature.",
+        ),
+    }),
+  ),
+  partialPassMeta: zod
+    .object({
+      allowPartial: zod.boolean(),
+      basedOnPaperIds: zod.array(zod.number()),
+      missingPaperIds: zod.array(zod.number()),
+      missingPapers: zod.array(
+        zod.object({
+          id: zod.number(),
+          title: zod.string(),
+        }),
+      ),
+    })
+    .nullish()
+    .describe(
+      "Present only when this model was generated through the partial-pass flow\n(some session papers had not been extracted at generation time).\n",
+    ),
+  innovationMeta: zod
+    .object({
+      edgeNoveltyTags: zod
+        .array(
+          zod
+            .object({
+              edgeIndex: zod
+                .number()
+                .min(
+                  recomputeModelInnovationResponseInnovationMetaOneEdgeNoveltyTagsItemEdgeIndexMin,
+                )
+                .describe("Index into the parent model's `edges` array."),
+              fromVariableName: zod.string(),
+              toVariableName: zod.string(),
+              relationship: zod
+                .string()
+                .describe(
+                  "Raw model edge relationship (positive \/ negative \/ mediates \/ moderates).",
+                ),
+              tag: zod.enum([
+                "saturated",
+                "established",
+                "underexplored",
+                "context_transferred",
+                "novel",
+                "mechanism_inserted",
+                "boundary_extended",
+                "contradicting",
+              ]),
+              subscore: zod
+                .number()
+                .min(
+                  recomputeModelInnovationResponseInnovationMetaOneEdgeNoveltyTagsItemSubscoreMin,
+                )
+                .max(
+                  recomputeModelInnovationResponseInnovationMetaOneEdgeNoveltyTagsItemSubscoreMax,
+                )
+                .describe(
+                  "The actual subscore contributed to `noveltyScore`. For\n`contradicting` this is 80 by default and 95 when the model also\ncontains a moderator\/mediator that resolves the conflict.\n",
+                ),
+              matchedTotalOccurrences: zod
+                .number()
+                .nullable()
+                .describe(
+                  "Convenience copy of `matchedRelationship.totalOccurrences`.",
+                ),
+              matchedRelationship: zod
+                .object({
+                  canonicalFrom: zod.string(),
+                  canonicalTo: zod.string(),
+                  relationshipType: zod.enum([
+                    "direct",
+                    "mediation",
+                    "moderation",
+                  ]),
+                  totalOccurrences: zod
+                    .number()
+                    .min(
+                      recomputeModelInnovationResponseInnovationMetaOneEdgeNoveltyTagsItemMatchedRelationshipOneTotalOccurrencesMin,
+                    )
+                    .describe(
+                      "Distinct in-scope papers this relationship appears in.",
+                    ),
+                  signConflict: zod.boolean(),
+                  domainsCovered: zod.array(zod.string()),
+                })
+                .describe(
+                  "Snapshot of the `constructRelationships` row that an edge matched\nagainst during scoring. Carried on every `EdgeNoveltyTag` so the UI\ncan explain \*why\* a particular tag was picked (or not picked) without\nround-tripping to the DB. Null when no row matched.\n",
+                )
+                .nullable(),
+              reason: zod
+                .string()
+                .describe(
+                  'zh-CN human-readable explanation of why this tag was chosen.\nStable enough that the UI can display it directly. Includes the\nspecific occurrence count when available so the user understands\nwhy an edge stayed `novel` instead of being upgraded to\n`boundary_extended` (e.g. \"主路径仅在 2 篇文献中出现…\").\n',
+                ),
+            })
+            .describe(
+              "Per-edge novelty classification with explainability payload.\n`tag` follows the single-pick precedence order:\ncontradicting > mechanism_inserted > boundary_extended >\ncontext_transferred > novel > underexplored > established > saturated.\n",
+            ),
+        )
+        .describe("One entry per edge in the parent model, parallel by index."),
+      noveltyScore: zod
+        .number()
+        .min(recomputeModelInnovationResponseInnovationMetaOneNoveltyScoreMin)
+        .max(recomputeModelInnovationResponseInnovationMetaOneNoveltyScoreMax)
+        .nullable()
+        .describe(
+          "Mean of `edgeNoveltyTags[].subscore`. Null only when the model has zero edges.",
+        ),
+      innovationTypes: zod
+        .array(
+          zod.enum([
+            "mechanism",
+            "boundary",
+            "integration",
+            "correction",
+            "construct",
+            "context",
+          ]),
+        )
+        .describe(
+          "5 of 6 auto-detected from the landscape; `context` joins in Phase 3 via AI.",
+        ),
+      subScores: zod.object({
+        differentiation: zod
+          .number()
+          .min(
+            recomputeModelInnovationResponseInnovationMetaOneSubScoresDifferentiationMin,
+          )
+          .max(
+            recomputeModelInnovationResponseInnovationMetaOneSubScoresDifferentiationMax,
+          )
+          .describe(
+            "Mean of edge subscores. Reflects how novel the edges are vs. the literature.",
+          ),
+        gapFit: zod
+          .number()
+          .min(
+            recomputeModelInnovationResponseInnovationMetaOneSubScoresGapFitMin,
+          )
+          .max(
+            recomputeModelInnovationResponseInnovationMetaOneSubScoresGapFitMax,
+          )
+          .describe(
+            "Floor 30 in slice 1; full computation in Phase 2.x once contributionStatement.gapTypes wires in.",
+          ),
+        theoreticalSoundness: zod
+          .number()
+          .min(
+            recomputeModelInnovationResponseInnovationMetaOneSubScoresTheoreticalSoundnessMin,
+          )
+          .max(
+            recomputeModelInnovationResponseInnovationMetaOneSubScoresTheoreticalSoundnessMax,
+          )
+          .describe(
+            "100 if the model's backbone is in the session's evidenced backbones, else floor 30.",
+          ),
+        evidenceSupport: zod
+          .number()
+          .min(
+            recomputeModelInnovationResponseInnovationMetaOneSubScoresEvidenceSupportMin,
+          )
+          .max(
+            recomputeModelInnovationResponseInnovationMetaOneSubScoresEvidenceSupportMax,
+          )
+          .describe(
+            "Floor 20 in slice 1; tiered (direct\/analog\/theory) in Phase 2.x.",
+          ),
+      }),
+      contributionScore: zod
+        .number()
+        .min(
+          recomputeModelInnovationResponseInnovationMetaOneContributionScoreMin,
+        )
+        .max(
+          recomputeModelInnovationResponseInnovationMetaOneContributionScoreMax,
+        )
+        .describe("Headline number — geometric mean of the 4 sub-scores."),
+      contributionStatement: zod
+        .record(zod.string(), zod.unknown())
+        .nullable()
+        .describe(
+          "Phase 3 AI-emitted 7-field self-explanation. Always null in slice 1\n— `warnings` will carry `contribution_statement_missing` until the\nAI generation step ships.\n",
+        ),
+      computedAgainst: zod.object({
+        landscapeVersion: zod
+          .number()
+          .nullable()
+          .describe(
+            "Session's `landscapeMeta.landscapeVersion` at compute time.",
+          ),
+        coverageRate: zod
+          .number()
+          .min(
+            recomputeModelInnovationResponseInnovationMetaOneComputedAgainstCoverageRateMin,
+          )
+          .max(
+            recomputeModelInnovationResponseInnovationMetaOneComputedAgainstCoverageRateMax,
+          ),
+        computedAt: zod.coerce.date(),
+      }),
+      mode: zod.enum(["analysis_only", "enforced"]),
+      modeReason: zod.enum(["coverage_below_threshold", "ok"]),
+      warnings: zod.array(
+        zod.object({
+          code: zod.enum([
+            "contribution_statement_missing",
+            "no_innovation_type_detected",
+            "all_edges_low_novelty",
+          ]),
+          message: zod.string(),
+        }),
+      ),
+      stale: zod
+        .boolean()
+        .optional()
+        .describe(
+          "True iff the score was computed against an older\n`landscapeVersion` than the session currently has. Decorated by\nthe formatter at read time; not persisted in the JSONB.\n",
+        ),
+    })
+    .describe(
+      "Phase 2 Innovation Layer scoring + provenance for a single research\nmodel. NEVER causes hard rejection — `mode='analysis_only'` is the\ncontract for the whole slice 1 release. The UI MUST display all four\nsub-scores and surface `warnings` non-modally.\n",
+    )
+    .nullish()
+    .describe(
+      "Phase 2 Innovation Layer scoring + provenance. Always written for\nmodels generated after Phase 2 ships; null for older models.\n`mode='analysis_only'` means the score is descriptive — the system\nwill not reject the model on it. `stale=true` means the score was\ncomputed against an older landscape version and should be\nrecomputed before being trusted for hard decisions.\n",
+    ),
+  createdAt: zod.string(),
+});
 
 /**
  * @summary How many feedback rounds the AI has learned from for this session/global
@@ -1296,6 +2092,34 @@ export const UpdateModelBody = zod.object({
   nodes: zod.array(zod.object({}).passthrough()).optional(),
   edges: zod.array(zod.object({}).passthrough()).optional(),
 });
+
+export const updateModelResponseInnovationMetaOneEdgeNoveltyTagsItemEdgeIndexMin = 0;
+
+export const updateModelResponseInnovationMetaOneEdgeNoveltyTagsItemSubscoreMin = 0;
+export const updateModelResponseInnovationMetaOneEdgeNoveltyTagsItemSubscoreMax = 100;
+
+export const updateModelResponseInnovationMetaOneEdgeNoveltyTagsItemMatchedRelationshipOneTotalOccurrencesMin = 0;
+
+export const updateModelResponseInnovationMetaOneNoveltyScoreMin = 0;
+export const updateModelResponseInnovationMetaOneNoveltyScoreMax = 100;
+
+export const updateModelResponseInnovationMetaOneSubScoresDifferentiationMin = 0;
+export const updateModelResponseInnovationMetaOneSubScoresDifferentiationMax = 100;
+
+export const updateModelResponseInnovationMetaOneSubScoresGapFitMin = 0;
+export const updateModelResponseInnovationMetaOneSubScoresGapFitMax = 100;
+
+export const updateModelResponseInnovationMetaOneSubScoresTheoreticalSoundnessMin = 0;
+export const updateModelResponseInnovationMetaOneSubScoresTheoreticalSoundnessMax = 100;
+
+export const updateModelResponseInnovationMetaOneSubScoresEvidenceSupportMin = 0;
+export const updateModelResponseInnovationMetaOneSubScoresEvidenceSupportMax = 100;
+
+export const updateModelResponseInnovationMetaOneContributionScoreMin = 0;
+export const updateModelResponseInnovationMetaOneContributionScoreMax = 100;
+
+export const updateModelResponseInnovationMetaOneComputedAgainstCoverageRateMin = 0;
+export const updateModelResponseInnovationMetaOneComputedAgainstCoverageRateMax = 1;
 
 export const UpdateModelResponse = zod.object({
   id: zod.number(),
@@ -1399,10 +2223,195 @@ export const UpdateModelResponse = zod.object({
       "Present only when this model was generated through the partial-pass flow\n(some session papers had not been extracted at generation time).\n",
     ),
   innovationMeta: zod
-    .record(zod.string(), zod.unknown())
+    .object({
+      edgeNoveltyTags: zod
+        .array(
+          zod
+            .object({
+              edgeIndex: zod
+                .number()
+                .min(
+                  updateModelResponseInnovationMetaOneEdgeNoveltyTagsItemEdgeIndexMin,
+                )
+                .describe("Index into the parent model's `edges` array."),
+              fromVariableName: zod.string(),
+              toVariableName: zod.string(),
+              relationship: zod
+                .string()
+                .describe(
+                  "Raw model edge relationship (positive \/ negative \/ mediates \/ moderates).",
+                ),
+              tag: zod.enum([
+                "saturated",
+                "established",
+                "underexplored",
+                "context_transferred",
+                "novel",
+                "mechanism_inserted",
+                "boundary_extended",
+                "contradicting",
+              ]),
+              subscore: zod
+                .number()
+                .min(
+                  updateModelResponseInnovationMetaOneEdgeNoveltyTagsItemSubscoreMin,
+                )
+                .max(
+                  updateModelResponseInnovationMetaOneEdgeNoveltyTagsItemSubscoreMax,
+                )
+                .describe(
+                  "The actual subscore contributed to `noveltyScore`. For\n`contradicting` this is 80 by default and 95 when the model also\ncontains a moderator\/mediator that resolves the conflict.\n",
+                ),
+              matchedTotalOccurrences: zod
+                .number()
+                .nullable()
+                .describe(
+                  "Convenience copy of `matchedRelationship.totalOccurrences`.",
+                ),
+              matchedRelationship: zod
+                .object({
+                  canonicalFrom: zod.string(),
+                  canonicalTo: zod.string(),
+                  relationshipType: zod.enum([
+                    "direct",
+                    "mediation",
+                    "moderation",
+                  ]),
+                  totalOccurrences: zod
+                    .number()
+                    .min(
+                      updateModelResponseInnovationMetaOneEdgeNoveltyTagsItemMatchedRelationshipOneTotalOccurrencesMin,
+                    )
+                    .describe(
+                      "Distinct in-scope papers this relationship appears in.",
+                    ),
+                  signConflict: zod.boolean(),
+                  domainsCovered: zod.array(zod.string()),
+                })
+                .describe(
+                  "Snapshot of the `constructRelationships` row that an edge matched\nagainst during scoring. Carried on every `EdgeNoveltyTag` so the UI\ncan explain \*why\* a particular tag was picked (or not picked) without\nround-tripping to the DB. Null when no row matched.\n",
+                )
+                .nullable(),
+              reason: zod
+                .string()
+                .describe(
+                  'zh-CN human-readable explanation of why this tag was chosen.\nStable enough that the UI can display it directly. Includes the\nspecific occurrence count when available so the user understands\nwhy an edge stayed `novel` instead of being upgraded to\n`boundary_extended` (e.g. \"主路径仅在 2 篇文献中出现…\").\n',
+                ),
+            })
+            .describe(
+              "Per-edge novelty classification with explainability payload.\n`tag` follows the single-pick precedence order:\ncontradicting > mechanism_inserted > boundary_extended >\ncontext_transferred > novel > underexplored > established > saturated.\n",
+            ),
+        )
+        .describe("One entry per edge in the parent model, parallel by index."),
+      noveltyScore: zod
+        .number()
+        .min(updateModelResponseInnovationMetaOneNoveltyScoreMin)
+        .max(updateModelResponseInnovationMetaOneNoveltyScoreMax)
+        .nullable()
+        .describe(
+          "Mean of `edgeNoveltyTags[].subscore`. Null only when the model has zero edges.",
+        ),
+      innovationTypes: zod
+        .array(
+          zod.enum([
+            "mechanism",
+            "boundary",
+            "integration",
+            "correction",
+            "construct",
+            "context",
+          ]),
+        )
+        .describe(
+          "5 of 6 auto-detected from the landscape; `context` joins in Phase 3 via AI.",
+        ),
+      subScores: zod.object({
+        differentiation: zod
+          .number()
+          .min(updateModelResponseInnovationMetaOneSubScoresDifferentiationMin)
+          .max(updateModelResponseInnovationMetaOneSubScoresDifferentiationMax)
+          .describe(
+            "Mean of edge subscores. Reflects how novel the edges are vs. the literature.",
+          ),
+        gapFit: zod
+          .number()
+          .min(updateModelResponseInnovationMetaOneSubScoresGapFitMin)
+          .max(updateModelResponseInnovationMetaOneSubScoresGapFitMax)
+          .describe(
+            "Floor 30 in slice 1; full computation in Phase 2.x once contributionStatement.gapTypes wires in.",
+          ),
+        theoreticalSoundness: zod
+          .number()
+          .min(
+            updateModelResponseInnovationMetaOneSubScoresTheoreticalSoundnessMin,
+          )
+          .max(
+            updateModelResponseInnovationMetaOneSubScoresTheoreticalSoundnessMax,
+          )
+          .describe(
+            "100 if the model's backbone is in the session's evidenced backbones, else floor 30.",
+          ),
+        evidenceSupport: zod
+          .number()
+          .min(updateModelResponseInnovationMetaOneSubScoresEvidenceSupportMin)
+          .max(updateModelResponseInnovationMetaOneSubScoresEvidenceSupportMax)
+          .describe(
+            "Floor 20 in slice 1; tiered (direct\/analog\/theory) in Phase 2.x.",
+          ),
+      }),
+      contributionScore: zod
+        .number()
+        .min(updateModelResponseInnovationMetaOneContributionScoreMin)
+        .max(updateModelResponseInnovationMetaOneContributionScoreMax)
+        .describe("Headline number — geometric mean of the 4 sub-scores."),
+      contributionStatement: zod
+        .record(zod.string(), zod.unknown())
+        .nullable()
+        .describe(
+          "Phase 3 AI-emitted 7-field self-explanation. Always null in slice 1\n— `warnings` will carry `contribution_statement_missing` until the\nAI generation step ships.\n",
+        ),
+      computedAgainst: zod.object({
+        landscapeVersion: zod
+          .number()
+          .nullable()
+          .describe(
+            "Session's `landscapeMeta.landscapeVersion` at compute time.",
+          ),
+        coverageRate: zod
+          .number()
+          .min(
+            updateModelResponseInnovationMetaOneComputedAgainstCoverageRateMin,
+          )
+          .max(
+            updateModelResponseInnovationMetaOneComputedAgainstCoverageRateMax,
+          ),
+        computedAt: zod.coerce.date(),
+      }),
+      mode: zod.enum(["analysis_only", "enforced"]),
+      modeReason: zod.enum(["coverage_below_threshold", "ok"]),
+      warnings: zod.array(
+        zod.object({
+          code: zod.enum([
+            "contribution_statement_missing",
+            "no_innovation_type_detected",
+            "all_edges_low_novelty",
+          ]),
+          message: zod.string(),
+        }),
+      ),
+      stale: zod
+        .boolean()
+        .optional()
+        .describe(
+          "True iff the score was computed against an older\n`landscapeVersion` than the session currently has. Decorated by\nthe formatter at read time; not persisted in the JSONB.\n",
+        ),
+    })
+    .describe(
+      "Phase 2 Innovation Layer scoring + provenance for a single research\nmodel. NEVER causes hard rejection — `mode='analysis_only'` is the\ncontract for the whole slice 1 release. The UI MUST display all four\nsub-scores and surface `warnings` non-modally.\n",
+    )
     .nullish()
     .describe(
-      "Phase 2 Innovation Layer scoring + provenance. Always written for\nmodels generated after Phase 2 ships; null for older models. The\nshape mirrors `InnovationMeta` in `lib\/innovation-scoring.ts`.\n`mode='analysis_only'` means the score is descriptive — the system\nwill not reject the model on it. `stale=true` means the score was\ncomputed against an older landscape version and should be\nrecomputed before being trusted for hard decisions.\n",
+      "Phase 2 Innovation Layer scoring + provenance. Always written for\nmodels generated after Phase 2 ships; null for older models.\n`mode='analysis_only'` means the score is descriptive — the system\nwill not reject the model on it. `stale=true` means the score was\ncomputed against an older landscape version and should be\nrecomputed before being trusted for hard decisions.\n",
     ),
   createdAt: zod.string(),
 });
@@ -1413,6 +2422,34 @@ export const UpdateModelResponse = zod.object({
 export const GetModelParams = zod.object({
   id: zod.coerce.number(),
 });
+
+export const getModelResponseInnovationMetaOneEdgeNoveltyTagsItemEdgeIndexMin = 0;
+
+export const getModelResponseInnovationMetaOneEdgeNoveltyTagsItemSubscoreMin = 0;
+export const getModelResponseInnovationMetaOneEdgeNoveltyTagsItemSubscoreMax = 100;
+
+export const getModelResponseInnovationMetaOneEdgeNoveltyTagsItemMatchedRelationshipOneTotalOccurrencesMin = 0;
+
+export const getModelResponseInnovationMetaOneNoveltyScoreMin = 0;
+export const getModelResponseInnovationMetaOneNoveltyScoreMax = 100;
+
+export const getModelResponseInnovationMetaOneSubScoresDifferentiationMin = 0;
+export const getModelResponseInnovationMetaOneSubScoresDifferentiationMax = 100;
+
+export const getModelResponseInnovationMetaOneSubScoresGapFitMin = 0;
+export const getModelResponseInnovationMetaOneSubScoresGapFitMax = 100;
+
+export const getModelResponseInnovationMetaOneSubScoresTheoreticalSoundnessMin = 0;
+export const getModelResponseInnovationMetaOneSubScoresTheoreticalSoundnessMax = 100;
+
+export const getModelResponseInnovationMetaOneSubScoresEvidenceSupportMin = 0;
+export const getModelResponseInnovationMetaOneSubScoresEvidenceSupportMax = 100;
+
+export const getModelResponseInnovationMetaOneContributionScoreMin = 0;
+export const getModelResponseInnovationMetaOneContributionScoreMax = 100;
+
+export const getModelResponseInnovationMetaOneComputedAgainstCoverageRateMin = 0;
+export const getModelResponseInnovationMetaOneComputedAgainstCoverageRateMax = 1;
 
 export const GetModelResponse = zod.object({
   id: zod.number(),
@@ -1516,10 +2553,191 @@ export const GetModelResponse = zod.object({
       "Present only when this model was generated through the partial-pass flow\n(some session papers had not been extracted at generation time).\n",
     ),
   innovationMeta: zod
-    .record(zod.string(), zod.unknown())
+    .object({
+      edgeNoveltyTags: zod
+        .array(
+          zod
+            .object({
+              edgeIndex: zod
+                .number()
+                .min(
+                  getModelResponseInnovationMetaOneEdgeNoveltyTagsItemEdgeIndexMin,
+                )
+                .describe("Index into the parent model's `edges` array."),
+              fromVariableName: zod.string(),
+              toVariableName: zod.string(),
+              relationship: zod
+                .string()
+                .describe(
+                  "Raw model edge relationship (positive \/ negative \/ mediates \/ moderates).",
+                ),
+              tag: zod.enum([
+                "saturated",
+                "established",
+                "underexplored",
+                "context_transferred",
+                "novel",
+                "mechanism_inserted",
+                "boundary_extended",
+                "contradicting",
+              ]),
+              subscore: zod
+                .number()
+                .min(
+                  getModelResponseInnovationMetaOneEdgeNoveltyTagsItemSubscoreMin,
+                )
+                .max(
+                  getModelResponseInnovationMetaOneEdgeNoveltyTagsItemSubscoreMax,
+                )
+                .describe(
+                  "The actual subscore contributed to `noveltyScore`. For\n`contradicting` this is 80 by default and 95 when the model also\ncontains a moderator\/mediator that resolves the conflict.\n",
+                ),
+              matchedTotalOccurrences: zod
+                .number()
+                .nullable()
+                .describe(
+                  "Convenience copy of `matchedRelationship.totalOccurrences`.",
+                ),
+              matchedRelationship: zod
+                .object({
+                  canonicalFrom: zod.string(),
+                  canonicalTo: zod.string(),
+                  relationshipType: zod.enum([
+                    "direct",
+                    "mediation",
+                    "moderation",
+                  ]),
+                  totalOccurrences: zod
+                    .number()
+                    .min(
+                      getModelResponseInnovationMetaOneEdgeNoveltyTagsItemMatchedRelationshipOneTotalOccurrencesMin,
+                    )
+                    .describe(
+                      "Distinct in-scope papers this relationship appears in.",
+                    ),
+                  signConflict: zod.boolean(),
+                  domainsCovered: zod.array(zod.string()),
+                })
+                .describe(
+                  "Snapshot of the `constructRelationships` row that an edge matched\nagainst during scoring. Carried on every `EdgeNoveltyTag` so the UI\ncan explain \*why\* a particular tag was picked (or not picked) without\nround-tripping to the DB. Null when no row matched.\n",
+                )
+                .nullable(),
+              reason: zod
+                .string()
+                .describe(
+                  'zh-CN human-readable explanation of why this tag was chosen.\nStable enough that the UI can display it directly. Includes the\nspecific occurrence count when available so the user understands\nwhy an edge stayed `novel` instead of being upgraded to\n`boundary_extended` (e.g. \"主路径仅在 2 篇文献中出现…\").\n',
+                ),
+            })
+            .describe(
+              "Per-edge novelty classification with explainability payload.\n`tag` follows the single-pick precedence order:\ncontradicting > mechanism_inserted > boundary_extended >\ncontext_transferred > novel > underexplored > established > saturated.\n",
+            ),
+        )
+        .describe("One entry per edge in the parent model, parallel by index."),
+      noveltyScore: zod
+        .number()
+        .min(getModelResponseInnovationMetaOneNoveltyScoreMin)
+        .max(getModelResponseInnovationMetaOneNoveltyScoreMax)
+        .nullable()
+        .describe(
+          "Mean of `edgeNoveltyTags[].subscore`. Null only when the model has zero edges.",
+        ),
+      innovationTypes: zod
+        .array(
+          zod.enum([
+            "mechanism",
+            "boundary",
+            "integration",
+            "correction",
+            "construct",
+            "context",
+          ]),
+        )
+        .describe(
+          "5 of 6 auto-detected from the landscape; `context` joins in Phase 3 via AI.",
+        ),
+      subScores: zod.object({
+        differentiation: zod
+          .number()
+          .min(getModelResponseInnovationMetaOneSubScoresDifferentiationMin)
+          .max(getModelResponseInnovationMetaOneSubScoresDifferentiationMax)
+          .describe(
+            "Mean of edge subscores. Reflects how novel the edges are vs. the literature.",
+          ),
+        gapFit: zod
+          .number()
+          .min(getModelResponseInnovationMetaOneSubScoresGapFitMin)
+          .max(getModelResponseInnovationMetaOneSubScoresGapFitMax)
+          .describe(
+            "Floor 30 in slice 1; full computation in Phase 2.x once contributionStatement.gapTypes wires in.",
+          ),
+        theoreticalSoundness: zod
+          .number()
+          .min(
+            getModelResponseInnovationMetaOneSubScoresTheoreticalSoundnessMin,
+          )
+          .max(
+            getModelResponseInnovationMetaOneSubScoresTheoreticalSoundnessMax,
+          )
+          .describe(
+            "100 if the model's backbone is in the session's evidenced backbones, else floor 30.",
+          ),
+        evidenceSupport: zod
+          .number()
+          .min(getModelResponseInnovationMetaOneSubScoresEvidenceSupportMin)
+          .max(getModelResponseInnovationMetaOneSubScoresEvidenceSupportMax)
+          .describe(
+            "Floor 20 in slice 1; tiered (direct\/analog\/theory) in Phase 2.x.",
+          ),
+      }),
+      contributionScore: zod
+        .number()
+        .min(getModelResponseInnovationMetaOneContributionScoreMin)
+        .max(getModelResponseInnovationMetaOneContributionScoreMax)
+        .describe("Headline number — geometric mean of the 4 sub-scores."),
+      contributionStatement: zod
+        .record(zod.string(), zod.unknown())
+        .nullable()
+        .describe(
+          "Phase 3 AI-emitted 7-field self-explanation. Always null in slice 1\n— `warnings` will carry `contribution_statement_missing` until the\nAI generation step ships.\n",
+        ),
+      computedAgainst: zod.object({
+        landscapeVersion: zod
+          .number()
+          .nullable()
+          .describe(
+            "Session's `landscapeMeta.landscapeVersion` at compute time.",
+          ),
+        coverageRate: zod
+          .number()
+          .min(getModelResponseInnovationMetaOneComputedAgainstCoverageRateMin)
+          .max(getModelResponseInnovationMetaOneComputedAgainstCoverageRateMax),
+        computedAt: zod.coerce.date(),
+      }),
+      mode: zod.enum(["analysis_only", "enforced"]),
+      modeReason: zod.enum(["coverage_below_threshold", "ok"]),
+      warnings: zod.array(
+        zod.object({
+          code: zod.enum([
+            "contribution_statement_missing",
+            "no_innovation_type_detected",
+            "all_edges_low_novelty",
+          ]),
+          message: zod.string(),
+        }),
+      ),
+      stale: zod
+        .boolean()
+        .optional()
+        .describe(
+          "True iff the score was computed against an older\n`landscapeVersion` than the session currently has. Decorated by\nthe formatter at read time; not persisted in the JSONB.\n",
+        ),
+    })
+    .describe(
+      "Phase 2 Innovation Layer scoring + provenance for a single research\nmodel. NEVER causes hard rejection — `mode='analysis_only'` is the\ncontract for the whole slice 1 release. The UI MUST display all four\nsub-scores and surface `warnings` non-modally.\n",
+    )
     .nullish()
     .describe(
-      "Phase 2 Innovation Layer scoring + provenance. Always written for\nmodels generated after Phase 2 ships; null for older models. The\nshape mirrors `InnovationMeta` in `lib\/innovation-scoring.ts`.\n`mode='analysis_only'` means the score is descriptive — the system\nwill not reject the model on it. `stale=true` means the score was\ncomputed against an older landscape version and should be\nrecomputed before being trusted for hard decisions.\n",
+      "Phase 2 Innovation Layer scoring + provenance. Always written for\nmodels generated after Phase 2 ships; null for older models.\n`mode='analysis_only'` means the score is descriptive — the system\nwill not reject the model on it. `stale=true` means the score was\ncomputed against an older landscape version and should be\nrecomputed before being trusted for hard decisions.\n",
     ),
   createdAt: zod.string(),
 });
@@ -1603,6 +2821,34 @@ export const GenerateModelLiteratureReviewResponse = zod.object({
 export const SelectModelParams = zod.object({
   id: zod.coerce.number(),
 });
+
+export const selectModelResponseInnovationMetaOneEdgeNoveltyTagsItemEdgeIndexMin = 0;
+
+export const selectModelResponseInnovationMetaOneEdgeNoveltyTagsItemSubscoreMin = 0;
+export const selectModelResponseInnovationMetaOneEdgeNoveltyTagsItemSubscoreMax = 100;
+
+export const selectModelResponseInnovationMetaOneEdgeNoveltyTagsItemMatchedRelationshipOneTotalOccurrencesMin = 0;
+
+export const selectModelResponseInnovationMetaOneNoveltyScoreMin = 0;
+export const selectModelResponseInnovationMetaOneNoveltyScoreMax = 100;
+
+export const selectModelResponseInnovationMetaOneSubScoresDifferentiationMin = 0;
+export const selectModelResponseInnovationMetaOneSubScoresDifferentiationMax = 100;
+
+export const selectModelResponseInnovationMetaOneSubScoresGapFitMin = 0;
+export const selectModelResponseInnovationMetaOneSubScoresGapFitMax = 100;
+
+export const selectModelResponseInnovationMetaOneSubScoresTheoreticalSoundnessMin = 0;
+export const selectModelResponseInnovationMetaOneSubScoresTheoreticalSoundnessMax = 100;
+
+export const selectModelResponseInnovationMetaOneSubScoresEvidenceSupportMin = 0;
+export const selectModelResponseInnovationMetaOneSubScoresEvidenceSupportMax = 100;
+
+export const selectModelResponseInnovationMetaOneContributionScoreMin = 0;
+export const selectModelResponseInnovationMetaOneContributionScoreMax = 100;
+
+export const selectModelResponseInnovationMetaOneComputedAgainstCoverageRateMin = 0;
+export const selectModelResponseInnovationMetaOneComputedAgainstCoverageRateMax = 1;
 
 export const SelectModelResponse = zod.object({
   id: zod.number(),
@@ -1706,10 +2952,195 @@ export const SelectModelResponse = zod.object({
       "Present only when this model was generated through the partial-pass flow\n(some session papers had not been extracted at generation time).\n",
     ),
   innovationMeta: zod
-    .record(zod.string(), zod.unknown())
+    .object({
+      edgeNoveltyTags: zod
+        .array(
+          zod
+            .object({
+              edgeIndex: zod
+                .number()
+                .min(
+                  selectModelResponseInnovationMetaOneEdgeNoveltyTagsItemEdgeIndexMin,
+                )
+                .describe("Index into the parent model's `edges` array."),
+              fromVariableName: zod.string(),
+              toVariableName: zod.string(),
+              relationship: zod
+                .string()
+                .describe(
+                  "Raw model edge relationship (positive \/ negative \/ mediates \/ moderates).",
+                ),
+              tag: zod.enum([
+                "saturated",
+                "established",
+                "underexplored",
+                "context_transferred",
+                "novel",
+                "mechanism_inserted",
+                "boundary_extended",
+                "contradicting",
+              ]),
+              subscore: zod
+                .number()
+                .min(
+                  selectModelResponseInnovationMetaOneEdgeNoveltyTagsItemSubscoreMin,
+                )
+                .max(
+                  selectModelResponseInnovationMetaOneEdgeNoveltyTagsItemSubscoreMax,
+                )
+                .describe(
+                  "The actual subscore contributed to `noveltyScore`. For\n`contradicting` this is 80 by default and 95 when the model also\ncontains a moderator\/mediator that resolves the conflict.\n",
+                ),
+              matchedTotalOccurrences: zod
+                .number()
+                .nullable()
+                .describe(
+                  "Convenience copy of `matchedRelationship.totalOccurrences`.",
+                ),
+              matchedRelationship: zod
+                .object({
+                  canonicalFrom: zod.string(),
+                  canonicalTo: zod.string(),
+                  relationshipType: zod.enum([
+                    "direct",
+                    "mediation",
+                    "moderation",
+                  ]),
+                  totalOccurrences: zod
+                    .number()
+                    .min(
+                      selectModelResponseInnovationMetaOneEdgeNoveltyTagsItemMatchedRelationshipOneTotalOccurrencesMin,
+                    )
+                    .describe(
+                      "Distinct in-scope papers this relationship appears in.",
+                    ),
+                  signConflict: zod.boolean(),
+                  domainsCovered: zod.array(zod.string()),
+                })
+                .describe(
+                  "Snapshot of the `constructRelationships` row that an edge matched\nagainst during scoring. Carried on every `EdgeNoveltyTag` so the UI\ncan explain \*why\* a particular tag was picked (or not picked) without\nround-tripping to the DB. Null when no row matched.\n",
+                )
+                .nullable(),
+              reason: zod
+                .string()
+                .describe(
+                  'zh-CN human-readable explanation of why this tag was chosen.\nStable enough that the UI can display it directly. Includes the\nspecific occurrence count when available so the user understands\nwhy an edge stayed `novel` instead of being upgraded to\n`boundary_extended` (e.g. \"主路径仅在 2 篇文献中出现…\").\n',
+                ),
+            })
+            .describe(
+              "Per-edge novelty classification with explainability payload.\n`tag` follows the single-pick precedence order:\ncontradicting > mechanism_inserted > boundary_extended >\ncontext_transferred > novel > underexplored > established > saturated.\n",
+            ),
+        )
+        .describe("One entry per edge in the parent model, parallel by index."),
+      noveltyScore: zod
+        .number()
+        .min(selectModelResponseInnovationMetaOneNoveltyScoreMin)
+        .max(selectModelResponseInnovationMetaOneNoveltyScoreMax)
+        .nullable()
+        .describe(
+          "Mean of `edgeNoveltyTags[].subscore`. Null only when the model has zero edges.",
+        ),
+      innovationTypes: zod
+        .array(
+          zod.enum([
+            "mechanism",
+            "boundary",
+            "integration",
+            "correction",
+            "construct",
+            "context",
+          ]),
+        )
+        .describe(
+          "5 of 6 auto-detected from the landscape; `context` joins in Phase 3 via AI.",
+        ),
+      subScores: zod.object({
+        differentiation: zod
+          .number()
+          .min(selectModelResponseInnovationMetaOneSubScoresDifferentiationMin)
+          .max(selectModelResponseInnovationMetaOneSubScoresDifferentiationMax)
+          .describe(
+            "Mean of edge subscores. Reflects how novel the edges are vs. the literature.",
+          ),
+        gapFit: zod
+          .number()
+          .min(selectModelResponseInnovationMetaOneSubScoresGapFitMin)
+          .max(selectModelResponseInnovationMetaOneSubScoresGapFitMax)
+          .describe(
+            "Floor 30 in slice 1; full computation in Phase 2.x once contributionStatement.gapTypes wires in.",
+          ),
+        theoreticalSoundness: zod
+          .number()
+          .min(
+            selectModelResponseInnovationMetaOneSubScoresTheoreticalSoundnessMin,
+          )
+          .max(
+            selectModelResponseInnovationMetaOneSubScoresTheoreticalSoundnessMax,
+          )
+          .describe(
+            "100 if the model's backbone is in the session's evidenced backbones, else floor 30.",
+          ),
+        evidenceSupport: zod
+          .number()
+          .min(selectModelResponseInnovationMetaOneSubScoresEvidenceSupportMin)
+          .max(selectModelResponseInnovationMetaOneSubScoresEvidenceSupportMax)
+          .describe(
+            "Floor 20 in slice 1; tiered (direct\/analog\/theory) in Phase 2.x.",
+          ),
+      }),
+      contributionScore: zod
+        .number()
+        .min(selectModelResponseInnovationMetaOneContributionScoreMin)
+        .max(selectModelResponseInnovationMetaOneContributionScoreMax)
+        .describe("Headline number — geometric mean of the 4 sub-scores."),
+      contributionStatement: zod
+        .record(zod.string(), zod.unknown())
+        .nullable()
+        .describe(
+          "Phase 3 AI-emitted 7-field self-explanation. Always null in slice 1\n— `warnings` will carry `contribution_statement_missing` until the\nAI generation step ships.\n",
+        ),
+      computedAgainst: zod.object({
+        landscapeVersion: zod
+          .number()
+          .nullable()
+          .describe(
+            "Session's `landscapeMeta.landscapeVersion` at compute time.",
+          ),
+        coverageRate: zod
+          .number()
+          .min(
+            selectModelResponseInnovationMetaOneComputedAgainstCoverageRateMin,
+          )
+          .max(
+            selectModelResponseInnovationMetaOneComputedAgainstCoverageRateMax,
+          ),
+        computedAt: zod.coerce.date(),
+      }),
+      mode: zod.enum(["analysis_only", "enforced"]),
+      modeReason: zod.enum(["coverage_below_threshold", "ok"]),
+      warnings: zod.array(
+        zod.object({
+          code: zod.enum([
+            "contribution_statement_missing",
+            "no_innovation_type_detected",
+            "all_edges_low_novelty",
+          ]),
+          message: zod.string(),
+        }),
+      ),
+      stale: zod
+        .boolean()
+        .optional()
+        .describe(
+          "True iff the score was computed against an older\n`landscapeVersion` than the session currently has. Decorated by\nthe formatter at read time; not persisted in the JSONB.\n",
+        ),
+    })
+    .describe(
+      "Phase 2 Innovation Layer scoring + provenance for a single research\nmodel. NEVER causes hard rejection — `mode='analysis_only'` is the\ncontract for the whole slice 1 release. The UI MUST display all four\nsub-scores and surface `warnings` non-modally.\n",
+    )
     .nullish()
     .describe(
-      "Phase 2 Innovation Layer scoring + provenance. Always written for\nmodels generated after Phase 2 ships; null for older models. The\nshape mirrors `InnovationMeta` in `lib\/innovation-scoring.ts`.\n`mode='analysis_only'` means the score is descriptive — the system\nwill not reject the model on it. `stale=true` means the score was\ncomputed against an older landscape version and should be\nrecomputed before being trusted for hard decisions.\n",
+      "Phase 2 Innovation Layer scoring + provenance. Always written for\nmodels generated after Phase 2 ships; null for older models.\n`mode='analysis_only'` means the score is descriptive — the system\nwill not reject the model on it. `stale=true` means the score was\ncomputed against an older landscape version and should be\nrecomputed before being trusted for hard decisions.\n",
     ),
   createdAt: zod.string(),
 });
@@ -2471,6 +3902,34 @@ export const ApplyModelEvidenceBody = zod.object({
     ),
 });
 
+export const applyModelEvidenceResponseInnovationMetaOneEdgeNoveltyTagsItemEdgeIndexMin = 0;
+
+export const applyModelEvidenceResponseInnovationMetaOneEdgeNoveltyTagsItemSubscoreMin = 0;
+export const applyModelEvidenceResponseInnovationMetaOneEdgeNoveltyTagsItemSubscoreMax = 100;
+
+export const applyModelEvidenceResponseInnovationMetaOneEdgeNoveltyTagsItemMatchedRelationshipOneTotalOccurrencesMin = 0;
+
+export const applyModelEvidenceResponseInnovationMetaOneNoveltyScoreMin = 0;
+export const applyModelEvidenceResponseInnovationMetaOneNoveltyScoreMax = 100;
+
+export const applyModelEvidenceResponseInnovationMetaOneSubScoresDifferentiationMin = 0;
+export const applyModelEvidenceResponseInnovationMetaOneSubScoresDifferentiationMax = 100;
+
+export const applyModelEvidenceResponseInnovationMetaOneSubScoresGapFitMin = 0;
+export const applyModelEvidenceResponseInnovationMetaOneSubScoresGapFitMax = 100;
+
+export const applyModelEvidenceResponseInnovationMetaOneSubScoresTheoreticalSoundnessMin = 0;
+export const applyModelEvidenceResponseInnovationMetaOneSubScoresTheoreticalSoundnessMax = 100;
+
+export const applyModelEvidenceResponseInnovationMetaOneSubScoresEvidenceSupportMin = 0;
+export const applyModelEvidenceResponseInnovationMetaOneSubScoresEvidenceSupportMax = 100;
+
+export const applyModelEvidenceResponseInnovationMetaOneContributionScoreMin = 0;
+export const applyModelEvidenceResponseInnovationMetaOneContributionScoreMax = 100;
+
+export const applyModelEvidenceResponseInnovationMetaOneComputedAgainstCoverageRateMin = 0;
+export const applyModelEvidenceResponseInnovationMetaOneComputedAgainstCoverageRateMax = 1;
+
 export const ApplyModelEvidenceResponse = zod.object({
   id: zod.number(),
   sessionId: zod.number(),
@@ -2573,10 +4032,203 @@ export const ApplyModelEvidenceResponse = zod.object({
       "Present only when this model was generated through the partial-pass flow\n(some session papers had not been extracted at generation time).\n",
     ),
   innovationMeta: zod
-    .record(zod.string(), zod.unknown())
+    .object({
+      edgeNoveltyTags: zod
+        .array(
+          zod
+            .object({
+              edgeIndex: zod
+                .number()
+                .min(
+                  applyModelEvidenceResponseInnovationMetaOneEdgeNoveltyTagsItemEdgeIndexMin,
+                )
+                .describe("Index into the parent model's `edges` array."),
+              fromVariableName: zod.string(),
+              toVariableName: zod.string(),
+              relationship: zod
+                .string()
+                .describe(
+                  "Raw model edge relationship (positive \/ negative \/ mediates \/ moderates).",
+                ),
+              tag: zod.enum([
+                "saturated",
+                "established",
+                "underexplored",
+                "context_transferred",
+                "novel",
+                "mechanism_inserted",
+                "boundary_extended",
+                "contradicting",
+              ]),
+              subscore: zod
+                .number()
+                .min(
+                  applyModelEvidenceResponseInnovationMetaOneEdgeNoveltyTagsItemSubscoreMin,
+                )
+                .max(
+                  applyModelEvidenceResponseInnovationMetaOneEdgeNoveltyTagsItemSubscoreMax,
+                )
+                .describe(
+                  "The actual subscore contributed to `noveltyScore`. For\n`contradicting` this is 80 by default and 95 when the model also\ncontains a moderator\/mediator that resolves the conflict.\n",
+                ),
+              matchedTotalOccurrences: zod
+                .number()
+                .nullable()
+                .describe(
+                  "Convenience copy of `matchedRelationship.totalOccurrences`.",
+                ),
+              matchedRelationship: zod
+                .object({
+                  canonicalFrom: zod.string(),
+                  canonicalTo: zod.string(),
+                  relationshipType: zod.enum([
+                    "direct",
+                    "mediation",
+                    "moderation",
+                  ]),
+                  totalOccurrences: zod
+                    .number()
+                    .min(
+                      applyModelEvidenceResponseInnovationMetaOneEdgeNoveltyTagsItemMatchedRelationshipOneTotalOccurrencesMin,
+                    )
+                    .describe(
+                      "Distinct in-scope papers this relationship appears in.",
+                    ),
+                  signConflict: zod.boolean(),
+                  domainsCovered: zod.array(zod.string()),
+                })
+                .describe(
+                  "Snapshot of the `constructRelationships` row that an edge matched\nagainst during scoring. Carried on every `EdgeNoveltyTag` so the UI\ncan explain \*why\* a particular tag was picked (or not picked) without\nround-tripping to the DB. Null when no row matched.\n",
+                )
+                .nullable(),
+              reason: zod
+                .string()
+                .describe(
+                  'zh-CN human-readable explanation of why this tag was chosen.\nStable enough that the UI can display it directly. Includes the\nspecific occurrence count when available so the user understands\nwhy an edge stayed `novel` instead of being upgraded to\n`boundary_extended` (e.g. \"主路径仅在 2 篇文献中出现…\").\n',
+                ),
+            })
+            .describe(
+              "Per-edge novelty classification with explainability payload.\n`tag` follows the single-pick precedence order:\ncontradicting > mechanism_inserted > boundary_extended >\ncontext_transferred > novel > underexplored > established > saturated.\n",
+            ),
+        )
+        .describe("One entry per edge in the parent model, parallel by index."),
+      noveltyScore: zod
+        .number()
+        .min(applyModelEvidenceResponseInnovationMetaOneNoveltyScoreMin)
+        .max(applyModelEvidenceResponseInnovationMetaOneNoveltyScoreMax)
+        .nullable()
+        .describe(
+          "Mean of `edgeNoveltyTags[].subscore`. Null only when the model has zero edges.",
+        ),
+      innovationTypes: zod
+        .array(
+          zod.enum([
+            "mechanism",
+            "boundary",
+            "integration",
+            "correction",
+            "construct",
+            "context",
+          ]),
+        )
+        .describe(
+          "5 of 6 auto-detected from the landscape; `context` joins in Phase 3 via AI.",
+        ),
+      subScores: zod.object({
+        differentiation: zod
+          .number()
+          .min(
+            applyModelEvidenceResponseInnovationMetaOneSubScoresDifferentiationMin,
+          )
+          .max(
+            applyModelEvidenceResponseInnovationMetaOneSubScoresDifferentiationMax,
+          )
+          .describe(
+            "Mean of edge subscores. Reflects how novel the edges are vs. the literature.",
+          ),
+        gapFit: zod
+          .number()
+          .min(applyModelEvidenceResponseInnovationMetaOneSubScoresGapFitMin)
+          .max(applyModelEvidenceResponseInnovationMetaOneSubScoresGapFitMax)
+          .describe(
+            "Floor 30 in slice 1; full computation in Phase 2.x once contributionStatement.gapTypes wires in.",
+          ),
+        theoreticalSoundness: zod
+          .number()
+          .min(
+            applyModelEvidenceResponseInnovationMetaOneSubScoresTheoreticalSoundnessMin,
+          )
+          .max(
+            applyModelEvidenceResponseInnovationMetaOneSubScoresTheoreticalSoundnessMax,
+          )
+          .describe(
+            "100 if the model's backbone is in the session's evidenced backbones, else floor 30.",
+          ),
+        evidenceSupport: zod
+          .number()
+          .min(
+            applyModelEvidenceResponseInnovationMetaOneSubScoresEvidenceSupportMin,
+          )
+          .max(
+            applyModelEvidenceResponseInnovationMetaOneSubScoresEvidenceSupportMax,
+          )
+          .describe(
+            "Floor 20 in slice 1; tiered (direct\/analog\/theory) in Phase 2.x.",
+          ),
+      }),
+      contributionScore: zod
+        .number()
+        .min(applyModelEvidenceResponseInnovationMetaOneContributionScoreMin)
+        .max(applyModelEvidenceResponseInnovationMetaOneContributionScoreMax)
+        .describe("Headline number — geometric mean of the 4 sub-scores."),
+      contributionStatement: zod
+        .record(zod.string(), zod.unknown())
+        .nullable()
+        .describe(
+          "Phase 3 AI-emitted 7-field self-explanation. Always null in slice 1\n— `warnings` will carry `contribution_statement_missing` until the\nAI generation step ships.\n",
+        ),
+      computedAgainst: zod.object({
+        landscapeVersion: zod
+          .number()
+          .nullable()
+          .describe(
+            "Session's `landscapeMeta.landscapeVersion` at compute time.",
+          ),
+        coverageRate: zod
+          .number()
+          .min(
+            applyModelEvidenceResponseInnovationMetaOneComputedAgainstCoverageRateMin,
+          )
+          .max(
+            applyModelEvidenceResponseInnovationMetaOneComputedAgainstCoverageRateMax,
+          ),
+        computedAt: zod.coerce.date(),
+      }),
+      mode: zod.enum(["analysis_only", "enforced"]),
+      modeReason: zod.enum(["coverage_below_threshold", "ok"]),
+      warnings: zod.array(
+        zod.object({
+          code: zod.enum([
+            "contribution_statement_missing",
+            "no_innovation_type_detected",
+            "all_edges_low_novelty",
+          ]),
+          message: zod.string(),
+        }),
+      ),
+      stale: zod
+        .boolean()
+        .optional()
+        .describe(
+          "True iff the score was computed against an older\n`landscapeVersion` than the session currently has. Decorated by\nthe formatter at read time; not persisted in the JSONB.\n",
+        ),
+    })
+    .describe(
+      "Phase 2 Innovation Layer scoring + provenance for a single research\nmodel. NEVER causes hard rejection — `mode='analysis_only'` is the\ncontract for the whole slice 1 release. The UI MUST display all four\nsub-scores and surface `warnings` non-modally.\n",
+    )
     .nullish()
     .describe(
-      "Phase 2 Innovation Layer scoring + provenance. Always written for\nmodels generated after Phase 2 ships; null for older models. The\nshape mirrors `InnovationMeta` in `lib\/innovation-scoring.ts`.\n`mode='analysis_only'` means the score is descriptive — the system\nwill not reject the model on it. `stale=true` means the score was\ncomputed against an older landscape version and should be\nrecomputed before being trusted for hard decisions.\n",
+      "Phase 2 Innovation Layer scoring + provenance. Always written for\nmodels generated after Phase 2 ships; null for older models.\n`mode='analysis_only'` means the score is descriptive — the system\nwill not reject the model on it. `stale=true` means the score was\ncomputed against an older landscape version and should be\nrecomputed before being trusted for hard decisions.\n",
     ),
   createdAt: zod.string(),
 });
@@ -2610,6 +4262,34 @@ export const RevertModelToVersionParams = zod.object({
   modelId: zod.coerce.number(),
   versionId: zod.coerce.number(),
 });
+
+export const revertModelToVersionResponseInnovationMetaOneEdgeNoveltyTagsItemEdgeIndexMin = 0;
+
+export const revertModelToVersionResponseInnovationMetaOneEdgeNoveltyTagsItemSubscoreMin = 0;
+export const revertModelToVersionResponseInnovationMetaOneEdgeNoveltyTagsItemSubscoreMax = 100;
+
+export const revertModelToVersionResponseInnovationMetaOneEdgeNoveltyTagsItemMatchedRelationshipOneTotalOccurrencesMin = 0;
+
+export const revertModelToVersionResponseInnovationMetaOneNoveltyScoreMin = 0;
+export const revertModelToVersionResponseInnovationMetaOneNoveltyScoreMax = 100;
+
+export const revertModelToVersionResponseInnovationMetaOneSubScoresDifferentiationMin = 0;
+export const revertModelToVersionResponseInnovationMetaOneSubScoresDifferentiationMax = 100;
+
+export const revertModelToVersionResponseInnovationMetaOneSubScoresGapFitMin = 0;
+export const revertModelToVersionResponseInnovationMetaOneSubScoresGapFitMax = 100;
+
+export const revertModelToVersionResponseInnovationMetaOneSubScoresTheoreticalSoundnessMin = 0;
+export const revertModelToVersionResponseInnovationMetaOneSubScoresTheoreticalSoundnessMax = 100;
+
+export const revertModelToVersionResponseInnovationMetaOneSubScoresEvidenceSupportMin = 0;
+export const revertModelToVersionResponseInnovationMetaOneSubScoresEvidenceSupportMax = 100;
+
+export const revertModelToVersionResponseInnovationMetaOneContributionScoreMin = 0;
+export const revertModelToVersionResponseInnovationMetaOneContributionScoreMax = 100;
+
+export const revertModelToVersionResponseInnovationMetaOneComputedAgainstCoverageRateMin = 0;
+export const revertModelToVersionResponseInnovationMetaOneComputedAgainstCoverageRateMax = 1;
 
 export const RevertModelToVersionResponse = zod.object({
   id: zod.number(),
@@ -2713,10 +4393,203 @@ export const RevertModelToVersionResponse = zod.object({
       "Present only when this model was generated through the partial-pass flow\n(some session papers had not been extracted at generation time).\n",
     ),
   innovationMeta: zod
-    .record(zod.string(), zod.unknown())
+    .object({
+      edgeNoveltyTags: zod
+        .array(
+          zod
+            .object({
+              edgeIndex: zod
+                .number()
+                .min(
+                  revertModelToVersionResponseInnovationMetaOneEdgeNoveltyTagsItemEdgeIndexMin,
+                )
+                .describe("Index into the parent model's `edges` array."),
+              fromVariableName: zod.string(),
+              toVariableName: zod.string(),
+              relationship: zod
+                .string()
+                .describe(
+                  "Raw model edge relationship (positive \/ negative \/ mediates \/ moderates).",
+                ),
+              tag: zod.enum([
+                "saturated",
+                "established",
+                "underexplored",
+                "context_transferred",
+                "novel",
+                "mechanism_inserted",
+                "boundary_extended",
+                "contradicting",
+              ]),
+              subscore: zod
+                .number()
+                .min(
+                  revertModelToVersionResponseInnovationMetaOneEdgeNoveltyTagsItemSubscoreMin,
+                )
+                .max(
+                  revertModelToVersionResponseInnovationMetaOneEdgeNoveltyTagsItemSubscoreMax,
+                )
+                .describe(
+                  "The actual subscore contributed to `noveltyScore`. For\n`contradicting` this is 80 by default and 95 when the model also\ncontains a moderator\/mediator that resolves the conflict.\n",
+                ),
+              matchedTotalOccurrences: zod
+                .number()
+                .nullable()
+                .describe(
+                  "Convenience copy of `matchedRelationship.totalOccurrences`.",
+                ),
+              matchedRelationship: zod
+                .object({
+                  canonicalFrom: zod.string(),
+                  canonicalTo: zod.string(),
+                  relationshipType: zod.enum([
+                    "direct",
+                    "mediation",
+                    "moderation",
+                  ]),
+                  totalOccurrences: zod
+                    .number()
+                    .min(
+                      revertModelToVersionResponseInnovationMetaOneEdgeNoveltyTagsItemMatchedRelationshipOneTotalOccurrencesMin,
+                    )
+                    .describe(
+                      "Distinct in-scope papers this relationship appears in.",
+                    ),
+                  signConflict: zod.boolean(),
+                  domainsCovered: zod.array(zod.string()),
+                })
+                .describe(
+                  "Snapshot of the `constructRelationships` row that an edge matched\nagainst during scoring. Carried on every `EdgeNoveltyTag` so the UI\ncan explain \*why\* a particular tag was picked (or not picked) without\nround-tripping to the DB. Null when no row matched.\n",
+                )
+                .nullable(),
+              reason: zod
+                .string()
+                .describe(
+                  'zh-CN human-readable explanation of why this tag was chosen.\nStable enough that the UI can display it directly. Includes the\nspecific occurrence count when available so the user understands\nwhy an edge stayed `novel` instead of being upgraded to\n`boundary_extended` (e.g. \"主路径仅在 2 篇文献中出现…\").\n',
+                ),
+            })
+            .describe(
+              "Per-edge novelty classification with explainability payload.\n`tag` follows the single-pick precedence order:\ncontradicting > mechanism_inserted > boundary_extended >\ncontext_transferred > novel > underexplored > established > saturated.\n",
+            ),
+        )
+        .describe("One entry per edge in the parent model, parallel by index."),
+      noveltyScore: zod
+        .number()
+        .min(revertModelToVersionResponseInnovationMetaOneNoveltyScoreMin)
+        .max(revertModelToVersionResponseInnovationMetaOneNoveltyScoreMax)
+        .nullable()
+        .describe(
+          "Mean of `edgeNoveltyTags[].subscore`. Null only when the model has zero edges.",
+        ),
+      innovationTypes: zod
+        .array(
+          zod.enum([
+            "mechanism",
+            "boundary",
+            "integration",
+            "correction",
+            "construct",
+            "context",
+          ]),
+        )
+        .describe(
+          "5 of 6 auto-detected from the landscape; `context` joins in Phase 3 via AI.",
+        ),
+      subScores: zod.object({
+        differentiation: zod
+          .number()
+          .min(
+            revertModelToVersionResponseInnovationMetaOneSubScoresDifferentiationMin,
+          )
+          .max(
+            revertModelToVersionResponseInnovationMetaOneSubScoresDifferentiationMax,
+          )
+          .describe(
+            "Mean of edge subscores. Reflects how novel the edges are vs. the literature.",
+          ),
+        gapFit: zod
+          .number()
+          .min(revertModelToVersionResponseInnovationMetaOneSubScoresGapFitMin)
+          .max(revertModelToVersionResponseInnovationMetaOneSubScoresGapFitMax)
+          .describe(
+            "Floor 30 in slice 1; full computation in Phase 2.x once contributionStatement.gapTypes wires in.",
+          ),
+        theoreticalSoundness: zod
+          .number()
+          .min(
+            revertModelToVersionResponseInnovationMetaOneSubScoresTheoreticalSoundnessMin,
+          )
+          .max(
+            revertModelToVersionResponseInnovationMetaOneSubScoresTheoreticalSoundnessMax,
+          )
+          .describe(
+            "100 if the model's backbone is in the session's evidenced backbones, else floor 30.",
+          ),
+        evidenceSupport: zod
+          .number()
+          .min(
+            revertModelToVersionResponseInnovationMetaOneSubScoresEvidenceSupportMin,
+          )
+          .max(
+            revertModelToVersionResponseInnovationMetaOneSubScoresEvidenceSupportMax,
+          )
+          .describe(
+            "Floor 20 in slice 1; tiered (direct\/analog\/theory) in Phase 2.x.",
+          ),
+      }),
+      contributionScore: zod
+        .number()
+        .min(revertModelToVersionResponseInnovationMetaOneContributionScoreMin)
+        .max(revertModelToVersionResponseInnovationMetaOneContributionScoreMax)
+        .describe("Headline number — geometric mean of the 4 sub-scores."),
+      contributionStatement: zod
+        .record(zod.string(), zod.unknown())
+        .nullable()
+        .describe(
+          "Phase 3 AI-emitted 7-field self-explanation. Always null in slice 1\n— `warnings` will carry `contribution_statement_missing` until the\nAI generation step ships.\n",
+        ),
+      computedAgainst: zod.object({
+        landscapeVersion: zod
+          .number()
+          .nullable()
+          .describe(
+            "Session's `landscapeMeta.landscapeVersion` at compute time.",
+          ),
+        coverageRate: zod
+          .number()
+          .min(
+            revertModelToVersionResponseInnovationMetaOneComputedAgainstCoverageRateMin,
+          )
+          .max(
+            revertModelToVersionResponseInnovationMetaOneComputedAgainstCoverageRateMax,
+          ),
+        computedAt: zod.coerce.date(),
+      }),
+      mode: zod.enum(["analysis_only", "enforced"]),
+      modeReason: zod.enum(["coverage_below_threshold", "ok"]),
+      warnings: zod.array(
+        zod.object({
+          code: zod.enum([
+            "contribution_statement_missing",
+            "no_innovation_type_detected",
+            "all_edges_low_novelty",
+          ]),
+          message: zod.string(),
+        }),
+      ),
+      stale: zod
+        .boolean()
+        .optional()
+        .describe(
+          "True iff the score was computed against an older\n`landscapeVersion` than the session currently has. Decorated by\nthe formatter at read time; not persisted in the JSONB.\n",
+        ),
+    })
+    .describe(
+      "Phase 2 Innovation Layer scoring + provenance for a single research\nmodel. NEVER causes hard rejection — `mode='analysis_only'` is the\ncontract for the whole slice 1 release. The UI MUST display all four\nsub-scores and surface `warnings` non-modally.\n",
+    )
     .nullish()
     .describe(
-      "Phase 2 Innovation Layer scoring + provenance. Always written for\nmodels generated after Phase 2 ships; null for older models. The\nshape mirrors `InnovationMeta` in `lib\/innovation-scoring.ts`.\n`mode='analysis_only'` means the score is descriptive — the system\nwill not reject the model on it. `stale=true` means the score was\ncomputed against an older landscape version and should be\nrecomputed before being trusted for hard decisions.\n",
+      "Phase 2 Innovation Layer scoring + provenance. Always written for\nmodels generated after Phase 2 ships; null for older models.\n`mode='analysis_only'` means the score is descriptive — the system\nwill not reject the model on it. `stale=true` means the score was\ncomputed against an older landscape version and should be\nrecomputed before being trusted for hard decisions.\n",
     ),
   createdAt: zod.string(),
 });

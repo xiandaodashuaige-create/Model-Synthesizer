@@ -51,6 +51,19 @@ export const EDGE_TAG_SUBSCORE: Record<EdgeNoveltyTag | "contradicting_resolved"
   contradicting_resolved: 95,
 };
 
+// Snapshot of the CR row that the edge matched against. Null when the edge
+// has no row in `constructRelationshipsTable` for any rel-type. Carried on
+// every tagging so the UI can explain "why is this edge `novel` / why didn't
+// it become `boundary_extended`" without round-tripping to the DB.
+export interface EdgeMatchedRelationship {
+  canonicalFrom: string;
+  canonicalTo: string;
+  relationshipType: string; // "direct" | "mediation" | "moderation"
+  totalOccurrences: number;
+  signConflict: boolean;
+  domainsCovered: string[];
+}
+
 export interface EdgeNoveltyTagging {
   // Stable per-edge identifier (idx into model.edges).
   edgeIndex: number;
@@ -62,6 +75,12 @@ export interface EdgeNoveltyTagging {
   subscore: number;
   // For UI tooltip — which CR row matched, if any.
   matchedTotalOccurrences: number | null;
+  // Full lookup snapshot for the explainability panel. Null when no CR row
+  // matched the edge for any rel-type at this canonical (from, to) pair.
+  matchedRelationship: EdgeMatchedRelationship | null;
+  // Human-readable zh-CN explanation of why this tag was chosen. Stable
+  // enough that the UI can display it directly without templating.
+  reason: string;
 }
 
 export interface InnovationSubScores {
@@ -177,14 +196,36 @@ function bracketByOccurrences(n: number): EdgeNoveltyTag {
 }
 
 // Per-edge tag with single-pick precedence. Returns the chosen tag plus the
-// matched CR row's totalOccurrences (null when the edge isn't in the table).
+// matched CR row's totalOccurrences (null when the edge isn't in the table)
+// plus a zh-CN `reason` string for the explainability panel.
+interface TagDecision {
+  tag: EdgeNoveltyTag;
+  matchedTotalOccurrences: number | null;
+  resolvedConflict: boolean;
+  reason: string;
+  matchedRelationship: EdgeMatchedRelationship | null;
+}
+
+function snapshotCr(cr: ConstructRelationship | null): EdgeMatchedRelationship | null {
+  if (!cr) return null;
+  const dom = Array.isArray(cr.domainsCovered) ? (cr.domainsCovered as unknown[]) : [];
+  return {
+    canonicalFrom: cr.canonicalFrom,
+    canonicalTo: cr.canonicalTo,
+    relationshipType: cr.relationshipType,
+    totalOccurrences: cr.totalOccurrences,
+    signConflict: cr.signConflict,
+    domainsCovered: dom.filter((d): d is string => typeof d === "string"),
+  };
+}
+
 function tagOneEdge(
   edge: ModelEdgeShape,
   modelEdges: ModelEdgeShape[],
   modelNodes: ModelNodeShape[],
   crByKey: Map<string, ConstructRelationship>,
   sessionTopicContexts: Set<string>,
-): { tag: EdgeNoveltyTag; matchedTotalOccurrences: number | null; resolvedConflict: boolean } {
+): TagDecision {
   const crType = edgeRelToCrType(edge.relationship);
   const lookupKey = crKeyFromName(edge.fromVariableName, edge.toVariableName, crType);
   const directKey = crKeyFromName(edge.fromVariableName, edge.toVariableName, REL_DIRECT);
@@ -225,7 +266,15 @@ function tagOneEdge(
       }
       return false;
     });
-    return { tag: "contradicting", matchedTotalOccurrences, resolvedConflict: hasResolver };
+    return {
+      tag: "contradicting",
+      matchedTotalOccurrences,
+      resolvedConflict: hasResolver,
+      matchedRelationship: snapshotCr(crDirect),
+      reason: hasResolver
+        ? `直接路径在文献中存在符号冲突；模型通过中介或调节变量给出了解决方案。`
+        : `直接路径在文献中存在符号冲突，模型尚未提供调节或中介解释。`,
+    };
   }
 
   // 2. `mechanism_inserted` — direct edge X→Y where X→Y is saturated and
@@ -257,7 +306,13 @@ function tagOneEdge(
         const xmOcc = xmCr?.totalOccurrences ?? 0;
         const myOcc = myCr?.totalOccurrences ?? 0;
         if (xmOcc <= 1 || myOcc <= 1) {
-          return { tag: "mechanism_inserted", matchedTotalOccurrences, resolvedConflict: false };
+          return {
+            tag: "mechanism_inserted",
+            matchedTotalOccurrences,
+            resolvedConflict: false,
+            matchedRelationship: snapshotCr(crDirect),
+            reason: `主路径已饱和（${crDirect.totalOccurrences} 篇），模型在中间插入新中介构建了未被验证的三段式机制。`,
+          };
         }
       }
     }
@@ -278,13 +333,32 @@ function tagOneEdge(
     if (mFrom && mTo) {
       const xyKey = crKey(mFrom, null, mTo, null, REL_DIRECT);
       const xy = crByKey.get(xyKey);
-      const xyEstablished = (xy?.totalOccurrences ?? 0) >= 3;
+      const xyOcc = xy?.totalOccurrences ?? 0;
+      const xyEstablished = xyOcc >= 3;
       if (xyEstablished) {
         // Conservative proxy: as long as no CR moderation row records this W
         // as moderating (X,Y) (we can't fully verify yet — the supportingPapers
         // shape doesn't carry moderatedEdge yet), tag as boundary_extended.
-        return { tag: "boundary_extended", matchedTotalOccurrences, resolvedConflict: false };
+        return {
+          tag: "boundary_extended",
+          matchedTotalOccurrences,
+          resolvedConflict: false,
+          matchedRelationship: snapshotCr(xy ?? null),
+          reason: `被调节的主路径在 ${xyOcc} 篇文献中已建立，本调节变量在该 (X,Y) 对上尚未被检验，构成边界条件扩展。`,
+        };
       }
+      // Document why boundary_extended was NOT chosen — the moderated edge is
+      // too thin in the literature pool. The UI uses this to explain to the
+      // user that their pool may simply be too small.
+      return {
+        tag: "novel",
+        matchedTotalOccurrences: null,
+        resolvedConflict: false,
+        matchedRelationship: snapshotCr(xy ?? null),
+        reason: xy
+          ? `被调节的主路径仅在 ${xyOcc} 篇文献中出现，未达到 3 篇 established 阈值，暂按 novel 处理；扩充文献后可能升级为边界扩展。`
+          : `被调节的主路径在当前文献池中找不到对应记录，暂按 novel 处理。`,
+      };
     }
   }
 
@@ -296,17 +370,42 @@ function tagOneEdge(
     const domains = cr.domainsCovered as unknown[];
     const overlap = domains.some((d) => typeof d === "string" && sessionTopicContexts.has(d.toLowerCase()));
     if (!overlap) {
-      return { tag: "context_transferred", matchedTotalOccurrences, resolvedConflict: false };
+      return {
+        tag: "context_transferred",
+        matchedTotalOccurrences,
+        resolvedConflict: false,
+        matchedRelationship: snapshotCr(cr),
+        reason: `该关系已在其他研究情境（${(domains as string[]).filter((d) => typeof d === "string").join("、")}）中得到验证，但尚未在本会话主题情境下检验。`,
+      };
     }
   }
 
   // 5. `novel` — edge not in CR table at all (for any rel type at this pair).
   if (!cr) {
-    return { tag: "novel", matchedTotalOccurrences: null, resolvedConflict: false };
+    return {
+      tag: "novel",
+      matchedTotalOccurrences: null,
+      resolvedConflict: false,
+      matchedRelationship: null,
+      reason: `当前文献池中未找到该关系（${edge.fromVariableName} → ${edge.toVariableName}）的任何记录。`,
+    };
   }
 
   // 6/7/8. Bracket by occurrences.
-  return { tag: bracketByOccurrences(cr.totalOccurrences), matchedTotalOccurrences, resolvedConflict: false };
+  const bracketTag = bracketByOccurrences(cr.totalOccurrences);
+  const bracketReason =
+    bracketTag === "saturated"
+      ? `该关系在 ${cr.totalOccurrences} 篇文献中已被反复验证，属于成熟关系。`
+      : bracketTag === "established"
+        ? `该关系在 ${cr.totalOccurrences} 篇文献中已建立，属于已确认关系。`
+        : `该关系在 ${cr.totalOccurrences} 篇文献中出现，仍属探索阶段。`;
+  return {
+    tag: bracketTag,
+    matchedTotalOccurrences,
+    resolvedConflict: false,
+    matchedRelationship: snapshotCr(cr),
+    reason: bracketReason,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -569,24 +668,20 @@ export async function computeInnovationMeta({
   const edgesRaw = (model.edges as ModelEdgeShape[]) ?? [];
   const nodesRaw = (model.nodes as ModelNodeShape[]) ?? [];
   const edgeNoveltyTags: EdgeNoveltyTagging[] = edgesRaw.map((edge, idx) => {
-    const { tag, matchedTotalOccurrences, resolvedConflict } = tagOneEdge(
-      edge,
-      edgesRaw,
-      nodesRaw,
-      crByKey,
-      sessionTopicContexts,
-    );
-    const subscore = tag === "contradicting" && resolvedConflict
+    const decision = tagOneEdge(edge, edgesRaw, nodesRaw, crByKey, sessionTopicContexts);
+    const subscore = decision.tag === "contradicting" && decision.resolvedConflict
       ? EDGE_TAG_SUBSCORE.contradicting_resolved
-      : EDGE_TAG_SUBSCORE[tag];
+      : EDGE_TAG_SUBSCORE[decision.tag];
     return {
       edgeIndex: idx,
       fromVariableName: edge.fromVariableName,
       toVariableName: edge.toVariableName,
       relationship: edge.relationship,
-      tag,
+      tag: decision.tag,
       subscore,
-      matchedTotalOccurrences,
+      matchedTotalOccurrences: decision.matchedTotalOccurrences,
+      matchedRelationship: decision.matchedRelationship,
+      reason: decision.reason,
     };
   });
 

@@ -3423,6 +3423,101 @@ export function useListSessionModels<
 }
 
 /**
+ * Re-runs Phase 2 scoring against the session's CURRENT
+`landscapeVersion` and persists the result. Used by the "重新计算
+创新分析" button when the persisted score is `stale=true` (i.e. the
+landscape was rebuilt after the model was generated). Auth-gated by
+`loadAuthorizedSession`; additionally rejects if the model does not
+belong to the path's `sessionId` (IDOR defense).
+
+ * @summary Recompute a model's `innovationMeta` against the current landscape
+ */
+export const getRecomputeModelInnovationUrl = (id: number, modelId: number) => {
+  return `/api/sessions/${id}/models/${modelId}/recompute-innovation`;
+};
+
+export const recomputeModelInnovation = async (
+  id: number,
+  modelId: number,
+  options?: RequestInit,
+): Promise<ResearchModel> => {
+  return customFetch<ResearchModel>(
+    getRecomputeModelInnovationUrl(id, modelId),
+    {
+      ...options,
+      method: "POST",
+    },
+  );
+};
+
+export const getRecomputeModelInnovationMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof recomputeModelInnovation>>,
+    TError,
+    { id: number; modelId: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof recomputeModelInnovation>>,
+  TError,
+  { id: number; modelId: number },
+  TContext
+> => {
+  const mutationKey = ["recomputeModelInnovation"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof recomputeModelInnovation>>,
+    { id: number; modelId: number }
+  > = (props) => {
+    const { id, modelId } = props ?? {};
+
+    return recomputeModelInnovation(id, modelId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RecomputeModelInnovationMutationResult = NonNullable<
+  Awaited<ReturnType<typeof recomputeModelInnovation>>
+>;
+
+export type RecomputeModelInnovationMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Recompute a model's `innovationMeta` against the current landscape
+ */
+export const useRecomputeModelInnovation = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof recomputeModelInnovation>>,
+    TError,
+    { id: number; modelId: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof recomputeModelInnovation>>,
+  TError,
+  { id: number; modelId: number },
+  TContext
+> => {
+  return useMutation(getRecomputeModelInnovationMutationOptions(options));
+};
+
+/**
  * @summary How many feedback rounds the AI has learned from for this session/global
  */
 export const getGetSessionLearningStatsUrl = (id: number) => {

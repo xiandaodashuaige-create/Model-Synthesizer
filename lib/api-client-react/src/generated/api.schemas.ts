@@ -385,18 +385,6 @@ export type ResearchModelPartialPassMeta = {
   missingPapers: ResearchModelPartialPassMetaMissingPapersItem[];
 } | null;
 
-/**
- * Phase 2 Innovation Layer scoring + provenance. Always written for
-models generated after Phase 2 ships; null for older models. The
-shape mirrors `InnovationMeta` in `lib/innovation-scoring.ts`.
-`mode='analysis_only'` means the score is descriptive — the system
-will not reject the model on it. `stale=true` means the score was
-computed against an older landscape version and should be
-recomputed before being trusted for hard decisions.
-
- */
-export type ResearchModelInnovationMeta = { [key: string]: unknown } | null;
-
 export interface ModelNode {
   variableId: number;
   variableName: string;
@@ -475,6 +463,219 @@ export interface ModelEdge {
   additionalEvidence?: AdditionalEvidence[];
 }
 
+export type EdgeNoveltyTagTag =
+  (typeof EdgeNoveltyTagTag)[keyof typeof EdgeNoveltyTagTag];
+
+export const EdgeNoveltyTagTag = {
+  saturated: "saturated",
+  established: "established",
+  underexplored: "underexplored",
+  context_transferred: "context_transferred",
+  novel: "novel",
+  mechanism_inserted: "mechanism_inserted",
+  boundary_extended: "boundary_extended",
+  contradicting: "contradicting",
+} as const;
+
+export type EdgeMatchedRelationshipRelationshipType =
+  (typeof EdgeMatchedRelationshipRelationshipType)[keyof typeof EdgeMatchedRelationshipRelationshipType];
+
+export const EdgeMatchedRelationshipRelationshipType = {
+  direct: "direct",
+  mediation: "mediation",
+  moderation: "moderation",
+} as const;
+
+/**
+ * Snapshot of the `constructRelationships` row that an edge matched
+against during scoring. Carried on every `EdgeNoveltyTag` so the UI
+can explain *why* a particular tag was picked (or not picked) without
+round-tripping to the DB. Null when no row matched.
+
+ */
+export interface EdgeMatchedRelationship {
+  canonicalFrom: string;
+  canonicalTo: string;
+  relationshipType: EdgeMatchedRelationshipRelationshipType;
+  /**
+   * Distinct in-scope papers this relationship appears in.
+   * @minimum 0
+   */
+  totalOccurrences: number;
+  signConflict: boolean;
+  domainsCovered: string[];
+}
+
+/**
+ * Per-edge novelty classification with explainability payload.
+`tag` follows the single-pick precedence order:
+contradicting > mechanism_inserted > boundary_extended >
+context_transferred > novel > underexplored > established > saturated.
+
+ */
+export interface EdgeNoveltyTag {
+  /**
+   * Index into the parent model's `edges` array.
+   * @minimum 0
+   */
+  edgeIndex: number;
+  fromVariableName: string;
+  toVariableName: string;
+  /** Raw model edge relationship (positive / negative / mediates / moderates). */
+  relationship: string;
+  tag: EdgeNoveltyTagTag;
+  /**
+   * The actual subscore contributed to `noveltyScore`. For
+`contradicting` this is 80 by default and 95 when the model also
+contains a moderator/mediator that resolves the conflict.
+
+   * @minimum 0
+   * @maximum 100
+   */
+  subscore: number;
+  /** Convenience copy of `matchedRelationship.totalOccurrences`. */
+  matchedTotalOccurrences: number | null;
+  matchedRelationship: EdgeMatchedRelationship | null;
+  /** zh-CN human-readable explanation of why this tag was chosen.
+Stable enough that the UI can display it directly. Includes the
+specific occurrence count when available so the user understands
+why an edge stayed `novel` instead of being upgraded to
+`boundary_extended` (e.g. "主路径仅在 2 篇文献中出现…").
+ */
+  reason: string;
+}
+
+export type InnovationMetaInnovationTypesItem =
+  (typeof InnovationMetaInnovationTypesItem)[keyof typeof InnovationMetaInnovationTypesItem];
+
+export const InnovationMetaInnovationTypesItem = {
+  mechanism: "mechanism",
+  boundary: "boundary",
+  integration: "integration",
+  correction: "correction",
+  construct: "construct",
+  context: "context",
+} as const;
+
+export interface InnovationSubScores {
+  /**
+   * Mean of edge subscores. Reflects how novel the edges are vs. the literature.
+   * @minimum 0
+   * @maximum 100
+   */
+  differentiation: number;
+  /**
+   * Floor 30 in slice 1; full computation in Phase 2.x once contributionStatement.gapTypes wires in.
+   * @minimum 0
+   * @maximum 100
+   */
+  gapFit: number;
+  /**
+   * 100 if the model's backbone is in the session's evidenced backbones, else floor 30.
+   * @minimum 0
+   * @maximum 100
+   */
+  theoreticalSoundness: number;
+  /**
+   * Floor 20 in slice 1; tiered (direct/analog/theory) in Phase 2.x.
+   * @minimum 0
+   * @maximum 100
+   */
+  evidenceSupport: number;
+}
+
+export type InnovationMetaMode =
+  (typeof InnovationMetaMode)[keyof typeof InnovationMetaMode];
+
+export const InnovationMetaMode = {
+  analysis_only: "analysis_only",
+  enforced: "enforced",
+} as const;
+
+export type InnovationMetaModeReason =
+  (typeof InnovationMetaModeReason)[keyof typeof InnovationMetaModeReason];
+
+export const InnovationMetaModeReason = {
+  coverage_below_threshold: "coverage_below_threshold",
+  ok: "ok",
+} as const;
+
+export type InnovationWarningCode =
+  (typeof InnovationWarningCode)[keyof typeof InnovationWarningCode];
+
+export const InnovationWarningCode = {
+  contribution_statement_missing: "contribution_statement_missing",
+  no_innovation_type_detected: "no_innovation_type_detected",
+  all_edges_low_novelty: "all_edges_low_novelty",
+} as const;
+
+export interface InnovationWarning {
+  code: InnovationWarningCode;
+  message: string;
+}
+
+/**
+ * Phase 3 AI-emitted 7-field self-explanation. Always null in slice 1
+— `warnings` will carry `contribution_statement_missing` until the
+AI generation step ships.
+
+ */
+export type InnovationMetaContributionStatement = {
+  [key: string]: unknown;
+} | null;
+
+export type InnovationMetaComputedAgainst = {
+  /** Session's `landscapeMeta.landscapeVersion` at compute time. */
+  landscapeVersion: number | null;
+  /**
+   * @minimum 0
+   * @maximum 1
+   */
+  coverageRate: number;
+  computedAt: string;
+};
+
+/**
+ * Phase 2 Innovation Layer scoring + provenance for a single research
+model. NEVER causes hard rejection — `mode='analysis_only'` is the
+contract for the whole slice 1 release. The UI MUST display all four
+sub-scores and surface `warnings` non-modally.
+
+ */
+export interface InnovationMeta {
+  /** One entry per edge in the parent model, parallel by index. */
+  edgeNoveltyTags: EdgeNoveltyTag[];
+  /**
+   * Mean of `edgeNoveltyTags[].subscore`. Null only when the model has zero edges.
+   * @minimum 0
+   * @maximum 100
+   */
+  noveltyScore: number | null;
+  /** 5 of 6 auto-detected from the landscape; `context` joins in Phase 3 via AI. */
+  innovationTypes: InnovationMetaInnovationTypesItem[];
+  subScores: InnovationSubScores;
+  /**
+   * Headline number — geometric mean of the 4 sub-scores.
+   * @minimum 0
+   * @maximum 100
+   */
+  contributionScore: number;
+  /** Phase 3 AI-emitted 7-field self-explanation. Always null in slice 1
+— `warnings` will carry `contribution_statement_missing` until the
+AI generation step ships.
+ */
+  contributionStatement: InnovationMetaContributionStatement;
+  computedAgainst: InnovationMetaComputedAgainst;
+  mode: InnovationMetaMode;
+  modeReason: InnovationMetaModeReason;
+  warnings: InnovationWarning[];
+  /** True iff the score was computed against an older
+`landscapeVersion` than the session currently has. Decorated by
+the formatter at read time; not persisted in the JSONB.
+ */
+  stale?: boolean;
+}
+
 export interface ResearchModel {
   id: number;
   sessionId: number;
@@ -489,15 +690,36 @@ export interface ResearchModel {
  */
   partialPassMeta?: ResearchModelPartialPassMeta;
   /** Phase 2 Innovation Layer scoring + provenance. Always written for
-models generated after Phase 2 ships; null for older models. The
-shape mirrors `InnovationMeta` in `lib/innovation-scoring.ts`.
+models generated after Phase 2 ships; null for older models.
 `mode='analysis_only'` means the score is descriptive — the system
 will not reject the model on it. `stale=true` means the score was
 computed against an older landscape version and should be
 recomputed before being trusted for hard decisions.
  */
-  innovationMeta?: ResearchModelInnovationMeta;
+  innovationMeta?: InnovationMeta | null;
   createdAt: string;
+}
+
+/**
+ * How much of the session's eligible literature pool has been extracted
+with Phase 1 innovation fields. Drives the Landscape page banner and
+gates `InnovationMeta.mode` (below 0.7 → analysis_only).
+
+ */
+export interface LandscapeCoverage {
+  /**
+   * extractedWithInnovationFieldsCount / totalEligiblePaperCount
+   * @minimum 0
+   * @maximum 1
+   */
+  coverageRate: number;
+  /**
+   * Non-tangential, non-manual papers in the session.
+   * @minimum 0
+   */
+  totalEligiblePaperCount: number;
+  /** @minimum 0 */
+  extractedWithInnovationFieldsCount: number;
 }
 
 export interface LiveModelNodeOut {

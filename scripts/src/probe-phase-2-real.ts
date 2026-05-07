@@ -174,8 +174,30 @@ async function main() {
     tagCounts[t.tag] = (tagCounts[t.tag] ?? 0) + 1;
     const e = edges[t.edgeIndex]!;
     console.log(`  [${t.tag}] (${t.subscore})  ${e.fromVariableName} -[${e.relationship}]-> ${e.toVariableName}`);
+    console.log(`     reason: ${t.reason}`);
+    if (t.matchedRelationship) {
+      const mr = t.matchedRelationship;
+      console.log(`     matched: ${mr.canonicalFrom} =[${mr.relationshipType}]= ${mr.canonicalTo} (${mr.totalOccurrences} 篇${mr.signConflict ? ", signConflict" : ""})`);
+    } else {
+      console.log(`     matched: (none)`);
+    }
   }
   console.log(`\ntag distribution: ${JSON.stringify(tagCounts)}`);
+
+  // Slice 2 contract: every tag carries reason + (matchedRelationship | null).
+  for (const t of meta.edgeNoveltyTags) {
+    if (typeof t.reason !== "string" || t.reason.length === 0) {
+      console.error(`  ✘ edge ${t.edgeIndex} missing reason`);
+      process.exit(1);
+    }
+    if (t.matchedRelationship !== null) {
+      const mr = t.matchedRelationship;
+      if (!mr.canonicalFrom || !mr.canonicalTo || !["direct", "mediation", "moderation"].includes(mr.relationshipType)) {
+        console.error(`  ✘ edge ${t.edgeIndex} matchedRelationship malformed`);
+        process.exit(1);
+      }
+    }
+  }
 
   // 6. Verdict.
   const issues: string[] = [];

@@ -1,0 +1,416 @@
+对切片 1 的判断
+结论：通过
+你们做的几个点都符合之前约定：
+
+1. innovationMeta jsonb 单字段承载
+这是正确选择。Phase 2 前期字段还会变，用 JSONB 比拆列更稳。
+
+理想结构应包含：
+
+{
+  contributionStatement,
+  innovationTypes,
+  edgeNoveltyTags,
+  noveltyScore,
+  contributionScore,
+  subScores,
+  computedAgainst: {
+    landscapeVersion,
+    coverageRate,
+    computedAt
+  },
+  mode: "analysis_only" | "enforced",
+  warnings: []
+}
+你报告里提到：
+
+mode=analysis_only
+computedAgainst.landscapeVersion
+computedAgainst.coverageRate
+computedAgainst.computedAt
+edgeNoveltyTags.length === edges.length
+这些都对。
+
+2. coverage < 0.7 自动 analysis_only
+通过。
+
+session 11 没有 Phase 1 landscape：
+
+coverageRate=0
+mode=analysis_only
+这是正确行为。
+
+这说明 Phase 2 没有把不完整 landscape 当作强判断依据。
+
+3. contributionScore 几何平均正确
+你验证：
+
+contributionScore=34
+= (0.75×0.3×0.3×0.2)^0.25×100
+公式正确。
+
+我建议后面 UI 一定显示四个子分，否则用户只看到 34 会不知道为什么低。
+
+4. recompute 路由鉴权修复正确
+原先如果是：
+
+/models/:id/recompute-innovation
+确实存在 IDOR 风险。
+
+改为：
+
+/sessions/:id/models/:modelId/recompute-innovation
+并且自动进 session ownership middleware，这是正确修复。
+
+你们又加：
+
+model.sessionId === sessionId
+这是必要的二次防御。
+
+我认可。
+
+5. loadLandscapeSnapshot 复用一次
+这是重要性能优化。
+
+因为模型生成 fanout 如果每个模型都查 landscape，会造成：
+
+N models × 4 queries
+而且你们有 60s autoscale deadline。
+
+抽成：
+
+loadLandscapeSnapshot(sessionId)
+一次并行读取，然后 fanout 复用，是正确做法。
+
+有意延后的 OpenAPI 是否可以接受？
+可以接受，但不要拖太久
+你们说：
+
+OpenAPI 暂时把 innovationMeta 暴露为不透明 object，recompute 端点未写进 spec，等切片 2 前端 UI 再类型化。
+
+这个我接受，前提是切片 2 马上做。
+
+原因：
+
+切片 1 是后端分析层；
+前端字段还没稳定；
+过早 codegen 可能反复改。
+但切片 2 一开始就要补：
+
+InnovationMeta schema
+RecomputeInnovation endpoint
+Landscape / Gap endpoints
+否则前端会继续 as any，后面维护成本高。
+
+是否现在进入切片 2？
+可以进入切片 2
+你的切片 2：
+
+Landscape & Gap 页面 UI + recompute 按钮
+是正确下一步。
+
+但我建议先做一个很小的真实验证。
+
+是否要先在真实带 landscapeVersion 的 session 上跑一次生成？
+我建议：要，先跑一次
+理由：
+
+你现在 selftest 用的是：
+
+session 11 无 landscape，coverageRate=0
+它验证了 fallback / analysis_only，但还没验证真正有 landscape 时：
+
+edgeNoveltyTags 是否合理；
+noveltyScore 是否基于 ConstructRelationship；
+innovationTypes 是否能产出；
+computedAgainst.landscapeVersion 是否匹配；
+loadLandscapeSnapshot 在生成 fanout 里是否节省延迟；
+contributionStatement 是否不是空泛文本；
+coverage 非 0 时分数是否合理。
+建议跑一个最小验证：
+
+选择 session 9
+确保 landscapeCoverage = 8/49
+生成 1 个模型
+检查 innovationMeta
+不需要大批量。
+
+验收项：
+
+mode = analysis_only
+coverageRate = 0.163
+computedAgainst.landscapeVersion = 当前值
+edgeNoveltyTags.length = edges.length
+至少一条边不是 unknown
+innovationTypes 可以为空但要有 warning
+contributionScore 有四个子分
+生成耗时没有明显增加
+如果这通过，再切片 2 前端做起来会更有信心。
+
+我建议的下一步顺序
+推荐顺序
+0. 真实 landscape session 小验证，1 个模型即可
+1. 补 OpenAPI InnovationMeta schema + recompute endpoint
+2. 做 Landscape & Gap 页面
+3. 做 recompute 按钮
+4. 做模型卡 InnovationMeta 展示
+你原来把“模型卡 UI”放切片 3，我仍然赞成。切片 2 页面先做 landscape/gap，模型卡后接。
+
+切片 2 的关键设计建议
+1. Landscape 页面必须显示 coverage
+顶部必须有：
+
+当前创新分析覆盖 8/49 篇文献，结果为初步分析。
+并显示状态：
+
+coverage < 70%：Analysis only
+coverage ≥ 70%：Eligible for enforcement
+2. Gap 页面不要只展示，要能驱动生成
+每个 gap 卡片建议有按钮：
+
+基于此 gap 生成模型
+点击后进入模型生成页，并预填 prompt：
+
+请围绕以下 gap 生成模型：...
+3. Recompute 按钮要说明“基于当前 landscape”
+按钮文案不要只是“刷新评分”，建议：
+
+重新计算创新分析
+hover：
+
+基于当前文献全景版本与覆盖率重新计算 novelty/contribution scores。
+4. 老模型兼容
+没有 innovationMeta 时显示：
+
+早期模型，尚未计算创新分析
+[计算创新分析]
+最终判断
+切片 1：通过
+JSONB 单字段合理；
+analysis_only 逻辑正确；
+recompute 鉴权修复正确；
+landscape snapshot 复用正确；
+selftest 有价值。
+进入切片 2：同意
+但我建议先做一个 真实 landscape session 的最小生成验证，确认非零 coverage 下的 innovationMeta 合理。
+
+一句话：
+
+可以进入切片 2；在动 UI 前，先用 session 9 生成 1 个模型验证非零 landscape 的 innovationMeta。通过后再做 Landscape & Gap 页面和 recompute UI。
+
+帮我判断 
+
+真实 landscape 验证通过。
+
+Session 9 真实验证结果
+
+lv=53, coverage=0.163, mode=analysis_only — 与预期一致
+snapshot 加载 39ms（一次性读 478 条 CR + 15 个 backbone + 6 个 context），compute 仅 4ms — fanout 复用 snapshot 的优化生效，单模型代价 ~43ms，多模型生成不会明显增加延迟
+边标签分布健康：3 条匹配真实 CR 的边 → underexplored（不是兜底的 novel！），3 条新边 → novel，证明 canonicalize 查表在真实数据上工作正常
+landscapeVersion=53 与 session 当前值匹配 ✓
+innovationTypes=[construct] 非空 ✓
+4 个 sub-score 齐全；contributionScore=33（geomean of 65×30×30×20）
+warnings 只有 contribution_statement_missing（切片 2 的 AI 生成会补上）
+一个值得记下的发现（不算 bug，是 v2 校准的预期行为）
+
+我塞进去的 moderator 边 social overload moderates [product risk → impulse purchase intention] 被标成 novel，没拿到 boundary_extended。原因：boundary_extended 当前要求 moderated 的那条直接边在 CR 表里达到 saturated 阈值（≥7 paper occurrences），而 product risk → impulse purchase intention 只出现了 2 次。这跟 docs/innovation-taxonomy.md 里"博士论文校准"的描述一致 —— 不去要求 moderator 在文献里没用过，但 moderated 的主路径要"足够主流"才算 boundary 扩展。在 49 篇文献的小型 landscape 里很多核心路径都到不了 ≥7，所以 boundary_extended 实际上很难触发。切片 2 设计时，我建议加一个调试视图把每条边的 lookup 结果（"匹配到的 CR 行 totalOccurrences=2"）显示出来，让用户能理解为什么没拿到 boundary_extended，避免误判算分有问题。
+进入切片 2，按你给的顺序
+
+补 OpenAPI InnovationMeta schema + recompute endpoint，触发 codegen → 前端拿到类型化 hook
+Landscape 页面：顶部覆盖率 banner（coverage 8/49 · 初步分析），下面铺 CR 边列表 + theory clusters + backbones
+Gap 页面：6 类卡片 + 每张卡的"基于此 gap 生成模型"按钮（预填 prompt 进生成页）
+recompute 按钮（文案"重新计算创新分析"+ hover 解释）
+模型卡 InnovationMeta 展示放切片 3，符合你原计划
+我准备先动 1（OpenAPI + codegen），因为 2/3/4 都依赖它。你这边没异议的话我直接开始。
+
+判断：真实 landscape 验证通过，可以开始切片 2，而且先做 OpenAPI + codegen 是正确顺序。
+
+你这次验证补上了我最关心的一环：不是 coverage=0 的 fallback，而是真实 coverage=0.163、真实 CR 表、真实 canonicalize 查表、真实 score 计算。结果是健康的。
+
+我对验证结果的判断
+1. Snapshot 性能通过
+snapshot 加载 39ms
+compute 4ms
+这说明 loadLandscapeSnapshot() 复用设计成功。
+
+多模型 fanout 时，只要不是每个模型重复扫表，创新分析不会成为生成延迟瓶颈。
+
+这一点通过。
+
+2. edgeNoveltyTags 查表通过
+你说：
+
+3 条真实 CR → underexplored
+3 条新边 → novel
+这非常关键。
+
+说明：
+
+canonicalize 能查到真实关系；
+不是全部兜底 novel；
+CR 表能参与真实评分；
+novelty tag 不是摆设。
+这项通过。
+
+3. computedAgainst 通过
+landscapeVersion=53
+session 当前值匹配
+很好。
+
+这保证模型评分能追溯到哪一版 landscape，不会出现“旧分数套新地图”的问题。
+
+通过。
+
+4. innovationTypes 非空通过
+innovationTypes=[construct]
+可以接受。
+
+但后面要注意，如果多数模型都只打出 construct，说明分类器太保守或 landscape coverage 不够，需要后续校准。
+
+当前不阻塞。
+
+5. contributionScore=33 合理
+65×30×30×20 的 geomean = 33
+在 coverage 16.3%、且 contribution statement missing 的情况下，低分合理。
+
+这正说明系统没有“虚高创新性”。
+
+通过。
+
+关于 boundary_extended 难触发
+你的判断是对的：这不是 bug，是阈值校准问题。
+
+当前规则：
+
+boundary_extended 要求被调节主路径 saturated ≥7
+在 49 篇的小型 landscape 里，很多关系达不到 7 篇。
+
+所以会出现：
+
+social overload moderates product risk → impulse purchase intention
+被标成 novel，而不是 boundary_extended。
+
+我建议
+切片 2 里加调试视图是非常必要的。
+
+每条边最好显示：
+
+CR lookup:
+matched: true/false
+canonicalFrom
+canonicalTo
+relationship
+totalOccurrences
+signConflict
+tagReason
+例如：
+
+未标记为 boundary_extended：
+主路径 product risk → impulse purchase intention 仅在 2 篇文献中出现，未达到 saturated 阈值 7。
+这样用户会理解：
+
+不是系统没识别，而是当前文献池还不足以支撑“边界扩展”的判定。
+
+以后可以考虑动态阈值
+固定 ≥7 对小文献池可能太高。
+
+可以改成：
+
+saturatedThreshold = max(3, ceil(totalEligiblePapers * 0.15))
+比如 49 篇：
+
+ceil(49 * 0.15) = 8
+差不多还是 7-8。
+
+但如果只有 15 篇：
+
+max(3, ceil(2.25)) = 3
+就更合理。
+
+不过这属于 v2 校准，不阻塞切片 2。
+
+是否进入切片 2？
+同意
+而且你列的顺序正确：
+
+1. OpenAPI InnovationMeta schema + recompute endpoint
+2. Landscape 页面
+3. Gap 页面 + 基于 gap 生成模型按钮
+4. recompute 按钮
+5. 模型卡 InnovationMeta 展示留到切片 3
+我建议马上从 1 开始。
+
+OpenAPI 这一步的注意事项
+1. InnovationMeta 要类型化，不要只 object
+建议 schema 至少包含：
+
+InnovationMeta {
+  mode: "analysis_only" | "enforced"
+  warnings: string[]
+  contributionStatement?: ContributionStatement
+  innovationTypes: string[]
+  noveltyScore: number
+  contributionScore: number
+  subScores: {
+    differentiation: number
+    gapFit: number
+    theoreticalCoherence: number
+    evidenceGrounding: number
+  }
+  edgeNoveltyTags: EdgeNoveltyTag[]
+  computedAgainst: {
+    landscapeVersion: number | null
+    coverageRate: number
+    computedAt: string
+  }
+}
+2. EdgeNoveltyTag 不要只是 string
+建议：
+
+EdgeNoveltyTag {
+  edgeKey: string
+  tag: "saturated" | "underexplored" | "novel" | ...
+  score: number
+  reason: string
+  matchedRelationship?: {
+    canonicalFrom: string
+    canonicalTo: string
+    relationship: string
+    totalOccurrences: number
+    signConflict: boolean
+  }
+}
+这能支持你说的调试视图。
+
+如果现在只做 text[]，切片 2 的解释能力会不够。
+
+3. LandscapeCoverage schema 单独定义
+LandscapeCoverage {
+  coverageRate: number
+  totalEligiblePaperCount: number
+  extractedWithInnovationFieldsCount: number
+}
+前端 banner 会直接用。
+
+Gap 页面建议
+Gap 卡片不要只显示分类名，要包含：
+
+gap type
+description
+evidence papers
+related constructs
+suggested strategy
+coverage warning
+button: 基于此 gap 生成模型
+按钮行为：
+
+跳转 /sessions/:id/models?gapPrompt=...
+或直接把 prompt 写入模型页 textarea。
+
+最终拍板
+同意开始切片 2，先做 OpenAPI + codegen。
+
+但我建议你在 OpenAPI 里一次性把 EdgeNoveltyTag 做成结构化对象，不要只是字符串数组。你刚发现的 boundary_extended 阈值解释需求，正好证明前端需要展示每条边的 lookup reason。
+
+一句话：真实验证通过；可以开切片 2；OpenAPI 先行；EdgeNoveltyTag 必须结构化，方便解释“为什么这条边是 novel/underexplored/boundary”。
+

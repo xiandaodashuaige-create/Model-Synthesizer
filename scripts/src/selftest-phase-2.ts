@@ -33,8 +33,26 @@ if (!Number.isFinite(sessionId)) {
   process.exit(2);
 }
 
+interface MatchedRel {
+  canonicalFrom: string;
+  canonicalTo: string;
+  relationshipType: string;
+  totalOccurrences: number;
+  signConflict: boolean;
+  domainsCovered: string[];
+}
 interface InnovationMeta {
-  edgeNoveltyTags: Array<{ edgeIndex: number; tag: string; subscore: number }>;
+  edgeNoveltyTags: Array<{
+    edgeIndex: number;
+    fromVariableName: string;
+    toVariableName: string;
+    relationship: string;
+    tag: string;
+    subscore: number;
+    matchedTotalOccurrences: number | null;
+    matchedRelationship: MatchedRel | null;
+    reason: string;
+  }>;
   noveltyScore: number | null;
   innovationTypes: string[];
   subScores: { differentiation: number; gapFit: number; theoreticalSoundness: number; evidenceSupport: number };
@@ -127,6 +145,25 @@ async function main() {
       meta.edgeNoveltyTags.length === out.edges.length,
       `model ${m.id}: edgeNoveltyTags length ${meta.edgeNoveltyTags.length} != edges length ${out.edges.length}`,
     );
+
+    // Slice 2 contract: every tag carries an explainability payload.
+    for (const t of meta.edgeNoveltyTags) {
+      assert(typeof t.reason === "string" && t.reason.length > 0, `model ${m.id}: edge ${t.edgeIndex} missing reason`);
+      assert(typeof t.fromVariableName === "string" && typeof t.toVariableName === "string", `model ${m.id}: edge ${t.edgeIndex} missing endpoint names`);
+      assert(typeof t.relationship === "string", `model ${m.id}: edge ${t.edgeIndex} missing raw relationship`);
+      // matchedRelationship is null iff the edge wasn't found in any CR row.
+      // For `novel` (no-CR variant) it MUST be null; for any tag derived from
+      // CR data it MUST be a structured snapshot.
+      const mr = t.matchedRelationship;
+      if (mr !== null) {
+        assert(typeof mr.canonicalFrom === "string" && mr.canonicalFrom.length > 0, `model ${m.id}: edge ${t.edgeIndex} matchedRelationship.canonicalFrom missing`);
+        assert(typeof mr.canonicalTo === "string" && mr.canonicalTo.length > 0, `model ${m.id}: edge ${t.edgeIndex} matchedRelationship.canonicalTo missing`);
+        assert(["direct", "mediation", "moderation"].includes(mr.relationshipType), `model ${m.id}: edge ${t.edgeIndex} matchedRelationship.relationshipType invalid (${mr.relationshipType})`);
+        assert(typeof mr.totalOccurrences === "number" && mr.totalOccurrences >= 0, `model ${m.id}: edge ${t.edgeIndex} matchedRelationship.totalOccurrences invalid`);
+        assert(typeof mr.signConflict === "boolean", `model ${m.id}: edge ${t.edgeIndex} matchedRelationship.signConflict missing`);
+        assert(Array.isArray(mr.domainsCovered), `model ${m.id}: edge ${t.edgeIndex} matchedRelationship.domainsCovered not array`);
+      }
+    }
 
     // mode + modeReason consistency with coverageRate
     const cr = meta.computedAgainst.coverageRate;
