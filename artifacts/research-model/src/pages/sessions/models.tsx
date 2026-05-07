@@ -146,7 +146,7 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
   const hasNoVariables = variables !== undefined && variables.length === 0;
 
   const [userPrompt, setUserPrompt] = useState("");
-  const [numModels, setNumModels] = useState(3);
+  const [numModels, setNumModels] = useState(2);
   const [focusVariableIds, setFocusVariableIds] = useState<number[]>([]);
   // Tracks whether `focusVariableIds` was pre-filled from the user's
   // `/variables` page selection (vs. set by an AI chat suggestion or empty).
@@ -428,7 +428,7 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
     // disconnected from what the user just hand-picked.
     const autoFocusIds = focusVariableIds.length > 0 ? focusVariableIds : undefined;
     generateModels.mutate(
-      { id: sessionId, data: { numModels: 3, focusVariableIds: autoFocusIds } },
+      { id: sessionId, data: { numModels: 2, focusVariableIds: autoFocusIds } },
       {
         onSuccess: (result) => {
           queryClient.invalidateQueries({ queryKey: getListSessionModelsQueryKey(sessionId) });

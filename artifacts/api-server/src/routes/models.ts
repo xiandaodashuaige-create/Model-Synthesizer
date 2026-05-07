@@ -416,7 +416,7 @@ router.post("/sessions/:id/models/generate", async (req, res): Promise<void> => 
 
   const bodyParse = GenerateModelsBody.safeParse(req.body ?? {});
   const userPrompt = bodyParse.success ? (bodyParse.data.userPrompt ?? "").trim() : "";
-  const numModels = bodyParse.success && bodyParse.data.numModels ? bodyParse.data.numModels : 3;
+  const numModels = bodyParse.success && bodyParse.data.numModels ? bodyParse.data.numModels : 2;
   const focusVariableIds = bodyParse.success && bodyParse.data.focusVariableIds ? bodyParse.data.focusVariableIds : [];
   const allowPartial = bodyParse.success && bodyParse.data.allowPartial === true;
 
@@ -1097,7 +1097,7 @@ OUTPUT FORMAT — return a JSON object with key "models" containing an array of 
       // (truncation, empty content, unparseable) have low retry payoff and the
       // 12k-token call costs real money on every regeneration attempt.
       const shouldRetry = aiGaveUp && haveTimeForRetry;
-      req.log.warn({ sessionId, perCallStats, aiGaveUp, elapsedMs, shouldRetry }, "Initial generation produced 0 models");
+      req.log.warn({ sessionId, perCallStats, aiGaveUp, elapsedMs, shouldRetry, generated: generated.length }, "Initial generation produced 0 models");
 
       if (shouldRetry) try {
         const retry = await openai.chat.completions.create(
