@@ -238,7 +238,12 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
         return false;
       }
       const paper = await resp.json();
-      toast({ title: t("papers.pdf.toast.added" as any, { title: paper.title }) });
+      // Backend returns `alreadyExisted: true` (status 200, not 201) when this
+      // PDF's externalId matched an existing paper in the session — it just
+      // refreshed the stored full text. Tell the user explicitly so they
+      // know nothing got duplicated and the update was intentional.
+      const key = paper.alreadyExisted ? "papers.pdf.toast.alreadyExisted" : "papers.pdf.toast.added";
+      toast({ title: t(key as any, { title: paper.title }) });
       return true;
     } catch {
       toast({ title: t("papers.pdf.toast.failed" as any, { name: file.name }), variant: "destructive" });
