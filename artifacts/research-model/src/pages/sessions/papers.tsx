@@ -54,6 +54,13 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
     failures: Array<{ identifier: string; reason: string }>;
   }>(null);
   const [pdfUploading, setPdfUploading] = useState<string | null>(null);
+  // Queue model so the user can keep clicking "选择 PDF" while one is parsing —
+  // newly picked files append to the queue instead of being blocked. Refs (not
+  // state) so synchronous appends from rapid clicks don't race with React's
+  // batching. The worker drains the queue and exits when empty; the next
+  // click that arrives while empty restarts it.
+  const pdfQueueRef = useRef<File[]>([]);
+  const pdfWorkerRunningRef = useRef(false);
   // Track WHICH paper is currently being extracted so a single click only
   // spins that one button. Without this, every card shares
   // `extractVariables.isPending` and lights up together — visually it looks
@@ -239,22 +246,41 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
     }
   };
 
+  // Append-to-queue handler. Always non-blocking: pushes new files into the
+  // ref-backed queue and starts the worker if it isn't already running. This
+  // is what makes the "click again to add more" behavior work — every click
+  // appends, and the in-flight worker just keeps draining.
   const handlePdfFiles = async (files: FileList | File[]) => {
     const arr = Array.from(files);
     if (arr.length === 0) return;
+    pdfQueueRef.current.push(...arr);
+    // Update visible total immediately so the user sees their newly-added
+    // files reflected in (done/total). `done` stays where it was; `total`
+    // bumps up by the number of files just queued.
+    setPdfQueueProgress((prev) => prev
+      ? { done: prev.done, total: prev.total + arr.length }
+      : { done: 0, total: arr.length });
+    if (pdfWorkerRunningRef.current) return;
+    pdfWorkerRunningRef.current = true;
     let ok = 0, fail = 0;
-    setPdfQueueProgress({ done: 0, total: arr.length });
-    for (let i = 0; i < arr.length; i++) {
-      const success = await uploadOnePdf(arr[i]);
-      if (success) ok++; else fail++;
-      setPdfQueueProgress({ done: i + 1, total: arr.length });
+    try {
+      // Drain the queue. New files appended mid-loop are picked up because we
+      // re-check `.length` every iteration.
+      while (pdfQueueRef.current.length > 0) {
+        const next = pdfQueueRef.current.shift()!;
+        const success = await uploadOnePdf(next);
+        if (success) ok++; else fail++;
+        setPdfQueueProgress((prev) => prev ? { done: prev.done + 1, total: prev.total } : null);
+      }
+    } finally {
+      pdfWorkerRunningRef.current = false;
+      setPdfUploading(null);
+      setPdfQueueProgress(null);
     }
-    setPdfUploading(null);
-    setPdfQueueProgress(null);
     queryClient.invalidateQueries({ queryKey: getListSessionPapersQueryKey(sessionId) });
     queryClient.invalidateQueries({ queryKey: getGetSessionSummaryQueryKey(sessionId) });
     queryClient.invalidateQueries({ queryKey: getGetSessionQueryKey(sessionId) });
-    if (arr.length > 1) {
+    if (ok + fail > 1) {
       toast({ title: t("papers.pdf.summary" as any, { ok, fail }) });
     }
   };
@@ -537,7 +563,6 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
               multiple
               className="hidden"
               data-testid="input-pdf-file"
-              disabled={pdfUploading !== null}
               onChange={(e) => {
                 if (e.target.files?.length) handlePdfFiles(e.target.files);
                 e.target.value = "";
