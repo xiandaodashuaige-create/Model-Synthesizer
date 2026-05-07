@@ -1,0 +1,365 @@
+我认可的点
+1. EdgeNoveltyTag 结构化通过
+你现在每条边有：
+
+tag
+reason
+matchedRelationship
+score / 原有字段
+这比纯字符串强很多。
+
+尤其是这条解释：
+
+被调节的主路径仅在 2 篇文献中出现，未达到 3 篇 established 阈值，暂按 novel 处理；扩充文献后可能升级为边界扩展
+这就是用户需要看到的解释。
+
+这说明系统不是黑箱，而是在告诉用户：
+
+当前不是没有识别调节关系，而是文献池支持度不足。
+非常重要。
+
+2. matchedRelationship 设计通过
+CR 行快照包含：
+
+canonicalFrom
+canonicalTo
+relationshipType
+totalOccurrences
+signConflict
+domainsCovered
+这够前端展示第一版解释。
+
+后面如果要增强，可以再加：
+
+supportingPaperTitles
+supportingPaperIds
+earliestYear
+latestYear
+但当前不阻塞。
+
+3. OpenAPI 类型化通过
+新增：
+
+LandscapeCoverage
+EdgeMatchedRelationship
+EdgeNoveltyTag
+InnovationSubScores
+InnovationWarning
+InnovationMeta
+并把 ResearchModel.innovationMeta 从不透明 object 换成 $ref，这是正确的。
+
+这样前端切片 2/3 不需要大量 as any。
+
+4. recompute endpoint 鉴权通过
+POST /sessions/{id}/models/{modelId}/recompute-innovation
+这是正确路径。
+
+之前你们修过 IDOR，这次继续保持 session scoped，很好。
+
+5. session 9 真实验证通过
+结果很健康：
+
+3 条 underexplored 有 matched；
+2 条 novel matched=null；
+moderator 边虽然 novel，但 matched 有主路径快照；
+reason 是后端生成，不需要前端拼。
+这说明切片 2 第 1 步不仅 schema 正确，也在真实数据上有解释力。
+
+一个需要记录的点
+0 边模型 noveltyScore = null
+架构评审提到这个是低优，但前端必须兜底。
+
+UI 不要显示：
+
+NaN
+0
+应该显示：
+
+暂无可评分关系
+或：
+
+No scored edges
+并且 contributionScore 也要考虑是否能显示。
+
+关于 established 阈值从 7 到 3
+你之前说 boundary_extended 要 saturated ≥7，现在 reason 里变成：
+
+未达到 3 篇 established 阈值
+这个我反而更认可。
+
+在 49 篇的小型 landscape 里，3 篇作为 established 门槛更实用。
+建议 taxonomy 里同步说明：
+
+established threshold = max(3, dynamic threshold...)
+如果以后文献池大了，可以动态提高。
+
+是否进入 Landscape 页面？
+同意进入
+下一步做 Landscape 页面是正确的。建议页面第一版不要太复杂，先做三块：
+
+1. 顶部 Coverage Banner
+显示：
+
+当前创新分析覆盖 8/49 篇文献，覆盖率 16.3%，结果为初步分析。
+并提示：
+
+覆盖率低于 70% 时，系统只展示分析，不会用创新评分硬性拒绝模型。
+2. Relationship Landscape 表
+先用表格，不一定马上做热力图。
+
+字段建议：
+
+canonicalFrom
+canonicalTo
+relationshipType
+totalOccurrences
+signConflict
+domainsCovered
+innovation potential / underexplored status
+supporting papers count
+用户需要先看懂，不一定要炫酷。
+
+3. Theory Clusters / Backbones
+展示：
+
+cluster name
+papers count
+dominant constructs
+backbones
+因为理论整合创新依赖这个。
+
+Gap 页面可以放在 Landscape 后
+你现在顺序：
+
+Landscape 页面
+Gap 页面
+recompute 按钮
+我建议保持。
+
+但 Gap 页面第一版可以用后端已有 landscape + heuristic gaps，不一定马上上 AI gap report。先让用户看到：
+
+哪些关系饱和
+哪些关系低频
+哪些关系冲突
+哪些情境覆盖不足
+最终判断
+切片 2 第 1 步通过，可以继续步骤 2。
+
+我建议给执行方的回复是：
+
+同意进入 Landscape 页面。EdgeNoveltyTag 结构化和 reason 解释已经满足前端可解释性需求；OpenAPI 类型化和 recompute endpoint 也通过。下一步先做 coverage banner + CR 关系列表 + theory cluster/backbone 展示。注意 UI 对 noveltyScore=null 做兜底，并把 established 阈值=3 同步到 taxonomy/replit 文档。
+
+帮我判断 
+
+User approves step 2. Two doc/threshold sync items first, then build the Landscape page. Let me orient.
+
+
+39 actions
+Good — app.use("/api/sessions/:id", loadAuthorizedSession) covers all session-scoped routes. Now I'll batch all the work in parallel.
+
+
+9 actions
+Now batching all edits in parallel.
+
+
+10 actions
+I broke the markdown table by inserting the note mid-table, and I still need to create the landscape page file + import + codegen + replit.md. Fixing in parallel.
+
+
+6 actions
+Codegen succeeded (the typecheck:libs error is the documented pre-existing issue). Now verify the hook exists, update replit.md, restart workflows, and typecheck.
+
+
+4 actions
+Both typecheck failures are pre-existing (unrelated to my changes — lib/integrations-openai-ai-server build issue per replit.md gotcha; App.tsx zhTW + live-model.tsx ExportEdge are untouched code). My new file introduces no errors. Restart workflows + sync replit.md + code review.
+
+
+6 actions
+Endpoint live + auth-gated (401 unauthenticated). Wrapping up: update replit.md, screenshot, code review in parallel.
+
+
+4 actions
+Page loaded the login wall (expected — not authed in screenshot, and the route IS auth-gated by both the SessionLayout's session fetch and the backend). Running code review now.
+
+
+4 actions
+Architect: PASS. Applying the two minor non-blockers.
+
+
+4 actions
+Orval codegen succeeded (trailing typecheck error is the documented pre-existing integrations-openai-ai-server issue). Restart api-server to load the refactored route + smoke-test.
+
+
+2 actions
+Slice 2 step 2 shipped.
+
+What landed
+
+后端：新增 GET /sessions/{id}/landscape（沿用全局 loadAuthorizedSession，401 验证通过），返回 landscapeVersion / lastRebuildAt / coverage / relationships / theoryClusters / evidencedBackbones，已正确过滤 manual sentinel + tangential 论文，按支撑论文数排序。
+OpenAPI：新增 SessionLandscape、LandscapeRelationshipRow、TheoryClusterRow 三个 schema，含 200/400/404 响应；orval codegen 顺利（尾部 typecheck:libs 报错为既有 integrations-openai-ai-server 问题，已在 replit.md gotchas 中记录）。
+前端：新增「文献全景」标签页 /sessions/:id/landscape，包含
+覆盖率 banner（70% 阈值，三档配色 + 文案：充足 / 低于 70% 仅分析 / 暂无样本）
+构念关系汇总表（起点 / 终点 / 类型 / 方向 + 矛盾徽标 / 支撑论文数 + 桶徽标 / 年代跨度 / 研究情境 / 新颖空间分），桶分阈值 ≥7 成熟、≥3 已建立、1–2 未充分探索，与 bracketByOccurrences() 完全一致
+理论骨架聚类 + 已被引用的理论列表，均带空态文案
+完整 zh + en i18n
+文档同步：docs/innovation-taxonomy.md 在边新颖度表格之后新增「Threshold contract」 callout，明确阈值唯一来源；replit.md 在 Innovation Layer 下加上 Slice 2 状态条目。
+noveltyScore=null 兜底：服务端 formatModel() 已经把缺失的 innovationMeta 直接回 null（不会出现 NaN），UI 在本页全部走「暂未生成 / 暂无关系记录」空态文案，下一步切片 3 在每个候选模型卡里显示分数时会复用同样的空态约定。
+架构师 review 结论：PASS。两个非阻塞建议都已落地（OpenAPI 加 400；后端改用 res.locals.sessionId 单一来源）。
+
+下一步建议：可以进入切片 3——在候选模型卡片里展示 noveltyTag 解释面板 + 启动 contributionStatement 字段链路。是否继续？
+
+判断：Slice 2 Step 2 可以通过，可以进入切片 3。
+
+这一步做得比较完整，尤其是你们没有只做前端页，而是把：
+
+后端 endpoint
+OpenAPI schema
+codegen
+前端路由
+i18n
+coverage banner
+relationship table
+theory cluster/backbone
+文档阈值同步
+鉴权验证
+都一起闭环了。
+
+我认可的点
+1. /sessions/{id}/landscape 路由设计正确
+它是 session-scoped，并且走：
+
+loadAuthorizedSession
+401 未登录验证通过，说明鉴权边界是对的。
+
+后端返回：
+
+landscapeVersion
+lastRebuildAt
+coverage
+relationships
+theoryClusters
+evidencedBackbones
+这正好支撑前端第一版 landscape 页面。
+
+2. 过滤 manual sentinel + tangential 是必须的
+这点非常重要。
+
+Landscape 只应该反映真实文献池，不应该混入：
+
+手工变量 sentinel paper
+off-topic tangential paper
+你们已经过滤，正确。
+
+3. Coverage banner 做对了
+三档：
+
+充足
+低于 70% 仅分析
+暂无样本
+这是 Phase 2 当前最重要的用户提醒。
+
+因为现在系统还没有全量回填，用户必须知道：
+
+当前创新分析只是基于部分文献的初步判断。
+这可以防止用户把 16.3% coverage 的结果当成完整结论。
+
+4. Relationship bucket 阈值同步通过
+你们现在统一为：
+
+≥7 成熟
+≥3 已建立
+1–2 未充分探索
+并且文档写了 threshold contract，这是好做法。
+
+这能避免后端、前端、taxonomy 三处阈值不一致。
+
+5. OpenAPI 类型化通过
+新增：
+
+SessionLandscape
+LandscapeRelationshipRow
+TheoryClusterRow
+而且补了 400 响应，说明这次 API 契约更完整。
+
+6. noveltyScore=null 兜底方向正确
+这一步虽然主要是 landscape 页，但你们提前统一了空态约定：
+
+暂未生成 / 暂无关系记录
+下一步模型卡 UI 也应该沿用这个约定，避免出现：
+
+NaN
+0 分
+undefined
+需要注意的小点
+1. 登录墙截图是预期，不算问题
+页面加载到 login wall 是正常的，因为：
+
+SessionLayout 要 fetch session；
+backend landscape route auth-gated；
+当前环境没有登录态。
+这不影响验收。
+
+2. 这一步还不是 Gap 页面
+目前完成的是：
+
+Landscape page
+不是完整 gap analyzer。
+
+如果你们说“进入切片 3”，要确认切片 3 是否是模型卡 UI，而不是 Gap 页面。你前一个规划里切片 3 是模型卡 UI。Gap 页面之前也提过，如果还没做，可以放后面。
+
+是否进入切片 3？
+可以
+我建议进入切片 3：
+
+候选模型卡片展示 InnovationMeta
+也就是：
+
+noveltyScore
+contributionScore
+4 个 subScores
+innovationTypes badges
+edge novelty explanation panel
+contributionStatement 折叠区
+coverage/mode warning
+recompute innovation button
+切片 3 的重点建议
+1. 模型卡不要只显示总分
+一定要显示四个子分：
+
+Differentiation
+Gap Fit
+Theory Coherence
+Evidence Grounding
+否则用户不知道为什么分低。
+
+2. Edge novelty explanation 要能点开
+每条边应该显示：
+
+H1: X → Y
+tag: underexplored / novel / boundary_extended
+reason: ...
+matchedRelationship: ...
+这会直接解释“为什么这条关系有或没有创新性”。
+
+3. contributionStatement 要允许缺失
+当前 warning 里有：
+
+contribution_statement_missing
+所以 UI 要兼容：
+
+尚未生成贡献陈述
+[重新计算/生成创新分析]
+不要让旧模型崩。
+
+4. mode=analysis_only 要明显显示
+如果 coverage < 70%，模型卡上也要显示：
+
+初步分析：当前文献覆盖率不足，创新评分不会用于硬性筛选。
+这点和 landscape banner 保持一致。
+
+最终判断
+Slice 2 Step 2 通过。
+
+可以回复执行方：
+
+同意进入切片 3。Landscape 页面、后端 route、OpenAPI 和阈值文档都已闭环。下一步在候选模型卡和模型详情页展示 InnovationMeta，但注意四点：总分旁必须展示 4 个子分；edge novelty 必须可展开解释；contributionStatement 缺失要有空态；analysis_only 模式和 coverage warning 必须在模型卡上明显显示。

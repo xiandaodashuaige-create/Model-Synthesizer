@@ -37,6 +37,7 @@ import { useLocation } from "wouter";
 import { useToast } from "@/hooks/use-toast";
 import { useT } from "@/lib/i18n";
 import { loadFocusedClusterKeys, saveFocusedClusterKeys, expandToVariableIds } from "@/lib/focus-selection";
+import { InnovationMetaPanel } from "@/components/innovation-meta-panel";
 
 // Surface the *real* server error in the toast. Previously we only checked
 // `err.data.error`, which is empty when:
@@ -872,6 +873,15 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
               })()}
 
               <div className="border-t border-border pt-4">
+                <InnovationMetaPanel
+                  sessionId={sessionId}
+                  modelId={model.id}
+                  meta={model.innovationMeta ?? null}
+                  variant="compact"
+                />
+              </div>
+
+              <div className="border-t border-border pt-4 mt-4">
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">{t("common.rationale" as any)}</p>
                 <p className="text-sm text-muted-foreground leading-relaxed">{model.rationale}</p>
               </div>

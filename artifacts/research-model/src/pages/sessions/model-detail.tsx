@@ -24,6 +24,7 @@ import { Loader2, ArrowLeft, CheckCircle, BookOpen, Quote, Share2, Pencil, Save,
 import { ModelGraph, buildEdgeHTagMap, buildPaperTagMap } from "@/components/model-graph";
 import { EditableModelGraph } from "@/components/editable-model-graph";
 import { EvidenceMatchDialog } from "@/components/evidence-match-dialog";
+import { InnovationMetaPanel } from "@/components/innovation-meta-panel";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -662,6 +663,13 @@ export default function SessionModelDetail({ params: routeParams }: { params?: {
           </div>
         </div>
       )}
+
+      <InnovationMetaPanel
+        sessionId={sessionId}
+        modelId={modelId}
+        meta={model.innovationMeta ?? null}
+        variant="full"
+      />
 
       <div className="bg-card border border-border rounded-lg p-6">
         <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-3">{t("md.rationale" as any)}</h2>
