@@ -365,6 +365,159 @@ function extractRequiredRoleBindings(
   return out;
 }
 
+// Detect "umbrella entity" variables in the pool — short, bare-entity stimulus
+// IVs whose name is contained inside other variables' names (e.g. "AI broadcast"
+// is the umbrella for "perceived anthropomorphism of AI broadcast" and
+// "AI broadcast host expression technology"). The UMBRELLA RULE in
+// variables.ts asks the AI to emit one of these per studied entity, and
+// downstream features (focus picks, model generation, role bindings) need to
+// match the entity by its plain name. Marking them in the prompt's variable
+// pool listing tells the AI which rows are umbrellas vs which are perceived
+// dimensions OF those umbrellas. Pre-fix the AI saw a flat list of variables
+// and routinely picked a "perceived X of <entity>" row as the IV instead of
+// the bare entity row — the exact failure mode the user reported (topic =
+// "AI 主播对冲动购买的影响" but generated IV was "perceived anthropomorphism").
+function detectUmbrellaVariableIds(
+  variables: Array<{ id: number; name: string; type: string; constructLayer: string | null }>,
+): Set<number> {
+  const out = new Set<number>();
+  const norm = (s: string) => s.toLowerCase().trim();
+  // A name that itself looks like a perceived dimension is excluded from being
+  // the umbrella (otherwise "perceived anthropomorphism" could be flagged
+  // umbrella for "perceived anthropomorphism of AI broadcast").
+  const DIM_PREFIX = /^(perceived|perception of|sense of|feeling of|感知|感受)/i;
+  for (const v of variables) {
+    if (v.type !== "independent") continue;
+    if ((v.constructLayer ?? "").toLowerCase() !== "stimulus") continue;
+    const nm = v.name.trim();
+    if (nm.length < 3 || nm.length > 40) continue;
+    if (DIM_PREFIX.test(nm)) continue;
+    const k = norm(nm);
+    let contained = false;
+    for (const other of variables) {
+      if (other.id === v.id) continue;
+      const ok = norm(other.name);
+      if (ok.length > k.length && ok.includes(k)) { contained = true; break; }
+    }
+    if (contained) out.add(v.id);
+  }
+  return out;
+}
+
+// Parse "X 对 Y 的影响 / X 如何影响 Y / the effect of X on Y" patterns from
+// the session TOPIC and emit IV/DV role bindings. Pre-fix only the
+// regenerate-form userPrompt was parsed for bindings; sessions where the
+// user just set the topic and clicked generate had ZERO server-side role
+// enforcement, so the AI was free to pick any IV — the exact failure mode
+// the user reported. Topic-derived bindings PREFER umbrella matches when
+// multiple variables in the pool tie on the parsed term, so e.g. "AI 主播"
+// in the topic resolves to the bare-entity "AI broadcast" row instead of
+// "perceived anthropomorphism of AI broadcast".
+function extractTopicRoleBindings(
+  topic: string,
+  variables: Array<{ id: number; name: string; canonicalConstructId: string | null }>,
+  preferUmbrellaIds: Set<number>,
+): RequiredRoleBinding[] {
+  if (!topic || !topic.trim()) return [];
+  const out: RequiredRoleBinding[] = [];
+  const seen = new Set<string>();
+  const norm = (s: string) => s.toLowerCase().replace(/[\s_\-]+/g, "");
+  const varIndex = variables.map((v) => ({ v, k: norm(v.name) }));
+  const PUNCT_TRIM = /^[\s『「"'，,。.;；:：()（）]+|[\s『「"'，,。.;；:：()（）]+$/g;
+  const FILLER = /^(?:研究|关于|关于研究|探讨|探索|分析|the|a\s+study\s+of|study\s+of|research\s+on|investigating|exploring|analysis\s+of)\s+/i;
+
+  // Capture group 1 = IV, group 2 = DV.
+  const ivDvPatterns: RegExp[] = [
+    /([^\s,，。.;；:：?？!！()（）"'「」『』]{2,40})\s*对\s*([^\s,，。.;；:：?？!！()（）"'「」『』]{2,40})\s*的\s*(?:影响|作用|效应|关系|影响机制|作用机制)/g,
+    /([^\s,，。.;；:：?？!！()（）"'「」『』]{2,40})\s*如何\s*(?:影响|作用于|促进|抑制|塑造|驱动)\s*([^\s,，。.;；:：?？!！()（）"'「」『』]{2,40})/g,
+    /\b(?:the\s+)?(?:effect|impact|influence|role|effects)\s+of\s+([a-z][a-z0-9 \-_/]{1,40}?)\s+on\s+([a-z][a-z0-9 \-_/]{1,40}?)(?=[,.;:!?\n]|$)/gi,
+    /\bhow\s+(?:do|does|can)?\s*([a-z][a-z0-9 \-_/]{1,40}?)\s+(?:affect|influence|shape|drive|impact)s?\s+([a-z][a-z0-9 \-_/]{1,40}?)(?=[,.;:!?\n]|$)/gi,
+  ];
+
+  // Tiny zh→en mapping for entity & outcome terms commonly found in topics.
+  // Subset of the broader dictionary in extractRequiredRoleBindings, focused
+  // on the IV/DV nouns that show up in topic strings.
+  const zh2en: Record<string, string[]> = {
+    "AI主播": ["ai broadcast", "ai broadcaster", "ai streamer", "virtual streamer", "virtual influencer", "digital human"],
+    "AI 主播": ["ai broadcast", "ai broadcaster", "ai streamer", "virtual streamer"],
+    "虚拟主播": ["virtual streamer", "virtual influencer", "ai streamer"],
+    "数字人": ["digital human", "virtual human"],
+    "聊天机器人": ["chatbot", "ai chatbot", "conversational agent"],
+    "智能客服": ["ai customer service", "ai chatbot", "conversational agent"],
+    "语音助手": ["voice assistant", "smart speaker"],
+    "推荐系统": ["recommender system", "recommendation system"],
+    "短视频电商": ["short-video commerce", "live commerce"],
+    "直播电商": ["live commerce", "livestreaming commerce"],
+    "购买意愿": ["purchase intention", "buying intention"],
+    "冲动购买": ["impulse buying", "impulse purchase", "impulsive consumption", "impulsive buying"],
+    "冲动消费": ["impulse buying", "impulsive consumption"],
+    "持续使用意愿": ["continuance intention", "continued use intention"],
+    "满意度": ["satisfaction", "user satisfaction", "customer satisfaction"],
+    "忠诚度": ["loyalty", "customer loyalty"],
+    "信任": ["trust"],
+    "参与": ["engagement", "consumer engagement", "customer engagement"],
+    "粘性": ["engagement", "customer engagement"],
+  };
+
+  function emit(rawTerm: string, role: RoleBindingRole) {
+    const term = rawTerm.replace(PUNCT_TRIM, "").replace(FILLER, "").trim();
+    if (!term || term.length < 2) return;
+    const candidates = new Set<string>([norm(term)]);
+    for (const [zh, ens] of Object.entries(zh2en)) {
+      if (term.includes(zh)) for (const en of ens) candidates.add(norm(en));
+    }
+    let hit: { id: number; name: string } | null = null;
+    let hitUmbrella = false;
+    // PASS 1 — exact normalized equality. Prefer umbrella when multiple match.
+    for (const { v, k } of varIndex) {
+      for (const c of candidates) {
+        if (c && k === c) {
+          const isU = preferUmbrellaIds.has(v.id);
+          if (!hit || (isU && !hitUmbrella)) { hit = v; hitUmbrella = isU; }
+        }
+      }
+    }
+    // PASS 2 — substring with length-ratio gate (same defense as
+    // extractRequiredRoleBindings). Prefer umbrella when multiple match.
+    if (!hit) {
+      for (const { v, k } of varIndex) {
+        for (const c of candidates) {
+          if (!c || c.length < 4) continue;
+          const longer = k.length >= c.length ? k : c;
+          const shorter = k.length >= c.length ? c : k;
+          if (!longer.includes(shorter)) continue;
+          // Slightly more permissive than extractRequiredRoleBindings (0.5 vs
+          // 0.6) because topic terms tend to be shorter than user-typed
+          // construct names and substring matches are common: "AI broadcast"
+          // (12 chars) vs "perceived anthropomorphism of AI broadcast"
+          // (43 chars) ≈ 28% — too low to match either way; we rely on
+          // candidate expansion via zh2en + the umbrella preference instead.
+          if (shorter.length / longer.length < 0.5) continue;
+          const isU = preferUmbrellaIds.has(v.id);
+          if (!hit || (isU && !hitUmbrella)) { hit = v; hitUmbrella = isU; }
+        }
+      }
+    }
+    if (hit) {
+      const key = `${hit.id}:${role}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        out.push({ variableId: hit.id, role, userTerm: term });
+      }
+    }
+  }
+
+  for (const re of ivDvPatterns) {
+    re.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(topic)) !== null) {
+      emit(m[1], "independent");
+      emit(m[2], "dependent");
+    }
+  }
+  return out;
+}
+
 function formatModel(model: typeof researchModelsTable.$inferSelect) {
   return {
     id: model.id,
@@ -705,21 +858,34 @@ Use these to bias variable selection and structural focus toward what the user h
   // only large 30+-paper sessions get compacted.
   const VAR_COMPACT_THRESHOLD = 120;
   const compactMode = variables.length > VAR_COMPACT_THRESHOLD;
+  // Detect umbrella-entity rows once so renderVar* can mark them and the
+  // topic-binding parser can prefer them. See detectUmbrellaVariableIds.
+  const umbrellaVarIds = detectUmbrellaVariableIds(variables);
   const renderVarFull = (v: typeof variables[number]) => {
     const paper = paperMap.get(v.paperId);
     const tag = paperTagById.get(v.paperId) ?? "?";
     const focus = focusVariableIds.includes(v.id) ? " [USER-PRIORITY]" : "";
+    const umbrella = umbrellaVarIds.has(v.id) ? " [UMBRELLA-ENTITY]" : "";
     const canonical = v.canonicalConstructId ? ` | Canonical: "${v.canonicalConstructId}"` : "";
     const layer = v.constructLayer ? ` | Layer: ${v.constructLayer}` : "";
-    return `- ID:${v.id}${focus} | Name: "${v.name}" | Type: ${v.type}${canonical}${layer} | Source: ${tag} ${paper?.title} (${(paper?.authors ?? []).slice(0, 2).join(", ")}, ${paper?.year ?? "n.d."}) | Definition: ${v.definition} | Citation: "${v.citationText}"`;
+    return `- ID:${v.id}${focus}${umbrella} | Name: "${v.name}" | Type: ${v.type}${canonical}${layer} | Source: ${tag} ${paper?.title} (${(paper?.authors ?? []).slice(0, 2).join(", ")}, ${paper?.year ?? "n.d."}) | Definition: ${v.definition} | Citation: "${v.citationText}"`;
   };
   const renderVarCompact = (v: typeof variables[number]) => {
     const tag = paperTagById.get(v.paperId) ?? "?";
     const focus = focusVariableIds.includes(v.id) ? " [USER-PRIORITY]" : "";
+    const umbrella = umbrellaVarIds.has(v.id) ? " [UMBRELLA-ENTITY]" : "";
     const canonical = v.canonicalConstructId ? ` | Canonical: "${v.canonicalConstructId}"` : "";
-    return `- ID:${v.id}${focus} | "${v.name}" (${v.type}) | ${tag}${canonical}`;
+    return `- ID:${v.id}${focus}${umbrella} | "${v.name}" (${v.type}) | ${tag}${canonical}`;
   };
-  const variableList = variables
+  // Header tells the AI what [UMBRELLA-ENTITY] means and — critically — that
+  // when the topic names a stimulus entity AND a row is tagged this way, the
+  // IV node MUST be the umbrella row literally, NEVER its perceived
+  // dimensions. This is the prompt-side companion to the topic-binding
+  // hard check below.
+  const umbrellaHeader = umbrellaVarIds.size > 0
+    ? `\n[UMBRELLA-ENTITY] tags below mark BARE-ENTITY stimulus IV rows whose name is contained inside other rows' names (i.e. they are the canonical "thing being studied" in those papers, with the other rows describing perceived dimensions OF the entity). When the TOPIC or USER DIRECTIVE names one of these entities (or a synonym), the IV node in your generated model MUST literally be that umbrella row — using only its perceived dimensions when the umbrella row exists in the pool is the #1 reason users complain "the model dropped my topic" and is REJECTED. Treat perceived-dimension rows as ENRICHMENT mediators, not as IV substitutes.\n`
+    : "";
+  const variableList = umbrellaHeader + variables
     .map((v) => (compactMode && !focusVariableIds.includes(v.id) ? renderVarCompact(v) : renderVarFull(v)))
     .join("\n")
     + (compactMode
@@ -1056,11 +1222,39 @@ Use these to bias variable selection and structural focus toward what the user h
   // Critical: this fixes the failure mode where the AI silently drops a
   // user-named construct and the model still passes validation because the
   // prompt-only contract had no server backstop.
-  const requiredRoleBindings = extractRequiredRoleBindings(userPrompt, variables);
+  const userPromptBindings = extractRequiredRoleBindings(userPrompt, variables);
+  // ALSO parse the session TOPIC for IV/DV patterns ("X 对 Y 的影响" / "the
+  // effect of X on Y" / "X 如何影响 Y"), preferring umbrella-entity matches.
+  // Pre-fix only userPrompt was parsed; sessions where the user just set the
+  // topic and clicked generate had no role enforcement at all, so the AI was
+  // free to pick a perceived dimension as the IV — the exact failure mode the
+  // user reported (topic = "AI 主播对冲动购买的影响" but generated IV was
+  // "perceived anthropomorphism").
+  const topicBindings = extractTopicRoleBindings(sessionTopic, variables, umbrellaVarIds);
+  // Merge: userPrompt bindings win on conflicts (same variable assigned
+  // different roles by the two sources). Without the conflict guard the
+  // server could double-bind a variable as both IV and mediator and validate()
+  // would reject every model.
+  const seenBindingKey = new Set(userPromptBindings.map((b) => `${b.variableId}:${b.role}`));
+  const requiredRoleBindings: RequiredRoleBinding[] = [...userPromptBindings];
+  for (const b of topicBindings) {
+    const k = `${b.variableId}:${b.role}`;
+    if (seenBindingKey.has(k)) continue;
+    const conflicting = userPromptBindings.some((u) => u.variableId === b.variableId && u.role !== b.role);
+    if (conflicting) continue;
+    seenBindingKey.add(k);
+    requiredRoleBindings.push(b);
+  }
   if (requiredRoleBindings.length > 0) {
     req.log.info(
-      { sessionId, bindings: requiredRoleBindings.map((b) => ({ varId: b.variableId, role: b.role, term: b.userTerm })) },
-      "Parsed user-named role bindings from directive — these will be HARD-enforced by validate()",
+      {
+        sessionId,
+        userPromptBindings: userPromptBindings.length,
+        topicBindings: topicBindings.length,
+        umbrellaVars: umbrellaVarIds.size,
+        bindings: requiredRoleBindings.map((b) => ({ varId: b.variableId, role: b.role, term: b.userTerm })),
+      },
+      "Parsed user-named role bindings from directive + topic — these will be HARD-enforced by validate()",
     );
   }
   const focusListing = focusPicks.length > 0
