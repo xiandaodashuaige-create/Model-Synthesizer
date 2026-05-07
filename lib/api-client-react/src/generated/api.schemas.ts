@@ -670,6 +670,24 @@ export type LookupPaper404 = {
   error: string;
 };
 
+export type CreateSessionVariableBodyType =
+  (typeof CreateSessionVariableBodyType)[keyof typeof CreateSessionVariableBodyType];
+
+export const CreateSessionVariableBodyType = {
+  independent: "independent",
+  mediator: "mediator",
+  moderator: "moderator",
+  dependent: "dependent",
+} as const;
+
+export type CreateSessionVariableBody = {
+  /** Variable display name (1–200 chars). */
+  name: string;
+  type: CreateSessionVariableBodyType;
+  /** Optional plain-language definition. */
+  definition?: string;
+};
+
 export type UploadSessionPaperPdfBody = {
   /** The PDF file (max ~25 MB; must be text-extractable, not a scan). */
   file: Blob;

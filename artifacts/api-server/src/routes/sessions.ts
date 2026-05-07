@@ -13,6 +13,12 @@ import { requireAuth } from "../middlewares/authMiddleware";
 
 const router: IRouter = Router();
 
+// Manual / custom variables are backed by a per-session sentinel paper with
+// externalId starting with "manual:" (see routes/variables.ts). It must not
+// be counted in the public "X 篇论文" counter, so every paper-count query in
+// this file filters it out via this SQL fragment.
+const NOT_MANUAL_PAPER = sql`${papersTable.externalId} NOT LIKE 'manual:%'`;
+
 function buildSessionWithCounts(session: typeof sessionsTable.$inferSelect, paperCount: number, variableCount: number, modelCount: number) {
   return {
     ...session,
@@ -41,7 +47,7 @@ router.get("/sessions", async (req, res): Promise<void> => {
       const [paperCount] = await db
         .select({ count: sql<number>`count(*)::int` })
         .from(papersTable)
-        .where(eq(papersTable.sessionId, session.id));
+        .where(and(eq(papersTable.sessionId, session.id), NOT_MANUAL_PAPER));
       const [variableCount] = await db
         .select({ count: sql<number>`count(*)::int` })
         .from(variablesTable)
@@ -83,7 +89,7 @@ router.get("/sessions/:id", async (req, res): Promise<void> => {
     return;
   }
 
-  const [paperCount] = await db.select({ count: sql<number>`count(*)::int` }).from(papersTable).where(eq(papersTable.sessionId, session.id));
+  const [paperCount] = await db.select({ count: sql<number>`count(*)::int` }).from(papersTable).where(and(eq(papersTable.sessionId, session.id), NOT_MANUAL_PAPER));
   const [variableCount] = await db.select({ count: sql<number>`count(*)::int` }).from(variablesTable).where(eq(variablesTable.sessionId, session.id));
   const [modelCount] = await db.select({ count: sql<number>`count(*)::int` }).from(researchModelsTable).where(eq(researchModelsTable.sessionId, session.id));
 
@@ -115,7 +121,7 @@ router.patch("/sessions/:id", async (req, res): Promise<void> => {
     return;
   }
 
-  const [paperCount] = await db.select({ count: sql<number>`count(*)::int` }).from(papersTable).where(eq(papersTable.sessionId, session.id));
+  const [paperCount] = await db.select({ count: sql<number>`count(*)::int` }).from(papersTable).where(and(eq(papersTable.sessionId, session.id), NOT_MANUAL_PAPER));
   const [variableCount] = await db.select({ count: sql<number>`count(*)::int` }).from(variablesTable).where(eq(variablesTable.sessionId, session.id));
   const [modelCount] = await db.select({ count: sql<number>`count(*)::int` }).from(researchModelsTable).where(eq(researchModelsTable.sessionId, session.id));
 
@@ -155,7 +161,7 @@ router.get("/sessions/:id/summary", async (req, res): Promise<void> => {
     return;
   }
 
-  const [paperCount] = await db.select({ count: sql<number>`count(*)::int` }).from(papersTable).where(eq(papersTable.sessionId, sessionId));
+  const [paperCount] = await db.select({ count: sql<number>`count(*)::int` }).from(papersTable).where(and(eq(papersTable.sessionId, sessionId), NOT_MANUAL_PAPER));
   const [variableCount] = await db.select({ count: sql<number>`count(*)::int` }).from(variablesTable).where(eq(variablesTable.sessionId, sessionId));
   const [modelCount] = await db.select({ count: sql<number>`count(*)::int` }).from(researchModelsTable).where(eq(researchModelsTable.sessionId, sessionId));
 

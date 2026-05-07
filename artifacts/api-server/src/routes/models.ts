@@ -451,7 +451,11 @@ router.post("/sessions/:id/models/generate", async (req, res): Promise<void> => 
     db.select({ topic: sessionsTable.topic, name: sessionsTable.name })
       .from(sessionsTable).where(eq(sessionsTable.id, sessionId)).limit(1),
     db.select().from(variablesTable).where(eq(variablesTable.sessionId, sessionId)),
-    db.select().from(papersTable).where(eq(papersTable.sessionId, sessionId)),
+    // Exclude the per-session "manual:" sentinel paper that backs custom /
+    // user-added variables (see routes/variables.ts). It is not a real piece
+    // of literature and must not contribute to: papers.length-based thresholds
+    // (minDistinctPapers), per-paper backbone tally, evidence corpus, etc.
+    db.select().from(papersTable).where(and(eq(papersTable.sessionId, sessionId), sql`${papersTable.externalId} NOT LIKE 'manual:%'`)),
   ]);
   const sessionTopic = (sessionRows[0]?.topic ?? "").trim();
   const sessionName = (sessionRows[0]?.name ?? "").trim();
@@ -2586,7 +2590,7 @@ router.post("/sessions/:id/models/:modelId/evidence-apply", async (req, res): Pr
   }
   const paperMeta = new Map<number, { title: string; authors: string[]; year: number | null }>();
   if (allPaperIds.size > 0) {
-    const rows = await db.select().from(papersTable).where(eq(papersTable.sessionId, sessionId));
+    const rows = await db.select().from(papersTable).where(and(eq(papersTable.sessionId, sessionId), sql`${papersTable.externalId} NOT LIKE 'manual:%'`));
     for (const r of rows) {
       if (allPaperIds.has(r.id)) paperMeta.set(r.id, { title: r.title, authors: (r.authors as string[]) ?? [], year: r.year ?? null });
     }

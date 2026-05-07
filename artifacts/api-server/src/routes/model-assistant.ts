@@ -175,7 +175,10 @@ router.post("/sessions/:id/model-assistant", async (req, res) => {
   // it the chat would suggest variable combinations that ignore what the
   // user actually wants to study.
   const [papers, variables, models, sessionRows, liveModelRows] = await Promise.all([
-    db.select().from(papersTable).where(eq(papersTable.sessionId, sessionId)),
+    // Skip the per-session "manual:" sentinel paper (see routes/variables.ts) —
+    // it carries no abstract / fullText and would only inflate paper counts and
+    // assistant prompt context with placeholder rows.
+    db.select().from(papersTable).where(and(eq(papersTable.sessionId, sessionId), sql`${papersTable.externalId} NOT LIKE 'manual:%'`)),
     db.select().from(variablesTable).where(eq(variablesTable.sessionId, sessionId)),
     db.select().from(researchModelsTable).where(eq(researchModelsTable.sessionId, sessionId)),
     db.select({ topic: sessionsTable.topic, name: sessionsTable.name }).from(sessionsTable).where(eq(sessionsTable.id, sessionId)).limit(1),
@@ -841,7 +844,7 @@ async function loadSessionImageCtx(sessionId: number): Promise<SessionImageCtx |
     const [sessionRow, vars, papers] = await Promise.all([
       db.select({ topic: sessionsTable.topic }).from(sessionsTable).where(eq(sessionsTable.id, sessionId)).limit(1),
       db.select({ name: variablesTable.name }).from(variablesTable).where(eq(variablesTable.sessionId, sessionId)),
-      db.select({ title: papersTable.title }).from(papersTable).where(eq(papersTable.sessionId, sessionId)),
+      db.select({ title: papersTable.title }).from(papersTable).where(and(eq(papersTable.sessionId, sessionId), sql`${papersTable.externalId} NOT LIKE 'manual:%'`)),
     ]);
     const topic = sessionRow[0]?.topic?.trim() || null;
     return {

@@ -28,6 +28,7 @@ import type {
   ChatModelAssistant200,
   ChatModelAssistantBody,
   CreateSessionBody,
+  CreateSessionVariableBody,
   DeleteImageBlocklistEntry200,
   DeleteSessionVariable200,
   ErrorResponse,
@@ -1874,6 +1875,94 @@ export function useListSessionVariables<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * @summary Manually create a custom variable in this session (not extracted from a paper). Useful when the AI didn't surface a construct the researcher needs.
+ */
+export const getCreateSessionVariableUrl = (id: number) => {
+  return `/api/sessions/${id}/variables`;
+};
+
+export const createSessionVariable = async (
+  id: number,
+  createSessionVariableBody: CreateSessionVariableBody,
+  options?: RequestInit,
+): Promise<Variable> => {
+  return customFetch<Variable>(getCreateSessionVariableUrl(id), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(createSessionVariableBody),
+  });
+};
+
+export const getCreateSessionVariableMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createSessionVariable>>,
+    TError,
+    { id: number; data: BodyType<CreateSessionVariableBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createSessionVariable>>,
+  TError,
+  { id: number; data: BodyType<CreateSessionVariableBody> },
+  TContext
+> => {
+  const mutationKey = ["createSessionVariable"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createSessionVariable>>,
+    { id: number; data: BodyType<CreateSessionVariableBody> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return createSessionVariable(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreateSessionVariableMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createSessionVariable>>
+>;
+export type CreateSessionVariableMutationBody =
+  BodyType<CreateSessionVariableBody>;
+export type CreateSessionVariableMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Manually create a custom variable in this session (not extracted from a paper). Useful when the AI didn't surface a construct the researcher needs.
+ */
+export const useCreateSessionVariable = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createSessionVariable>>,
+    TError,
+    { id: number; data: BodyType<CreateSessionVariableBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createSessionVariable>>,
+  TError,
+  { id: number; data: BodyType<CreateSessionVariableBody> },
+  TContext
+> => {
+  return useMutation(getCreateSessionVariableMutationOptions(options));
+};
 
 /**
  * @summary Upload a PDF and add it to the session as a paper. Extracts metadata via DOI lookup or AI fallback; full text is stored for downstream variable extraction.

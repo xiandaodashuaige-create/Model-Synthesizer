@@ -488,6 +488,22 @@ export const ListSessionVariablesResponse = zod.array(
 );
 
 /**
+ * @summary Manually create a custom variable in this session (not extracted from a paper). Useful when the AI didn't surface a construct the researcher needs.
+ */
+export const CreateSessionVariableParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const CreateSessionVariableBody = zod.object({
+  name: zod.string().describe("Variable display name (1–200 chars)."),
+  type: zod.enum(["independent", "mediator", "moderator", "dependent"]),
+  definition: zod
+    .string()
+    .optional()
+    .describe("Optional plain-language definition."),
+});
+
+/**
  * @summary Upload a PDF and add it to the session as a paper. Extracts metadata via DOI lookup or AI fallback; full text is stored for downstream variable extraction.
  */
 export const UploadSessionPaperPdfParams = zod.object({

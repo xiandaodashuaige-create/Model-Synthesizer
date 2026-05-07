@@ -9,6 +9,7 @@ import {
   useAddLiveModelEdge,
   useRemoveLiveModelEdge,
   useListSessionVariables,
+  useCreateSessionVariable,
   getGetLiveModelQueryKey,
   getGetSessionQueryKey,
   getListSessionVariablesQueryKey,
@@ -264,6 +265,16 @@ export default function LiveModelPage({ params }: { params?: { id: string } }) {
   // (case-insensitive, whitespace-trimmed) so users can find a construct fast
   // even when the pool has 100+ entries after a multi-paper extraction.
   const [poolQuery, setPoolQuery] = useState("");
+  // Inline "+ 自定义新变量" form state (lives in the variable pool sidebar).
+  // The user types a name + picks a type, the new variable is POSTed to
+  // /sessions/:id/variables (sentinel-paper backed) and immediately added to
+  // the live canvas via handleAddVar. Closed by default to keep the sidebar
+  // compact.
+  const [customOpen, setCustomOpen] = useState(false);
+  const [customName, setCustomName] = useState("");
+  const [customType, setCustomType] = useState<"independent" | "mediator" | "moderator" | "dependent">("independent");
+  const [customDef, setCustomDef] = useState("");
+  const createCustomVar = useCreateSessionVariable();
   // P3: cross-highlight between the edge list and the canvas. Hovering a row
   // sets the canvas edge's stroke to a thicker primary tint (and vice-versa).
   // String-typed because RF edge ids are strings even though our DB ids are numbers.
@@ -289,6 +300,40 @@ export default function LiveModelPage({ params }: { params?: { id: string } }) {
           toast({ title: t("live.toast.added" as any) });
         },
         onError: () => toast({ title: t("live.toast.failed" as any), variant: "destructive" }),
+      },
+    );
+  };
+
+  const handleCreateCustomVar = () => {
+    const name = customName.trim();
+    if (name.length === 0 || name.length > 200) {
+      toast({ title: t("canvas.pool.custom.invalidName" as any), variant: "destructive" });
+      return;
+    }
+    createCustomVar.mutate(
+      {
+        id: sessionId,
+        data: {
+          name,
+          type: customType,
+          ...(customDef.trim().length > 0 ? { definition: customDef.trim().slice(0, 150) } : {}),
+        },
+      },
+      {
+        onSuccess: (created: { id: number; name: string }) => {
+          // Refresh the variable list so the new row shows in the pool, then
+          // immediately drop it onto the canvas — that's almost always why the
+          // user opened the form.
+          queryClient.invalidateQueries({ queryKey: getListSessionVariablesQueryKey(sessionId) });
+          toast({ title: t("canvas.pool.custom.toastDone" as any, { name: created.name }) });
+          setCustomName("");
+          setCustomDef("");
+          setCustomOpen(false);
+          handleAddVar(created.id);
+        },
+        onError: () => {
+          toast({ title: t("canvas.pool.custom.toastFailed" as any), variant: "destructive" });
+        },
       },
     );
   };
@@ -1070,6 +1115,76 @@ export default function LiveModelPage({ params }: { params?: { id: string } }) {
                         {t("live.pool.searchCount" as any, { matched: filtered.length, total: variables.length })}
                       </p>
                     )}
+                    {/* Inline custom-variable form — collapsed by default so it
+                        doesn't crowd the sidebar. Opens to a 4-row mini-form;
+                        on submit, the variable is created server-side and
+                        immediately added to the canvas via handleAddVar. */}
+                    <div className="mt-2">
+                      {!customOpen ? (
+                        <button
+                          type="button"
+                          data-testid="button-pool-custom-toggle"
+                          onClick={() => setCustomOpen(true)}
+                          className="w-full text-[11px] text-primary hover:bg-primary/5 rounded-md py-1.5 px-2 border border-dashed border-primary/40 transition-colors"
+                        >
+                          {t("canvas.pool.custom.toggle" as any)}
+                        </button>
+                      ) : (
+                        <div className="space-y-2 border border-border rounded-md p-2 bg-muted/30">
+                          <div className="text-[11px] font-medium text-foreground">{t("canvas.pool.custom.title" as any)}</div>
+                          <input
+                            type="text"
+                            data-testid="input-pool-custom-name"
+                            value={customName}
+                            onChange={(e) => setCustomName(e.target.value)}
+                            placeholder={t("canvas.pool.custom.namePh" as any) as string}
+                            maxLength={200}
+                            className="w-full text-xs bg-background border border-input rounded-md h-7 px-2 placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                          />
+                          <select
+                            data-testid="select-pool-custom-type"
+                            value={customType}
+                            onChange={(e) => setCustomType(e.target.value as typeof customType)}
+                            className="w-full text-xs bg-background border border-input rounded-md h-7 px-2 focus:outline-none focus:ring-1 focus:ring-ring"
+                          >
+                            <option value="independent">{t("type.independent" as any)}</option>
+                            <option value="mediator">{t("type.mediator" as any)}</option>
+                            <option value="moderator">{t("type.moderator" as any)}</option>
+                            <option value="dependent">{t("type.dependent" as any)}</option>
+                          </select>
+                          <textarea
+                            data-testid="input-pool-custom-def"
+                            value={customDef}
+                            onChange={(e) => setCustomDef(e.target.value.slice(0, 150))}
+                            placeholder={t("canvas.pool.custom.defPh" as any) as string}
+                            rows={2}
+                            className="w-full text-xs bg-background border border-input rounded-md px-2 py-1.5 placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring resize-none"
+                          />
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              data-testid="button-pool-custom-create"
+                              onClick={handleCreateCustomVar}
+                              disabled={createCustomVar.isPending || customName.trim().length === 0}
+                              className="flex-1 text-[11px] bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 rounded-md h-7 px-2 transition-colors"
+                            >
+                              {createCustomVar.isPending
+                                ? t("canvas.pool.custom.creating" as any)
+                                : t("canvas.pool.custom.create" as any)}
+                            </button>
+                            <button
+                              type="button"
+                              data-testid="button-pool-custom-cancel"
+                              onClick={() => { setCustomOpen(false); setCustomName(""); setCustomDef(""); }}
+                              disabled={createCustomVar.isPending}
+                              className="text-[11px] text-muted-foreground hover:text-foreground rounded-md h-7 px-2 transition-colors"
+                            >
+                              {t("canvas.pool.custom.cancel" as any)}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
                   {filtered.length === 0 ? (
                     <div className="p-4 text-center text-xs text-muted-foreground italic">

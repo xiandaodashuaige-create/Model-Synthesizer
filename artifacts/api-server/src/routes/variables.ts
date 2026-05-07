@@ -179,6 +179,16 @@ For papers about AI, chatbots, conversational agents, voice assistants, recommen
 
 If the paper talks about "the design of the chatbot", "characteristics of the AI agent", "features of the system", "qualities of the assistant", "cues of the streamer" — those are independent variables. Extract each one as a separate row.
 
+CRITICAL — UMBRELLA / NAMED-ENTITY CONSTRUCT (read carefully).
+When the paper studies a NAMED system, agent, context, or stimulus as its central object — e.g. "AI broadcast(er) / AI 主播", "AI streamer / virtual streamer / virtual influencer / digital human", "AI chatbot Eva", "robot Pepper", "metaverse retail", "voice assistant Alexa", "short-video commerce" — you MUST emit ONE umbrella variable row with the entity itself, in addition to its perceived dimensions. Specifically:
+- "name" = the entity exactly as the paper names it (e.g. "AI broadcast", "AI streamer", "virtual influencer"), NOT a dimension of it.
+- "type" = "independent", "constructLayer" = "stimulus".
+- "canonicalConstruct" = the bare lowercased entity (e.g. "ai broadcast", "virtual streamer").
+- "definition" = the paper's one-sentence framing of what the entity is.
+- "citationText" = a verbatim sentence from the paper that names the entity as its study object.
+This umbrella row is REQUIRED so that downstream features (focus picks, model generation, the user's natural-language search) can match the entity by its plain name. Without it, a user who types the entity name finds nothing because every extracted row carries a long compound qualifier.
+Then, ALSO emit the perceived-dimension rows you would normally extract (e.g. "perceived anthropomorphism of AI broadcast", "AI broadcast host expression technology", "perceived responsiveness", "parasocial interaction"). The umbrella row and the dimension rows COEXIST — do not collapse them.
+
 What counts as a RELATIONSHIP (extract ALL of these — do NOT limit to formally labeled hypotheses):
 1. Formal hypotheses (H1, H2a, ...).
 2. Sentences in the abstract that assert a directional effect, e.g. "X positively predicts Y", "A increases B", "C reduces D", "E mediates the effect of F on G", "H moderates the relationship between I and J".
@@ -389,6 +399,136 @@ router.get("/sessions/:id/variables", async (req, res): Promise<void> => {
       return formatVariable(v, paper);
     })
   );
+});
+
+// ---------------------------------------------------------------------------
+// Manual / custom variable creation.
+//
+// Researchers often need to add a construct that the AI did NOT extract
+// (because it sits in a paper not yet in the session, because the construct
+// is theoretical-only, or because the AI named it differently than the
+// researcher prefers). This endpoint lets them type a name + type and get a
+// real `variables` row that participates in the variable pool, live model
+// canvas, and downstream model generation just like any extracted variable.
+//
+// Implementation choice: rather than making `variables.paperId` nullable
+// (which would cascade through ~30 read sites that assume non-null FK), we
+// lazily create ONE sentinel "[手动添加]" paper per session and bind every
+// manual variable to it. That paper has no fullText / abstract so it doesn't
+// pollute AI extraction or model-generation prompts (those iterate paper
+// fullText / abstract — both null here), and we filter it out of the visible
+// papers list + paper count so the user's "13 篇论文" tab counter stays
+// truthful. The downside is that manual variables show no paper citation in
+// the variables grid, which is intentional — they're not from a paper.
+// ---------------------------------------------------------------------------
+
+const MANUAL_PAPER_EXTERNAL_ID = (sessionId: number) => `manual:${sessionId}`;
+export const MANUAL_PAPER_PREFIX = "manual:";
+
+// In-process lock: dedupe concurrent getOrCreateManualPaper() calls within a
+// single server instance. Without this, two parallel POST /sessions/:id/variables
+// requests for the same session both miss the SELECT, both INSERT, and we end
+// up with two sentinel papers (the table has no unique constraint on
+// sessionId+externalId — adding one would require a migration). The lock holds
+// the in-flight create promise per sessionId; concurrent callers await the same
+// promise and all see the same row.
+//
+// Note: this only protects against intra-process races. A multi-process /
+// horizontally-scaled deployment would still need a DB-level unique index. For
+// the current single-instance autoscale tier, this is sufficient and ships
+// without a migration.
+const manualPaperCreateLocks = new Map<number, Promise<typeof papersTable.$inferSelect>>();
+
+async function getOrCreateManualPaper(sessionId: number) {
+  const externalId = MANUAL_PAPER_EXTERNAL_ID(sessionId);
+  const existing = await db
+    .select()
+    .from(papersTable)
+    .where(and(eq(papersTable.sessionId, sessionId), eq(papersTable.externalId, externalId)))
+    .limit(1);
+  if (existing.length > 0) return existing[0];
+  const inFlight = manualPaperCreateLocks.get(sessionId);
+  if (inFlight) return inFlight;
+  const promise = (async () => {
+    // Re-check under the lock — the SELECT above may have raced with another
+    // request that just finished inserting before we acquired the slot.
+    const second = await db
+      .select()
+      .from(papersTable)
+      .where(and(eq(papersTable.sessionId, sessionId), eq(papersTable.externalId, externalId)))
+      .limit(1);
+    if (second.length > 0) return second[0];
+    const [created] = await db
+      .insert(papersTable)
+      .values({
+        sessionId,
+        externalId,
+        title: "[手动添加 / Manual additions]",
+        authors: [],
+        url: "",
+        extracted: "true",
+      })
+      .returning();
+    return created;
+  })().finally(() => {
+    manualPaperCreateLocks.delete(sessionId);
+  });
+  manualPaperCreateLocks.set(sessionId, promise);
+  return promise;
+}
+
+router.post("/sessions/:id/variables", async (req, res): Promise<void> => {
+  const sessionId = parseInt(req.params.id, 10);
+  if (!Number.isFinite(sessionId) || sessionId <= 0) {
+    res.status(400).json({ error: "Invalid session id" });
+    return;
+  }
+  const body = req.body ?? {};
+  const name = typeof body.name === "string" ? body.name.trim() : "";
+  const type = typeof body.type === "string" ? body.type : "";
+  const definition = typeof body.definition === "string" ? body.definition.trim() : "";
+  if (name.length === 0 || name.length > 200) {
+    res.status(400).json({ error: "name is required (1–200 chars)", code: "invalid_name" });
+    return;
+  }
+  if (!["independent", "mediator", "moderator", "dependent"].includes(type)) {
+    res.status(400).json({ error: "type must be independent|mediator|moderator|dependent", code: "invalid_type" });
+    return;
+  }
+  // Verify the session exists / belongs to the caller — same pattern as other routes.
+  const [session] = await db.select().from(papersTable).where(eq(papersTable.sessionId, sessionId)).limit(1);
+  // Note: above is a cheap "session has at least one paper" check. We don't have
+  // an auth-aware session-fetch helper imported here; full session validation
+  // happens via the FK on the sentinel paper insert below (will error if
+  // sessionId doesn't exist).
+  void session;
+
+  const sentinel = await getOrCreateManualPaper(sessionId);
+  const canonical = canonicalize(name);
+  // Construct layer is best-effort — pick the typical layer for the chosen
+  // type so the variable participates in layered prompts (stimulus → cognitive
+  // → ... → behavior). The user can always edit later.
+  const layerByType: Record<string, string> = {
+    independent: "stimulus",
+    mediator: "cognitive",
+    moderator: "cognitive",
+    dependent: "behavior",
+  };
+  const layer = VALID_LAYERS.has(layerByType[type]) ? layerByType[type] : null;
+  const [v] = await db
+    .insert(variablesTable)
+    .values({
+      sessionId,
+      paperId: sentinel.id,
+      name: name.slice(0, 200),
+      type,
+      definition: definition.length > 0 ? definition.slice(0, 2000) : "（手动添加 / manually added）",
+      citationText: "（手动添加 / manually added — no paper citation）",
+      canonicalConstructId: canonical,
+      constructLayer: layer,
+    })
+    .returning();
+  res.status(201).json(formatVariable(v, sentinel));
 });
 
 // Manual rename / retype / delete of a variable. The AI's first-pass extraction

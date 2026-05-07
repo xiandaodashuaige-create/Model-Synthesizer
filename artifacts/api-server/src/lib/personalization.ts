@@ -1,4 +1,4 @@
-import { and, eq, isNotNull, inArray } from "drizzle-orm";
+import { and, eq, isNotNull, inArray, sql } from "drizzle-orm";
 import {
   db,
   sessionsTable,
@@ -144,7 +144,9 @@ export async function refreshSessionSignals(sessionId: number): Promise<void> {
     const [session] = await db.select().from(sessionsTable).where(eq(sessionsTable.id, sessionId));
     if (!session) return;
     const [papers, variables, models] = await Promise.all([
-      db.select().from(papersTable).where(eq(papersTable.sessionId, sessionId)),
+      // Exclude the manual-variable sentinel paper from the personalization
+      // paperCount fingerprint; it's not real literature.
+      db.select().from(papersTable).where(and(eq(papersTable.sessionId, sessionId), sql`${papersTable.externalId} NOT LIKE 'manual:%'`)),
       db.select().from(variablesTable).where(eq(variablesTable.sessionId, sessionId)),
       db.select().from(researchModelsTable).where(eq(researchModelsTable.sessionId, sessionId)),
     ]);
@@ -202,7 +204,7 @@ export async function refreshUserPersonalization(userId: string): Promise<Person
     // every other user's data into memory and (b) keep the refresh O(user's
     // own data) instead of O(total DB rows).
     const [pRows, vRows, mRows, fRows, chatRows] = await Promise.all([
-      db.select({ sessionId: papersTable.sessionId }).from(papersTable).where(inArray(papersTable.sessionId, sessionIds)),
+      db.select({ sessionId: papersTable.sessionId }).from(papersTable).where(and(inArray(papersTable.sessionId, sessionIds), sql`${papersTable.externalId} NOT LIKE 'manual:%'`)),
       db.select().from(variablesTable).where(inArray(variablesTable.sessionId, sessionIds)),
       db.select().from(researchModelsTable).where(inArray(researchModelsTable.sessionId, sessionIds)),
       db

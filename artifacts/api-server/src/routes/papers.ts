@@ -546,7 +546,15 @@ router.get("/sessions/:id/papers", async (req, res): Promise<void> => {
     .where(eq(papersTable.sessionId, params.data.id))
     .orderBy(papersTable.createdAt);
 
-  res.json(papers.map(formatPaper));
+  // Hide the per-session "[手动添加]" sentinel paper that backs manual /
+  // custom variables (see routes/variables.ts MANUAL_PAPER_PREFIX). It must
+  // exist as a real `papers` row so the variables FK is satisfied, but it's
+  // not a real paper and the user must never see it in the papers tab.
+  res.json(
+    papers
+      .filter((p) => !p.externalId.startsWith("manual:"))
+      .map(formatPaper),
+  );
 });
 
 router.post("/sessions/:id/papers", async (req, res): Promise<void> => {
