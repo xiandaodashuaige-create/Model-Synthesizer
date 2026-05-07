@@ -40,6 +40,12 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
     year?: number | null; venue?: string | null; citationCount?: number | null;
     openAccessUrl?: string | null; url: string;
   }>>([]);
+  type SortMode = "relevance" | "year" | "citations";
+  const [searchSort, setSearchSort] = useState<SortMode>("relevance");
+  const [searchPage, setSearchPage] = useState(1);
+  const SEARCH_PAGE_SIZE = 15;
+  // Whether the latest result page was full → assume there's a next batch.
+  const hasMoreResults = searchResults.length >= SEARCH_PAGE_SIZE;
 
   const searchPapers = useSearchPapers();
   const lookupPaper = useLookupPaper();
@@ -85,8 +91,16 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
   const allExtracted = (sessionPapers?.length ?? 0) > 0 && (sessionPapers ?? []).every((p) => p.extracted);
   const someExtracted = (sessionPapers ?? []).some((p) => p.extracted);
 
-  const handleSearch = () => {
+  // Monotonic request id — only the latest in-flight search is allowed to
+  // overwrite results / page / sort state, so a slow earlier response can
+  // never clobber a faster later one.
+  const searchSeqRef = useRef(0);
+  const runSearch = (opts?: { sort?: SortMode; page?: number; resetPage?: boolean }) => {
     if (!searchQuery.trim()) return;
+    if (searchPapers.isPending) return; // guard against double-fire from Enter key
+    const sort = opts?.sort ?? searchSort;
+    const page = opts?.resetPage ? 1 : (opts?.page ?? searchPage);
+    const mySeq = ++searchSeqRef.current;
     // Persist the query in the URL so browser back/refresh keeps the search context.
     if (typeof window !== "undefined") {
       try {
@@ -96,9 +110,23 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
       } catch { /* ignore */ }
     }
     searchPapers.mutate(
-      { data: { query: searchQuery, limit: 15 } },
+      { data: { query: searchQuery, limit: SEARCH_PAGE_SIZE, sort, page } },
       {
-        onSuccess: (results) => setSearchResults(results),
+        onSuccess: (results) => {
+          if (mySeq !== searchSeqRef.current) return; // stale response, drop
+          setSearchResults(results);
+          // Commit page/sort only on success so a failed Next click doesn't
+          // leave the indicator out of sync with the visible results.
+          setSearchSort(sort);
+          setSearchPage(page);
+          // Scroll the results region into view so the user sees fresh content.
+          if (typeof window !== "undefined") {
+            requestAnimationFrame(() => {
+              document.querySelector('[data-testid="search-results-anchor"]')
+                ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+            });
+          }
+        },
         onError: (err: any) => {
           // Surface the actual server-side reason (timeout / rate-limited /
           // upstream / network) rather than a one-size-fits-all message.
@@ -114,6 +142,7 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
       },
     );
   };
+  const handleSearch = () => runSearch({ resetPage: true });
 
   useEffect(() => {
     if (autoSearchedRef.current) return;
@@ -458,8 +487,35 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
           </button>
         </div>
 
-        {searchResults.length > 0 && (
-          <div className="mt-5 space-y-3 max-h-[420px] overflow-y-auto pr-1">
+        {(searchResults.length > 0 || searchPage > 1) && (
+          <>
+            <div className="mt-5 flex flex-wrap items-center gap-x-3 gap-y-2" data-testid="search-results-anchor">
+              <span className="text-xs text-muted-foreground font-medium">
+                {t("papers.sort.label" as any)}：
+              </span>
+              {(["relevance", "year", "citations"] as SortMode[]).map((mode) => {
+                const active = searchSort === mode;
+                return (
+                  <button
+                    key={mode}
+                    data-testid={`button-sort-${mode}`}
+                    onClick={() => runSearch({ sort: mode, resetPage: true })}
+                    disabled={searchPapers.isPending}
+                    className={`text-xs px-2.5 py-1 rounded-full border transition-colors disabled:opacity-50 ${
+                      active
+                        ? "bg-primary text-primary-foreground border-primary"
+                        : "bg-background text-muted-foreground border-border hover:border-primary/40 hover:text-foreground"
+                    }`}
+                  >
+                    {t(`papers.sort.${mode}` as any)}
+                  </button>
+                );
+              })}
+              <span className="ml-auto text-xs text-muted-foreground">
+                {t("papers.page.indicator" as any, { page: searchPage })}
+              </span>
+            </div>
+            <div className="mt-3 space-y-3 max-h-[420px] overflow-y-auto pr-1">
             <p className="text-xs text-muted-foreground font-medium">
               {t("papers.results.count" as any, { count: searchResults.length })} · {t("papers.results.from" as any)}
             </p>
@@ -516,7 +572,30 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
                 </div>
               );
             })}
-          </div>
+            </div>
+            <div className="mt-4 flex items-center justify-between gap-3">
+              <button
+                data-testid="button-page-prev"
+                onClick={() => runSearch({ page: Math.max(1, searchPage - 1) })}
+                disabled={searchPapers.isPending || searchPage <= 1}
+                className="text-xs px-3 py-1.5 rounded-md border border-border bg-background hover:border-primary/40 disabled:opacity-40 disabled:pointer-events-none"
+              >
+                ← {t("papers.page.prev" as any)}
+              </button>
+              {!hasMoreResults && searchPage > 1 && (
+                <span className="text-xs text-muted-foreground">{t("papers.page.noMore" as any)}</span>
+              )}
+              <button
+                data-testid="button-page-next"
+                onClick={() => runSearch({ page: searchPage + 1 })}
+                disabled={searchPapers.isPending || !hasMoreResults}
+                className="text-xs px-3 py-1.5 rounded-md border border-primary/30 bg-primary/10 text-primary hover:bg-primary/20 disabled:opacity-40 disabled:pointer-events-none inline-flex items-center gap-1.5"
+              >
+                {searchPapers.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
+                {t("papers.page.next" as any)} →
+              </button>
+            </div>
+          </>
         )}
       </div>
 

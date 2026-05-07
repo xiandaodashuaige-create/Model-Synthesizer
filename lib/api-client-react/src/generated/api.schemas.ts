@@ -162,9 +162,28 @@ export interface SessionSummary {
   selectedModelId: number | null;
 }
 
+/**
+ * Result ordering (default relevance)
+ */
+export type SearchPapersBodySort =
+  (typeof SearchPapersBodySort)[keyof typeof SearchPapersBodySort];
+
+export const SearchPapersBodySort = {
+  relevance: "relevance",
+  year: "year",
+  citations: "citations",
+} as const;
+
 export interface SearchPapersBody {
   query: string;
   limit?: number;
+  /** Result ordering (default relevance) */
+  sort?: SearchPapersBodySort;
+  /**
+   * 1-based page number for pagination (default 1)
+   * @minimum 1
+   */
+  page?: number;
 }
 
 export interface LookupPaperBody {

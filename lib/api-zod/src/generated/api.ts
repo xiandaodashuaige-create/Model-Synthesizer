@@ -276,9 +276,19 @@ export const GetSessionSummaryResponse = zod.object({
 /**
  * @summary Search papers by topic from OpenAlex
  */
+
 export const SearchPapersBody = zod.object({
   query: zod.string(),
   limit: zod.number().optional(),
+  sort: zod
+    .enum(["relevance", "year", "citations"])
+    .optional()
+    .describe("Result ordering (default relevance)"),
+  page: zod
+    .number()
+    .min(1)
+    .optional()
+    .describe("1-based page number for pagination (default 1)"),
 });
 
 export const SearchPapersResponseItem = zod.object({

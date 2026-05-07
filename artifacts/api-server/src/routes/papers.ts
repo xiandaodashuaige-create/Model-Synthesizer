@@ -42,8 +42,8 @@ const router: IRouter = Router();
 const searchCache = new Map<string, { results: unknown[]; expiresAt: number }>();
 const CACHE_TTL_MS = 15 * 60 * 1000;
 
-function getCacheKey(query: string, limit: number) {
-  return `${query.toLowerCase().trim()}:${limit}`;
+function getCacheKey(query: string, limit: number, sort: string, page: number) {
+  return `${query.toLowerCase().trim()}:${limit}:${sort}:${page}`;
 }
 
 /** Reconstruct abstract from OpenAlex inverted index format */
@@ -154,7 +154,14 @@ async function fetchOpenAlexWithRetry(url: string): Promise<Response> {
   throw new OpenAlexError("network", "Unreachable");
 }
 
-async function fetchFromOpenAlex(query: string, limit: number): Promise<PaperResult[]> {
+type SortMode = "relevance" | "year" | "citations";
+
+async function fetchFromOpenAlex(
+  query: string,
+  limit: number,
+  sort: SortMode = "relevance",
+  page = 1,
+): Promise<PaperResult[]> {
   const url = new URL("https://api.openalex.org/works");
   // Use the dedicated full-text search filter on title+abstract for higher precision
   // than the default `search` param (which also matches body text and is much noisier).
@@ -163,8 +170,12 @@ async function fetchFromOpenAlex(query: string, limit: number): Promise<PaperRes
   const safeQuery = query.replace(/["',:|]+/g, " ").replace(/\s+/g, " ").trim();
   url.searchParams.set("filter", "title_and_abstract.search:" + safeQuery + ",is_paratext:false,has_abstract:true");
   url.searchParams.set("per-page", String(Math.min(limit, 50)));
-  // Sort by OpenAlex relevance score (best for short / ambiguous queries).
-  url.searchParams.set("sort", "relevance_score:desc");
+  url.searchParams.set("page", String(Math.max(1, Math.floor(page))));
+  const sortParam =
+    sort === "year" ? "publication_year:desc"
+    : sort === "citations" ? "cited_by_count:desc"
+    : "relevance_score:desc";
+  url.searchParams.set("sort", sortParam);
   url.searchParams.set("select", SELECT_FIELDS);
   url.searchParams.set("mailto", "research@researchmodelbuilder.app");
 
@@ -343,8 +354,8 @@ router.post("/papers/search", async (req, res): Promise<void> => {
     return;
   }
 
-  const { query, limit = 20 } = parsed.data;
-  const cacheKey = getCacheKey(query, limit);
+  const { query, limit = 20, sort = "relevance", page = 1 } = parsed.data;
+  const cacheKey = getCacheKey(query, limit, sort, page);
 
   // Return cached results if fresh
   const cached = searchCache.get(cacheKey);
@@ -355,7 +366,7 @@ router.post("/papers/search", async (req, res): Promise<void> => {
   }
 
   try {
-    const results = await fetchFromOpenAlex(query, limit);
+    const results = await fetchFromOpenAlex(query, limit, sort, page);
     searchCache.set(cacheKey, { results, expiresAt: Date.now() + CACHE_TTL_MS });
     res.json(results);
   } catch (err) {
