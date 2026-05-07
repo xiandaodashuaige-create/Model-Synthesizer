@@ -1139,6 +1139,12 @@ export const GenerateModelsResponseItem = zod.object({
     .describe(
       "Present only when this model was generated through the partial-pass flow\n(some session papers had not been extracted at generation time).\n",
     ),
+  innovationMeta: zod
+    .record(zod.string(), zod.unknown())
+    .nullish()
+    .describe(
+      "Phase 2 Innovation Layer scoring + provenance. Always written for\nmodels generated after Phase 2 ships; null for older models. The\nshape mirrors `InnovationMeta` in `lib\/innovation-scoring.ts`.\n`mode='analysis_only'` means the score is descriptive — the system\nwill not reject the model on it. `stale=true` means the score was\ncomputed against an older landscape version and should be\nrecomputed before being trusted for hard decisions.\n",
+    ),
   createdAt: zod.string(),
 });
 export const GenerateModelsResponse = zod.array(GenerateModelsResponseItem);
@@ -1250,6 +1256,12 @@ export const ListSessionModelsResponseItem = zod.object({
     .nullish()
     .describe(
       "Present only when this model was generated through the partial-pass flow\n(some session papers had not been extracted at generation time).\n",
+    ),
+  innovationMeta: zod
+    .record(zod.string(), zod.unknown())
+    .nullish()
+    .describe(
+      "Phase 2 Innovation Layer scoring + provenance. Always written for\nmodels generated after Phase 2 ships; null for older models. The\nshape mirrors `InnovationMeta` in `lib\/innovation-scoring.ts`.\n`mode='analysis_only'` means the score is descriptive — the system\nwill not reject the model on it. `stale=true` means the score was\ncomputed against an older landscape version and should be\nrecomputed before being trusted for hard decisions.\n",
     ),
   createdAt: zod.string(),
 });
@@ -1386,6 +1398,12 @@ export const UpdateModelResponse = zod.object({
     .describe(
       "Present only when this model was generated through the partial-pass flow\n(some session papers had not been extracted at generation time).\n",
     ),
+  innovationMeta: zod
+    .record(zod.string(), zod.unknown())
+    .nullish()
+    .describe(
+      "Phase 2 Innovation Layer scoring + provenance. Always written for\nmodels generated after Phase 2 ships; null for older models. The\nshape mirrors `InnovationMeta` in `lib\/innovation-scoring.ts`.\n`mode='analysis_only'` means the score is descriptive — the system\nwill not reject the model on it. `stale=true` means the score was\ncomputed against an older landscape version and should be\nrecomputed before being trusted for hard decisions.\n",
+    ),
   createdAt: zod.string(),
 });
 
@@ -1496,6 +1514,12 @@ export const GetModelResponse = zod.object({
     .nullish()
     .describe(
       "Present only when this model was generated through the partial-pass flow\n(some session papers had not been extracted at generation time).\n",
+    ),
+  innovationMeta: zod
+    .record(zod.string(), zod.unknown())
+    .nullish()
+    .describe(
+      "Phase 2 Innovation Layer scoring + provenance. Always written for\nmodels generated after Phase 2 ships; null for older models. The\nshape mirrors `InnovationMeta` in `lib\/innovation-scoring.ts`.\n`mode='analysis_only'` means the score is descriptive — the system\nwill not reject the model on it. `stale=true` means the score was\ncomputed against an older landscape version and should be\nrecomputed before being trusted for hard decisions.\n",
     ),
   createdAt: zod.string(),
 });
@@ -1680,6 +1704,12 @@ export const SelectModelResponse = zod.object({
     .nullish()
     .describe(
       "Present only when this model was generated through the partial-pass flow\n(some session papers had not been extracted at generation time).\n",
+    ),
+  innovationMeta: zod
+    .record(zod.string(), zod.unknown())
+    .nullish()
+    .describe(
+      "Phase 2 Innovation Layer scoring + provenance. Always written for\nmodels generated after Phase 2 ships; null for older models. The\nshape mirrors `InnovationMeta` in `lib\/innovation-scoring.ts`.\n`mode='analysis_only'` means the score is descriptive — the system\nwill not reject the model on it. `stale=true` means the score was\ncomputed against an older landscape version and should be\nrecomputed before being trusted for hard decisions.\n",
     ),
   createdAt: zod.string(),
 });
@@ -2542,6 +2572,12 @@ export const ApplyModelEvidenceResponse = zod.object({
     .describe(
       "Present only when this model was generated through the partial-pass flow\n(some session papers had not been extracted at generation time).\n",
     ),
+  innovationMeta: zod
+    .record(zod.string(), zod.unknown())
+    .nullish()
+    .describe(
+      "Phase 2 Innovation Layer scoring + provenance. Always written for\nmodels generated after Phase 2 ships; null for older models. The\nshape mirrors `InnovationMeta` in `lib\/innovation-scoring.ts`.\n`mode='analysis_only'` means the score is descriptive — the system\nwill not reject the model on it. `stale=true` means the score was\ncomputed against an older landscape version and should be\nrecomputed before being trusted for hard decisions.\n",
+    ),
   createdAt: zod.string(),
 });
 
@@ -2675,6 +2711,12 @@ export const RevertModelToVersionResponse = zod.object({
     .nullish()
     .describe(
       "Present only when this model was generated through the partial-pass flow\n(some session papers had not been extracted at generation time).\n",
+    ),
+  innovationMeta: zod
+    .record(zod.string(), zod.unknown())
+    .nullish()
+    .describe(
+      "Phase 2 Innovation Layer scoring + provenance. Always written for\nmodels generated after Phase 2 ships; null for older models. The\nshape mirrors `InnovationMeta` in `lib\/innovation-scoring.ts`.\n`mode='analysis_only'` means the score is descriptive — the system\nwill not reject the model on it. `stale=true` means the score was\ncomputed against an older landscape version and should be\nrecomputed before being trusted for hard decisions.\n",
     ),
   createdAt: zod.string(),
 });

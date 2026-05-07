@@ -17,6 +17,14 @@ export const researchModelsTable = pgTable("research_models", {
   // Records which papers were used and which were skipped so the UI can warn
   // the reader and the literature review/export can disclose the limitation.
   partialPassMeta: jsonb("partial_pass_meta"),
+  // Phase 2 Innovation Layer scoring + provenance. Single-jsonb-column design
+  // (rather than splitting into 5+ columns) so the schema stays stable while
+  // the computation evolves; we'll consider promotion to dedicated columns
+  // once the shape stabilizes (post-Phase-2). Nullable so older rows
+  // generated before Phase 2 don't break the response. See
+  // docs/innovation-taxonomy.md and `lib/innovation-scoring.ts` for the
+  // canonical shape.
+  innovationMeta: jsonb("innovation_meta"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

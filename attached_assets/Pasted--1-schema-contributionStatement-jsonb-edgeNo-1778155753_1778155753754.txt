@@ -1,0 +1,104 @@
+我建议的执行顺序
+第一优先：切片 1，schema + 评分后端
+这是基础，必须先做。
+但我建议你稍微调整字段设计。
+你现在打算：
+contributionStatement jsonb
+edgeNoveltyTags text[]
+noveltyScore int
+contributionScore int
+我建议再加一个 meta：
+innovationAnalysisMeta: {
+  computedAt,
+  landscapeVersion,
+  landscapeCoverageRate,
+  analysisMode: "analysis_only" | "enforced",
+  reason: "coverage_below_threshold" | "ok"
+}
+否则以后 landscape 更新了，模型卡上的分数可能是旧的，用户不知道。
+如果不想新增太多列，可以统一放：
+innovationMeta jsonb
+里面包含：
+{
+  contributionStatement,
+  innovationTypes,
+  edgeNoveltyTags,
+  noveltyScore,
+  contributionScore,
+  subScores,
+  computedAgainst: {
+    landscapeVersion,
+    coverageRate,
+    computedAt
+  },
+  mode: "analysis_only"
+}
+我更推荐 先用 JSONB 一个字段，等 Phase 2 稳定后再拆列。
+第二优先：切片 2，landscape & gap 页面
+这个应该在模型卡 UI 前做。
+原因：
+用户需要先知道：
+为什么系统说这个模型有创新？
+依据的是哪个文献全景？
+当前覆盖率是多少？
+页面顶部必须有 banner：
+当前创新分析覆盖 8/49 篇文献，结果为初步分析。覆盖率达到 70% 后才启用强校验。
+这个页面是 Phase 2 的可信度来源。
+第三优先：切片 3，模型卡 UI
+等后端评分和 landscape 页面都存在后，再做模型卡展示。
+模型卡建议显示：
+noveltyScore
+contributionScore
+4 个子分
+innovationTypes
+contributionStatement 折叠面板
+edge novelty tag
+coverage warning
+注意：模型卡不要只显示大分数，必须显示：
+该分数基于当前 landscape 覆盖率 16.3%，仅供参考
+第四优先：切片 4，gap-driven generation hint
+这个最后做是对的。
+原因：
+如果前面评分和 gap 分析还不稳定，直接把 top gaps 注入生成 prompt，会让模型生成被不完整 landscape 带偏。
+等前 3 步跑通后，再把 top 3 gaps 作为软提示注入：
+Use these gaps as inspiration, not hard constraints.
+不要一开始强制。
+对切片 1 的验收标准
+我建议切片 1 做完后，先验收这些：
+老模型没有 innovationMeta 时不崩。
+新模型生成后能得到：
+contributionStatement
+innovationTypes
+noveltyScore
+contributionScore
+edgeNoveltyTags
+coverage < 70% 时：
+analysisMode = analysis_only
+不 hard reject
+UI 或 API 返回 warning
+每个分数都带 computedAgainst.landscapeVersion
+landscape rebuild 后，旧 score 能被识别为 stale。
+关于 Hard Rule #20-22
+你说：
+仅 warn 不 reject
+我完全同意。
+当前 coverage 16.3%，Hard Rule #20-22 只能这样：
+warn:
+- contribution statement missing
+- innovation type absent
+- novelty low
+不能这样：
+reject
+等 coverage ≥70%，再逐步开启：
+warn → soft reject → hard reject
+我的最终拍板
+同意进入 Phase 2
+执行顺序建议：
+1. schema + scoring backend
+2. landscape & gap page
+3. model card UI
+4. gap-driven generation hint
+但切片 1 要加两个保护
+分数必须带 landscapeVersion / coverageRate / computedAt
+coverage < 70% 时必须 analysis_only，不能 hard reject
+一句话：现在可以开 Phase 2，但先把创新评分做成“可解释的分析层”，不要马上变成“拦截模型的裁判”。

@@ -2477,6 +2477,18 @@ components:
                     type: string
                 required: [id, title]
           required: [allowPartial, basedOnPaperIds, missingPaperIds, missingPapers]
+        innovationMeta:
+          nullable: true
+          description: |
+            Phase 2 Innovation Layer scoring + provenance. Always written for
+            models generated after Phase 2 ships; null for older models. The
+            shape mirrors `InnovationMeta` in `lib/innovation-scoring.ts`.
+            `mode='analysis_only'` means the score is descriptive — the system
+            will not reject the model on it. `stale=true` means the score was
+            computed against an older landscape version and should be
+            recomputed before being trusted for hard decisions.
+          type: object
+          additionalProperties: true
         createdAt:
           type: string
       required:

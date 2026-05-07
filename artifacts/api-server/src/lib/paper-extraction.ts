@@ -343,7 +343,8 @@ export interface ExtractionResult {
   scope: {
     tangential: boolean;
     scopeStatus: ScopeStatus;
-    scopeScore: number;
+    scopeConfidence: number;
+    topicFitScore: number;
     tangentialReason: string | null;
   };
 }

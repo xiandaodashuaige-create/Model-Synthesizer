@@ -385,6 +385,18 @@ export type ResearchModelPartialPassMeta = {
   missingPapers: ResearchModelPartialPassMetaMissingPapersItem[];
 } | null;
 
+/**
+ * Phase 2 Innovation Layer scoring + provenance. Always written for
+models generated after Phase 2 ships; null for older models. The
+shape mirrors `InnovationMeta` in `lib/innovation-scoring.ts`.
+`mode='analysis_only'` means the score is descriptive — the system
+will not reject the model on it. `stale=true` means the score was
+computed against an older landscape version and should be
+recomputed before being trusted for hard decisions.
+
+ */
+export type ResearchModelInnovationMeta = { [key: string]: unknown } | null;
+
 export interface ModelNode {
   variableId: number;
   variableName: string;
@@ -476,6 +488,15 @@ export interface ResearchModel {
 (some session papers had not been extracted at generation time).
  */
   partialPassMeta?: ResearchModelPartialPassMeta;
+  /** Phase 2 Innovation Layer scoring + provenance. Always written for
+models generated after Phase 2 ships; null for older models. The
+shape mirrors `InnovationMeta` in `lib/innovation-scoring.ts`.
+`mode='analysis_only'` means the score is descriptive — the system
+will not reject the model on it. `stale=true` means the score was
+computed against an older landscape version and should be
+recomputed before being trusted for hard decisions.
+ */
+  innovationMeta?: ResearchModelInnovationMeta;
   createdAt: string;
 }
 

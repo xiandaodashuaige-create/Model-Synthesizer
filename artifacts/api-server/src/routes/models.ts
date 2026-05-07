@@ -12,6 +12,7 @@ import {
   modelAssistantMessagesTable,
 } from "@workspace/db";
 import { findEvidenceForModel, importWebPaper, makeEdgeKey, type EdgeInput } from "../lib/evidence-matching.js";
+import { computeInnovationMeta, isInnovationMetaStale, loadLandscapeSnapshot, type InnovationMeta } from "../lib/innovation-scoring.js";
 import {
   GenerateModelsParams,
   GenerateModelsBody,
@@ -518,7 +519,17 @@ function extractTopicRoleBindings(
   return out;
 }
 
-function formatModel(model: typeof researchModelsTable.$inferSelect) {
+function formatModel(
+  model: typeof researchModelsTable.$inferSelect,
+  // Optional: when provided, decorates the returned innovationMeta with a
+  // `stale: true` flag if the persisted score was computed against an older
+  // landscape version. Pure read-side annotation — does NOT mutate the row.
+  currentLandscapeVersion?: number | null,
+) {
+  const im = (model.innovationMeta as InnovationMeta | null) ?? null;
+  const innovationMeta = im
+    ? { ...im, stale: isInnovationMetaStale(im, currentLandscapeVersion ?? null) }
+    : null;
   return {
     id: model.id,
     sessionId: model.sessionId,
@@ -529,6 +540,7 @@ function formatModel(model: typeof researchModelsTable.$inferSelect) {
     nodes: model.nodes as ModelNode[],
     edges: model.edges as ModelEdge[],
     partialPassMeta: (model.partialPassMeta as PartialPassMeta | null) ?? null,
+    innovationMeta,
     createdAt: model.createdAt.toISOString(),
   };
 }
@@ -2742,7 +2754,39 @@ OUTPUT FORMAT — return a JSON object with key "models" containing an array of 
       generatedModelNames: accepted.map((m) => m.name),
     });
 
-    res.json(inserted.flat().map(formatModel));
+    // Phase 2 Innovation Layer: compute per-model innovationMeta and persist
+    // it. ANALYSIS-ONLY in slice 1 — never blocks generation; failures are
+    // logged and the model is still returned without scoring (UI shows a
+    // graceful "scoring unavailable" state). The landscape snapshot is
+    // loaded ONCE and shared across the fanout — without this each model
+    // would re-run 4 identical session-wide reads (CR table + 2 paper
+    // scans + landscapeMeta), eating the 60s autoscale budget.
+    const flatInserted = inserted.flat();
+    let snapshot;
+    try {
+      snapshot = await loadLandscapeSnapshot(sessionId);
+    } catch (err) {
+      req.log.warn({ err, sessionId }, "loadLandscapeSnapshot failed — skipping innovation scoring");
+    }
+    const currentLandscapeVersion = snapshot?.landscapeVersion ?? null;
+    const scored = snapshot
+      ? await Promise.all(
+          flatInserted.map(async (m) => {
+            try {
+              const meta = await computeInnovationMeta({ sessionId, model: m, log: req.log, snapshot });
+              await db
+                .update(researchModelsTable)
+                .set({ innovationMeta: meta })
+                .where(eq(researchModelsTable.id, m.id));
+              return { ...m, innovationMeta: meta };
+            } catch (err) {
+              req.log.warn({ err, modelId: m.id }, "innovation-scoring failed — returning model without score");
+              return m;
+            }
+          }),
+        )
+      : flatInserted;
+    res.json(scored.map((m) => formatModel(m, currentLandscapeVersion)));
   } catch (err) {
     req.log.error({ err }, "Error generating models");
     res.status(500).json({ error: "Failed to generate research models" });
@@ -2762,7 +2806,12 @@ router.get("/sessions/:id/models", async (req, res): Promise<void> => {
     .where(eq(researchModelsTable.sessionId, params.data.id))
     .orderBy(researchModelsTable.createdAt);
 
-  res.json(models.map(formatModel));
+  const [sess] = await db
+    .select({ landscapeMeta: sessionsTable.landscapeMeta })
+    .from(sessionsTable)
+    .where(eq(sessionsTable.id, params.data.id));
+  const currentLandscapeVersion = (sess?.landscapeMeta as { landscapeVersion?: number } | null)?.landscapeVersion ?? null;
+  res.json(models.map((m) => formatModel(m, currentLandscapeVersion)));
 });
 
 router.get("/sessions/:id/learning-stats", async (req, res): Promise<void> => {
@@ -2786,6 +2835,39 @@ router.get("/sessions/:id/learning-stats", async (req, res): Promise<void> => {
     withSelections: row?.withSel ?? 0,
     withEdits: row?.withEdits ?? 0,
   });
+});
+
+// Phase 2 Innovation Layer — manually recompute innovationMeta against the
+// CURRENT landscape version. Used (a) by the UI's "刷新评分" button when the
+// stale flag is set after a landscape rebuild, and (b) by the Phase 2
+// selftest script to validate scoring on existing models without
+// re-triggering full AI generation.
+//
+// Mounted under `/sessions/:id/...` so the global `loadAuthorizedSession`
+// middleware (in app.ts) gates ownership before we ever look up the model.
+// The extra `model.sessionId === sessionId` check defends against a caller
+// passing a foreign modelId under one of their own sessions.
+router.post("/sessions/:id/models/:modelId/recompute-innovation", async (req, res): Promise<void> => {
+  const sessionId = Number.parseInt(req.params.id, 10);
+  const modelId = Number.parseInt(req.params.modelId, 10);
+  if (!Number.isFinite(sessionId) || !Number.isFinite(modelId)) {
+    res.status(400).json({ error: "invalid id" });
+    return;
+  }
+  const [model] = await db.select().from(researchModelsTable).where(eq(researchModelsTable.id, modelId));
+  if (!model || model.sessionId !== sessionId) {
+    res.status(404).json({ error: "model not found" });
+    return;
+  }
+  try {
+    const snapshot = await loadLandscapeSnapshot(sessionId);
+    const meta = await computeInnovationMeta({ sessionId, model, log: req.log, snapshot });
+    await db.update(researchModelsTable).set({ innovationMeta: meta }).where(eq(researchModelsTable.id, modelId));
+    res.json(formatModel({ ...model, innovationMeta: meta }, snapshot.landscapeVersion));
+  } catch (err) {
+    req.log.error({ err, modelId }, "recompute-innovation failed");
+    res.status(500).json({ error: "innovation scoring failed" });
+  }
 });
 
 router.get("/models/:id", async (req, res): Promise<void> => {
