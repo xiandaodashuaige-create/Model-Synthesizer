@@ -1,5 +1,5 @@
 import { eq, and } from "drizzle-orm";
-import { db, variablesTable, papersTable, paperHypothesesTable } from "@workspace/db";
+import { db, variablesTable, papersTable, paperHypothesesTable, sessionsTable } from "@workspace/db";
 import { openai } from "@workspace/integrations-openai-ai-server";
 import { normalizeName } from "@workspace/canonicalize";
 import { logAiUsageFromOpenAI } from "./ai-usage.js";
@@ -8,6 +8,25 @@ import { CONSTRUCT_LAYERS } from "./theoryTemplates.js";
 
 type Paper = typeof papersTable.$inferSelect;
 type Variable = typeof variablesTable.$inferSelect;
+
+// Behavioral / applied-domain terms used as a server-side corroboration
+// signal for the SCOPE CHECK gate. A paper that names NONE of these in its
+// title/abstract AND emits NONE of them as variable constructs is unlikely
+// to belong to an applied behavioral session (consumer / user / live
+// commerce / human-AI interaction etc). Used only to confirm a high-confidence
+// out_of_scope verdict already issued by the AI — never to overrule an
+// in_scope verdict, so cross-domain theoretical-migration papers are safe.
+const BEHAVIORAL_DOMAIN_TERMS = [
+  "consumer", "customer", "user", "audience", "viewer", "shopper",
+  "behavior", "behaviour", "intention", "trust", "satisfaction",
+  "attitude", "perception", "perceived", "adoption", "engagement",
+  "loyalty", "experience", "purchase", "buying", "wtb", "wom",
+  "livestream", "live stream", "live-stream", "live commerce",
+  "streamer", "broadcaster", "influencer", "anchor",
+  "parasocial", "anthropomorph", "social presence", "warmth",
+];
+
+export type ScopeStatus = "in_scope" | "out_of_scope" | "uncertain";
 
 interface MinimalLogger {
   warn(obj: unknown, msg?: string): void;
@@ -80,19 +99,40 @@ function tryRepairTruncatedJson(raw: string): string | null {
   return head;
 }
 
-export function buildExtractionPrompt(paper: Paper): string {
+export function buildExtractionPrompt(paper: Paper, sessionTopic: string): string {
   const baseHeader = `Title: ${paper.title}\nAuthors: ${paper.authors.join(", ")} (${paper.year ?? "unknown year"})`;
   const paperContext = paper.fullText && paper.fullText.length > 500
     ? `${baseHeader}\nFull text (truncated to keep within token limits):\n${paper.fullText.slice(0, 30000)}`
     : `${baseHeader}\nAbstract: ${paper.abstract ?? "No abstract available"}`;
 
+  const topicBlock = sessionTopic && sessionTopic.trim().length > 0
+    ? sessionTopic.trim().slice(0, 600)
+    : "(no session topic provided)";
+
   return `You are a research methodology expert. Analyze this academic paper and extract BOTH (a) the research variables AND (b) every directional relationship the paper STATES between them.
+
+SESSION TOPIC:
+${topicBlock}
+
+STEP 0 — SCOPE CHECK (do this BEFORE extracting variables).
+Decide whether this paper is SUBSTANTIVELY about the session topic. Be strict:
+- Generic mention of "AI" is NOT enough. The paper must match the APPLIED context (e.g. an AI-broadcaster / live-commerce / consumer-behavior session needs an applied human-AI interaction or consumer paper — a distributed-systems / networking / hardware paper that happens to ship "for AI workloads" is NOT in scope).
+- A theoretical paper from a NEIGHBORING applied domain (e.g. a tourism / education / healthcare paper that uses constructs the topic also cares about, like trust or anthropomorphism) is "uncertain" — NOT out_of_scope. Cross-domain theoretical migration is valuable.
+- Only return "out_of_scope" when the paper's research object is in a clearly different field (engineering / networking / pure ML benchmarking / unrelated medicine etc) AND its variables would not plausibly inform the topic.
+If you return "out_of_scope", you MUST return variables: [] and hypotheses: []. Do NOT extract technical terms (algorithms, protocols, system components) as research variables.
 
 Paper:
 ${paperContext}
 
 Return ONLY this JSON (no markdown, no commentary):
 {
+  "scopeCheck": {
+    "status": "in_scope|out_of_scope|uncertain",
+    "confidence": 0-100,
+    "reason": "One short sentence explaining the verdict.",
+    "matchedTopicTerms": ["..."],
+    "mismatchedSignals": ["..."]
+  },
   "variables": [
     {
       "name": "Variable Name AS THIS PAPER USES IT — keep the domain qualifier (e.g. 'chatbot anthropomorphism', NOT 'anthropomorphism'; 'AI chatbot empathy', NOT 'empathy'; 'perceived chatbot competence', NOT 'competence'). Strip ONLY filler words like leading 'the/a/an'.",
@@ -193,12 +233,84 @@ Mini-example of the correct shape for a typical chatbot paper:
 NOTICE: the chatbot characteristics are kept as separate IV rows even though the paper "is really about" trust and intention. That is the correct behavior.`;
 }
 
+interface ParsedScopeCheck {
+  status?: string;
+  confidence?: number;
+  reason?: string;
+  matchedTopicTerms?: unknown;
+  mismatchedSignals?: unknown;
+}
+
 interface ParsedExtraction {
+  scopeCheck?: ParsedScopeCheck;
   variables?: Array<{ name: string; type: string; definition: string; citationText: string; canonicalConstruct?: string; constructLayer?: string }>;
   hypotheses?: Array<{ id: string; from: string; to: string; via?: string | null; relationship: string; statement: string; effectSize?: string | null; pageOrSection?: string | null }>;
   theoryBackbone?: Array<{ name?: string; role?: string; citationText?: string | null }>;
   statedGaps?: Array<{ type?: string; statement?: string; citationText?: string | null; pageOrSection?: string | null }>;
   studyContext?: { objectType?: string; sampleType?: string | null; geography?: string | null; platform?: string | null; modality?: string | null; language?: string | null };
+}
+
+// Server-side corroboration of the AI's scopeCheck verdict. We only
+// tangential-flag a paper when (a) the AI returned out_of_scope with
+// non-trivial confidence AND (b) at least one independent signal agrees.
+// "uncertain" never tangential-flags. "in_scope" is always trusted.
+function assessTopicScope(parsed: ParsedExtraction, paper: Paper): {
+  tangential: boolean;
+  scopeStatus: ScopeStatus;
+  scopeScore: number;
+  tangentialReason: string | null;
+} {
+  const sc = parsed.scopeCheck ?? {};
+  const rawStatus = typeof sc.status === "string" ? sc.status.trim().toLowerCase() : "";
+  const aiStatus: ScopeStatus = rawStatus === "in_scope" || rawStatus === "out_of_scope" ? rawStatus : "uncertain";
+  const rawConf = typeof sc.confidence === "number" && Number.isFinite(sc.confidence) ? sc.confidence : 50;
+  const aiScore = Math.max(0, Math.min(100, Math.round(rawConf)));
+  const reason = typeof sc.reason === "string" ? sc.reason.trim().slice(0, 280) : null;
+
+  if (aiStatus !== "out_of_scope") {
+    return { tangential: false, scopeStatus: aiStatus, scopeScore: aiScore, tangentialReason: null };
+  }
+
+  // High-confidence out_of_scope corroboration. Lowercase haystacks.
+  const titleAbs = `${paper.title} ${paper.abstract ?? ""}`.toLowerCase();
+  const vars = Array.isArray(parsed.variables) ? parsed.variables : [];
+  const varText = vars
+    .map((v) => `${v?.name ?? ""} ${v?.canonicalConstruct ?? ""}`)
+    .join(" ")
+    .toLowerCase();
+  const objectType = (parsed.studyContext?.objectType ?? "").toLowerCase().trim();
+
+  const titleHasBehavioral = BEHAVIORAL_DOMAIN_TERMS.some((t) => titleAbs.includes(t));
+  const varsHaveBehavioral = BEHAVIORAL_DOMAIN_TERMS.some((t) => varText.includes(t));
+  // engineering / system signals that strongly suggest a non-applied paper
+  const ENGINEERING_RE = /(allgather|broadcast protocol|smartnic|gpu kernel|throughput|latency budget|fpga|asic|tcp|rdma|kernel-bypass|distributed training|sharded|fsdp|allreduce|bandwidth-optimal|inference engine|tensor parallel|model parallel)/i;
+  const objectIsEngineering = /(distributed|network|protocol|hardware|kernel|compiler|database system|operating system|nic\b|smartnic)/.test(objectType)
+    || ENGINEERING_RE.test(`${paper.title} ${paper.abstract ?? ""}`);
+
+  // Multi-signal: AI says OOS AND at least one of (no behavioral terms in title/abstract,
+  // no behavioral terms in extracted vars, engineering objectType).
+  const corroborated = (!titleHasBehavioral && !varsHaveBehavioral) || objectIsEngineering || (!titleHasBehavioral && objectIsEngineering);
+  const highConfidence = aiScore >= 60; // AI's own confidence in its OOS verdict
+
+  if (corroborated && highConfidence) {
+    return {
+      tangential: true,
+      scopeStatus: "out_of_scope",
+      // Persist the AI's actual confidence in its OOS verdict so audit / threshold
+      // checks downstream can interpret >=60 as "high-confidence out-of-scope".
+      scopeScore: aiScore,
+      tangentialReason: reason ?? "Out-of-scope: paper sits in an engineering / non-applied domain with no behavioral constructs.",
+    };
+  }
+
+  // AI said OOS but corroboration weak — downgrade to uncertain so we keep the
+  // paper but surface the verdict to reviewers.
+  return {
+    tangential: false,
+    scopeStatus: "uncertain",
+    scopeScore: aiScore,
+    tangentialReason: null,
+  };
 }
 
 export interface ExtractionResult {
@@ -215,13 +327,26 @@ export interface ExtractionResult {
     language: string | null;
   } | null;
   parseRecovered: boolean;
+  scope: {
+    tangential: boolean;
+    scopeStatus: ScopeStatus;
+    scopeScore: number;
+    tangentialReason: string | null;
+  };
 }
 
 export async function extractAndStorePaperVariables(
   paper: Paper,
   log: MinimalLogger,
 ): Promise<ExtractionResult> {
-  const prompt = buildExtractionPrompt(paper);
+  // Load the session topic so the SCOPE CHECK gate can compare against it.
+  // Done inside this function to avoid a signature change at every caller.
+  const [session] = await db.select({ topic: sessionsTable.topic })
+    .from(sessionsTable)
+    .where(eq(sessionsTable.id, paper.sessionId))
+    .limit(1);
+  const sessionTopic = session?.topic ?? "";
+  const prompt = buildExtractionPrompt(paper, sessionTopic);
 
   let completion;
   try {
@@ -268,6 +393,46 @@ export async function extractAndStorePaperVariables(
 
   const extractedVars = Array.isArray(parsed.variables) ? parsed.variables : [];
   const extractedHyps = Array.isArray(parsed.hypotheses) ? parsed.hypotheses : [];
+
+  // SCOPE CHECK gate (three-state, server-corroborated). When the AI flags
+  // a paper as high-confidence out_of_scope AND independent server signals
+  // agree, we mark it tangential: extracted="true", variables=[],
+  // hypotheses=[], so it is filtered from landscape / model-generation /
+  // paper-count downstream and never re-attacked by the "extract all" loop.
+  // Uncertain verdicts and weakly-corroborated OOS verdicts fall through
+  // and follow the normal extraction path.
+  const scope = assessTopicScope(parsed, paper);
+  if (scope.tangential) {
+    await db.transaction(async (tx) => {
+      await tx.delete(variablesTable).where(and(eq(variablesTable.paperId, paper.id), eq(variablesTable.sessionId, paper.sessionId)));
+      await tx.delete(paperHypothesesTable).where(and(eq(paperHypothesesTable.paperId, paper.id), eq(paperHypothesesTable.sessionId, paper.sessionId)));
+      await tx.update(papersTable).set({
+        extracted: "true",
+        theoryBackbone: [],
+        statedGaps: [],
+        studyContext: null,
+        tangential: true,
+        tangentialReason: scope.tangentialReason,
+        scopeStatus: scope.scopeStatus,
+        scopeScore: scope.scopeScore,
+      }).where(eq(papersTable.id, paper.id));
+    });
+    // Rebuild landscape so any prior in-scope rows from this paper are dropped.
+    scheduleLandscapeRebuild(paper.sessionId);
+    log.warn(
+      { paperId: paper.id, sessionId: paper.sessionId, title: paper.title, scopeScore: scope.scopeScore, reason: scope.tangentialReason },
+      "Paper flagged tangential by scope check — extraction skipped",
+    );
+    return {
+      insertedVariables: [],
+      hypothesesInsertedCount: 0,
+      theoryBackbone: [],
+      statedGaps: [],
+      studyContext: null,
+      parseRecovered,
+      scope,
+    };
+  }
 
   if (extractedVars.length === 0) {
     throw new ExtractionError("no_variables", "这篇论文里没有可识别的研究变量（多见于综述、技术应用类或非实证论文）。", 422);
@@ -383,6 +548,13 @@ export async function extractAndStorePaperVariables(
       theoryBackbone: cleanTheoryBackbone,
       statedGaps: cleanStatedGaps,
       studyContext: cleanStudyContext,
+      // A paper that just passed the scope gate is, by definition, no longer
+      // tangential. Clear any prior tangential mark in case the same paper
+      // had been flagged on an earlier extraction.
+      tangential: false,
+      tangentialReason: null,
+      scopeStatus: scope.scopeStatus,
+      scopeScore: scope.scopeScore,
     }).where(eq(papersTable.id, paper.id));
     return insertedRows;
   });
@@ -396,5 +568,6 @@ export async function extractAndStorePaperVariables(
     statedGaps: cleanStatedGaps,
     studyContext: cleanStudyContext,
     parseRecovered,
+    scope,
   };
 }

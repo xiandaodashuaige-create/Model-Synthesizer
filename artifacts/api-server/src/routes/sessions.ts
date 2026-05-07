@@ -17,7 +17,12 @@ const router: IRouter = Router();
 // externalId starting with "manual:" (see routes/variables.ts). It must not
 // be counted in the public "X 篇论文" counter, so every paper-count query in
 // this file filters it out via this SQL fragment.
-const NOT_MANUAL_PAPER = sql`${papersTable.externalId} NOT LIKE 'manual:%'`;
+//
+// Tangential papers (Phase 1 scope-check gate, see lib/paper-extraction.ts)
+// are also excluded from the public corpus count: they remain visible in the
+// papers list but produce no variables / hypotheses, so counting them would
+// inflate "X 篇论文" with off-topic papers the AI explicitly rejected.
+const NOT_MANUAL_PAPER = sql`${papersTable.externalId} NOT LIKE 'manual:%' AND ${papersTable.tangential} IS NOT TRUE`;
 
 function buildSessionWithCounts(session: typeof sessionsTable.$inferSelect, paperCount: number, variableCount: number, modelCount: number) {
   return {

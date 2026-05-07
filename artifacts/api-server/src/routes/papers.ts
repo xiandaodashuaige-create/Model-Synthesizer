@@ -598,6 +598,9 @@ router.get("/sessions/:id/papers", async (req, res): Promise<void> => {
   res.json(
     papers
       .filter((p) => !p.externalId.startsWith("manual:"))
+      // Tangential papers (Phase 1 scope-check gate) are still listed —
+      // the UI can show a "tangential" badge — but never counted as in-corpus.
+      // The list endpoint keeps them visible so users can audit the verdict.
       .map(formatPaper),
   );
 });

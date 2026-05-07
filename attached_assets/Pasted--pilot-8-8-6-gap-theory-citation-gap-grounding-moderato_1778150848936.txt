@@ -1,0 +1,140 @@
+这次 pilot 结果整体很好：
+8/8 成功；
+6 类 gap 全覆盖；
+theory citation / gap grounding 基本可靠；
+moderator / mediator 元数据保留正常；
+只有 1 个 theory name grounding 可疑；
+真实长文、仅摘要、实验、SEM、综述、中文情境都覆盖了。
+但是 paper 37 off-topic 未拒绝是 Phase 1 进入全量前必须修的 blocker。
+原因很简单：
+如果一篇“分布式 AI 网络通信论文”能被抽成 14 个变量、9 条关系，它会污染：
+variables 表；
+construct relationships；
+theory clusters；
+gap report；
+noveltyScore；
+Phase 2 的创新分类。
+所以不能带着这个问题全量跑。
+我建议的决策
+选 A+B
+不要只做 A。
+只靠 prompt gate 不够稳。
+也不要只做 B。
+只靠服务端关键词硬拦截容易误伤跨领域理论迁移论文。
+最稳是：
+A：模型先判断是否贴合 session topic
+B：服务端再做保守兜底
+但 B 需要调整
+你现在说：
+studyContext.objectType × session topic 关键词不兼容就整篇丢弃。
+这个方向对，但我建议不要只看 objectType。
+因为 objectType 本身也是 AI 抽出来的，可能：
+空；
+太泛；
+抽错；
+或者相关论文用了不同术语。
+建议 B 变成：
+topic relevance gate
+综合判断：
+session topic；
+paper title；
+abstract / fullText 前 3000 字；
+extracted studyContext；
+extracted variables；
+objectType；
+key domain terms。
+输出三态：
+scopeStatus: "in_scope" | "out_of_scope" | "uncertain"
+scopeScore: 0-100
+tangentialReason: string | null
+只在高置信 out_of_scope 时丢弃：
+if scopeStatus === "out_of_scope" && scopeScore < 30
+不要对 uncertain 硬拒。
+不建议设置 extracted=false
+你计划里说：
+写 extracted=false 并标记 tangential=true
+我不建议这样做。
+因为如果 extracted=false，系统可能在“一键提取”时反复尝试它，导致循环重抽。
+更好的状态是：
+extracted = "true"
+tangential = true
+variables = []
+hypotheses = []
+或者更规范：
+extractionStatus:
+  pending | extracted | no_variables | tangential | failed
+如果暂时不想大改 schema，就至少：
+extracted = "true"
+tangential = true
+tangentialReason = "..."
+然后所有 landscape / model generation / paper count 逻辑都过滤：
+where tangential != true
+A 的 prompt gate 建议
+在提取 prompt 顶部加：
+SESSION TOPIC:
+{session.topic}
+Before extracting variables, decide whether this paper is substantively about the session topic.
+Return:
+{
+  "scopeCheck": {
+    "status": "in_scope|out_of_scope|uncertain",
+    "reason": "...",
+    "matchedTopicTerms": [],
+    "mismatchedSignals": []
+  },
+  ...
+}
+If out_of_scope, return variables=[], hypotheses=[], and do not extract technical terms as research variables.
+特别强调：
+Do not treat generic "AI" as enough. 
+The paper must match the applied research context, e.g. AI streamer / live commerce / consumer behavior / information overload.
+这句话非常重要。paper 37 就是“有 AI 但不是你的 AI 主播研究”。
+B 的服务端兜底建议
+不要只做简单关键词交集。建议做一个保守规则：
+高置信 out-of-scope 条件
+满足以下多项才拒绝：
+1. title/abstract 没有 session topic 核心词；
+2. extracted objectType 与 topic domain 不兼容；
+3. extracted variables 主要是工程/算法/网络/系统性能类；
+4. 没有任何 consumer/user/behavior/intention/trust/purchase/live commerce 相关构念；
+5. scopeCheck.status = out_of_scope。
+对 paper 37 这种：
+Network-Offloaded Bandwidth-Optimal Broadcast and Allgather for Distributed AI
+应该很容易挡住。
+全量重抽前的推荐流程
+我建议下一步严格按这个顺序：
+1. 实现 A+B；
+2. 单独重跑 paper 37；
+3. 确认 paper 37 = tangential / no_variables；
+4. 重跑 pilot 8 篇；
+5. 确认其他 7 篇不被误伤；
+6. 再全量 50 篇；
+7. 重建 landscape；
+8. 再进入 Phase 2。
+不要跳过第 4 步。
+因为 B 如果太硬，最容易误杀那些“理论迁移型论文”。
+是否现在全量重抽？
+我的建议：不现在重抽。
+理由：
+当前 pilot 证明提取能力可用；
+但也证明 off-topic 防线有漏洞；
+全量重抽会把漏洞扩大；
+修复后再跑的成本也不高。
+所以：
+先修 paper 37，再全量。
+对 pilot 结果的最终判断
+可以认为 Phase 1 extraction quality 通过
+除了 off-topic 问题，其他指标已经很强：
+gap grounding 好；
+theory grounding 好；
+context 抽取好；
+metadata 保留好；
+mediation/moderation 可支撑 Phase 2。
+但 Phase 1 landscape readiness 还差一个门控修复
+也就是：
+tangential paper governance
+这修完，Phase 1 才能放心全量落地。
+我的拍板建议
+我建议你回复执行方：
+同意按 A+B 推进，但 B 不要只用 objectType 硬匹配，要做三态 scopeStatus：in_scope / out_of_scope / uncertain。只有高置信 out_of_scope 才 tangential。不要设置 extracted=false，避免反复重抽；应设置 tangential=true 并从 landscape/model generation 过滤。先单独验证 paper 37，再重跑 8 篇 pilot，确认其他 7 篇不被误伤，然后再全量 50 篇。
+一句话：A+B 批准；全量重抽暂缓；paper 37 修复验证通过后再跑全量。

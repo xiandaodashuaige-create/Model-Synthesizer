@@ -178,7 +178,7 @@ router.post("/sessions/:id/model-assistant", async (req, res) => {
     // Skip the per-session "manual:" sentinel paper (see routes/variables.ts) —
     // it carries no abstract / fullText and would only inflate paper counts and
     // assistant prompt context with placeholder rows.
-    db.select().from(papersTable).where(and(eq(papersTable.sessionId, sessionId), sql`${papersTable.externalId} NOT LIKE 'manual:%'`)),
+    db.select().from(papersTable).where(and(eq(papersTable.sessionId, sessionId), sql`${papersTable.externalId} NOT LIKE 'manual:%' AND ${papersTable.tangential} IS NOT TRUE`)),
     db.select().from(variablesTable).where(eq(variablesTable.sessionId, sessionId)),
     db.select().from(researchModelsTable).where(eq(researchModelsTable.sessionId, sessionId)),
     db.select({ topic: sessionsTable.topic, name: sessionsTable.name }).from(sessionsTable).where(eq(sessionsTable.id, sessionId)).limit(1),
@@ -844,7 +844,7 @@ async function loadSessionImageCtx(sessionId: number): Promise<SessionImageCtx |
     const [sessionRow, vars, papers] = await Promise.all([
       db.select({ topic: sessionsTable.topic }).from(sessionsTable).where(eq(sessionsTable.id, sessionId)).limit(1),
       db.select({ name: variablesTable.name }).from(variablesTable).where(eq(variablesTable.sessionId, sessionId)),
-      db.select({ title: papersTable.title }).from(papersTable).where(and(eq(papersTable.sessionId, sessionId), sql`${papersTable.externalId} NOT LIKE 'manual:%'`)),
+      db.select({ title: papersTable.title }).from(papersTable).where(and(eq(papersTable.sessionId, sessionId), sql`${papersTable.externalId} NOT LIKE 'manual:%' AND ${papersTable.tangential} IS NOT TRUE`)),
     ]);
     const topic = sessionRow[0]?.topic?.trim() || null;
     return {

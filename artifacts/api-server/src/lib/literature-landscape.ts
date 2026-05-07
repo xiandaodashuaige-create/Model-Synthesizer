@@ -289,7 +289,12 @@ export async function rebuildLandscape(sessionId: number): Promise<{
   const papers = await db.select().from(papersTable).where(eq(papersTable.sessionId, sessionId));
   // Filter out the per-session sentinel paper used by manual variables — it
   // never carries hypotheses and would only pollute domain counts.
-  const realPapers = papers.filter((p) => !p.externalId.startsWith("manual:"));
+  // Drop both the manual-variable sentinel AND any paper flagged tangential
+  // by the Phase 1 scope-check gate. Tangential papers carry no variables /
+  // hypotheses by construction (lib/paper-extraction.ts), so this is a
+  // belt-and-suspenders filter that also excludes them from theory-cluster
+  // and paperCount aggregates in landscapeMeta.
+  const realPapers = papers.filter((p) => !p.externalId.startsWith("manual:") && p.tangential !== true);
   const papersById = new Map(realPapers.map((p) => [p.id, p]));
 
   const hypotheses = await db.select().from(paperHypothesesTable).where(eq(paperHypothesesTable.sessionId, sessionId));

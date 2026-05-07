@@ -6,7 +6,7 @@
 //
 // Used by both the candidate-model and live-model evidence-search endpoints.
 
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { db, papersTable } from "@workspace/db";
 import { openai } from "@workspace/integrations-openai-ai-server";
 
@@ -289,7 +289,14 @@ async function loadLibraryCandidates(sessionId: number): Promise<LibCandidate[]>
   const rows = await db
     .select()
     .from(papersTable)
-    .where(eq(papersTable.sessionId, sessionId))
+    .where(
+      and(
+        eq(papersTable.sessionId, sessionId),
+        // Exclude the per-session manual-additions sentinel paper and any
+        // out-of-scope (tangential) papers — neither belongs in evidence search.
+        sql`${papersTable.externalId} NOT LIKE 'manual:%' AND ${papersTable.tangential} IS NOT TRUE`,
+      ),
+    )
     .limit(LIBRARY_CAP);
   return rows.map((p) => {
     // Prefer the first ~2000 chars of fullText (PDF body) over the abstract:

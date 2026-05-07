@@ -1,4 +1,4 @@
-import { pgTable, text, serial, timestamp, integer, jsonb, varchar } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, timestamp, integer, jsonb, varchar, boolean } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { usersTable } from "./auth";
@@ -75,6 +75,31 @@ export const papersTable = pgTable("papers", {
   theoryBackbone: jsonb("theory_backbone"),
   statedGaps: jsonb("stated_gaps"),
   studyContext: jsonb("study_context"),
+  // Innovation Layer Phase 1+ — tangential-paper governance.
+  //
+  // The extraction prompt now performs a SCOPE CHECK against the session's
+  // topic and emits a three-state scopeStatus. When the AI returns a
+  // high-confidence "out_of_scope" verdict AND the server-side corroboration
+  // gate (multi-signal: title/abstract terms, objectType, variable shape,
+  // canonical-construct overlap) agrees, the paper is marked tangential.
+  //
+  // Tangential papers are NOT re-extracted: extracted stays "true" and
+  // variables/hypotheses arrays are written empty so the on-demand "extract
+  // all" loop never re-attacks them. They remain visible in the papers list
+  // but are filtered out of every "real literature" read site (landscape
+  // rebuild, model generation, paper count, personalization), in lock-step
+  // with the existing manual:%-sentinel filter.
+  //
+  // - tangential: true means "drop from corpus" (high-confidence out-of-scope).
+  // - scopeStatus: "in_scope" | "out_of_scope" | "uncertain" — kept verbatim
+  //   from the AI's scopeCheck even when we DON'T tangential-flag (so a
+  //   reviewer can audit borderline calls).
+  // - scopeScore: 0–100 confidence of the scopeStatus verdict.
+  // - tangentialReason: short human-readable rationale for the UI badge.
+  tangential: boolean("tangential").notNull().default(false),
+  tangentialReason: text("tangential_reason"),
+  scopeStatus: text("scope_status"),
+  scopeScore: integer("scope_score"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

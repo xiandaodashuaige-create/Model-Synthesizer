@@ -32,7 +32,7 @@ async function main(): Promise<void> {
   // Pull the summary metrics.
   const summary = await db.execute(sql`
     with s as (select * from sessions where id = ${sessionId}),
-         p as (select * from papers where session_id = ${sessionId} and external_id not like 'manual:%'),
+         p as (select * from papers where session_id = ${sessionId} and external_id not like 'manual:%' and tangential is not true),
          pall as (select * from papers where session_id = ${sessionId}),
          h as (select * from paper_hypotheses where session_id = ${sessionId}),
          cr as (select * from construct_relationships where session_id = ${sessionId})
@@ -112,7 +112,7 @@ async function main(): Promise<void> {
   const paperSample = await db.execute(sql`
     select id, external_id, year, study_context, theory_backbone, stated_gaps
     from papers
-    where session_id = ${sessionId} and external_id not like 'manual:%'
+    where session_id = ${sessionId} and external_id not like 'manual:%' and tangential is not true
     order by random()
     limit 3
   `);
