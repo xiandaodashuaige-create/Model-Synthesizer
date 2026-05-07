@@ -1013,9 +1013,20 @@ router.post("/sessions/:id/model-assistant/search-model-images", async (req, res
     } else {
       const aiQueries = await expandQueriesWithAI(rawQuery, sessionCtx, { sessionId: params.data.id, userId: req.user?.id ?? null });
       // Always include the user's literal phrase too, in case the AI dropped a
-      // critical token. Quote multi-word user input.
-      const quoted = /\s/.test(rawQuery) && !/^".*"$/.test(rawQuery) ? `"${rawQuery}"` : rawQuery;
-      expandedQueries = [...aiQueries, quoted];
+      // critical token. BUT: if the user pasted a long thesis title (>10
+      // words), quoting it produces a 25+ word phrase search that matches
+      // nothing useful on Google Images. In that case we compact to first 8
+      // lowercase content words (same `compactDistilledQuery` rules used by
+      // the chat opening nudge) so the literal fallback is still searchable.
+      const wordCount = rawQuery.split(/\s+/).filter(Boolean).length;
+      let literalFallback: string;
+      if (wordCount > 10) {
+        const compacted = compactDistilledQuery(rawQuery);
+        literalFallback = compacted ?? rawQuery.split(/\s+/).slice(0, 8).join(" ");
+      } else {
+        literalFallback = /\s/.test(rawQuery) && !/^".*"$/.test(rawQuery) ? `"${rawQuery}"` : rawQuery;
+      }
+      expandedQueries = [...aiQueries, literalFallback];
       // Dedupe (case-insensitive) while preserving order.
       const seen = new Set<string>();
       expandedQueries = expandedQueries.filter((q) => {

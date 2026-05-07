@@ -410,6 +410,13 @@ ${edgeLines || "      (none)"}`;
 }
 
 router.post("/sessions/:id/models/generate", async (req, res): Promise<void> => {
+  // Wall-clock anchor for the ENTIRE request — moved to the top of the route
+  // (was previously set just before the parallel fanout, missing ~5-10s of
+  // pre-call work like DB loads, chat history fetch, prompt construction).
+  // Replit autoscale kills the request at 60s no matter what we're doing,
+  // so all downstream timeout decisions key off this anchor.
+  const tRouteStart = Date.now();
+  const ROUTE_DEADLINE_MS = 52_000; // hard cap; leaves ~8s for response serialization + autoscale headroom
   const params = GenerateModelsParams.safeParse(req.params);
   if (!params.success) {
     res.status(400).json({ error: params.error.message });
@@ -1150,7 +1157,19 @@ OUTPUT FORMAT — return a JSON object with key "models" containing an array of 
   // batch on one slow call.
   type GeneratedModel = { operator?: string; secondaryOperator?: string; basePaperTags?: string[]; backbone?: string; name: string; description: string; rationale: string; nodes: ModelNode[]; edges: ModelEdge[] };
   let generated: GeneratedModel[] = [];
-  const callTimeoutMs = PARALLEL_MODE ? 50_000 : 55_000;
+  // Per-call timeout sized DYNAMICALLY against remaining route budget. We need
+  // ~8s reserved for post-call work (validate + N-row DB inserts + serialize)
+  // BEFORE the autoscale 60s wall hits. Floor at 18s so we never give the AI
+  // a budget so small it deterministically times out; cap at 42s parallel /
+  // 48s serial so individual calls can't monopolise the deadline.
+  const elapsedBeforeFanout = Date.now() - tRouteStart;
+  const remainingForFanout = Math.max(0, ROUTE_DEADLINE_MS - elapsedBeforeFanout - 8_000);
+  const callTimeoutMs = PARALLEL_MODE
+    ? Math.max(18_000, Math.min(42_000, remainingForFanout))
+    : Math.max(18_000, Math.min(48_000, remainingForFanout));
+  if (elapsedBeforeFanout > ROUTE_DEADLINE_MS - 18_000) {
+    req.log.warn({ sessionId, elapsedBeforeFanout, ROUTE_DEADLINE_MS }, "Pre-fanout work consumed nearly all route budget — generation almost certainly times out");
+  }
   // gpt-5.4 is a reasoning model: hidden chain-of-thought tokens count
   // against `max_completion_tokens` along with the visible output. With a
   // ~25-30k token prompt, reasoning can eat 3-4k tokens before JSON even
@@ -1159,7 +1178,21 @@ OUTPUT FORMAT — return a JSON object with key "models" containing an array of 
   // well under proxy per-request limits.
   const perCallMaxTokens = 12_000;
 
-  const callOpenAI = async (variantIdx: number) => {
+  const callCount = PARALLEL_MODE ? numModels : 1;
+
+  // Per-call AbortControllers so we can cancel pending calls early when the
+  // route-level deadline fires (see deadlineTimer below). This is the
+  // critical fix for "the slowest of N calls forces us to wait the full
+  // callTimeoutMs even when N-1 already succeeded": once we hit 80% of the
+  // route deadline AND have ≥1 success, the rest get aborted and we proceed
+  // with partial results — strictly better than blowing the autoscale wall.
+  const controllers = Array.from({ length: callCount }, () => new AbortController());
+
+  const callOpenAI = async (variantIdx: number, ctrl: AbortController) => {
+    // Compose per-call timeout AND the route-deadline-cancel signal so either
+    // can interrupt the in-flight fetch. AbortSignal.any is Node 20.3+; the
+    // dev/runtime image is on Node 20.x.
+    const signal = AbortSignal.any([AbortSignal.timeout(callTimeoutMs), ctrl.signal]);
     const completion = await openai.chat.completions.create(
       {
         model: "gpt-5.4",
@@ -1173,21 +1206,43 @@ OUTPUT FORMAT — return a JSON object with key "models" containing an array of 
         response_format: { type: "json_object" },
         messages: [{ role: "user", content: buildPrompt(variantSeedFor(variantIdx)) }],
       },
-      { signal: AbortSignal.timeout(callTimeoutMs) },
+      { signal },
     );
     logAiUsageFromOpenAI(completion, { route: "models/generate", sessionId, userId: req.user?.id ?? null });
     return completion;
   };
 
-  const callCount = PARALLEL_MODE ? numModels : 1;
-  // Track route-level wall-clock so the permissive retry below can self-skip
-  // when there's no time left in the 60s autoscale budget. Without this guard,
-  // a slow first round (~50s) + a 25s retry would deterministically blow the
-  // budget and the user would get a platform 502 instead of our targeted error.
-  const tRouteStart = Date.now();
-  const settled = await Promise.allSettled(
-    Array.from({ length: callCount }, (_, i) => callOpenAI(i)),
+  // Deadline race: track fulfillments as they arrive; once we have ≥1 success
+  // AND wall-clock is past 80% of route budget, abort the rest. Also fire a
+  // hard abort at exactly the route deadline so a slow last call cannot push
+  // us into a platform-level 502.
+  let fulfilledCount = 0;
+  const earlyBailAt = tRouteStart + Math.floor(ROUTE_DEADLINE_MS * 0.8);
+  const hardDeadlineAt = tRouteStart + ROUTE_DEADLINE_MS;
+  const wrapped = controllers.map((ctrl, i) => callOpenAI(i, ctrl).then(
+    (v) => { fulfilledCount++; return { ok: true as const, v, i }; },
+    (e) => ({ ok: false as const, e, i }),
+  ));
+  const earlyBailPoll = setInterval(() => {
+    const now = Date.now();
+    if (now >= hardDeadlineAt) {
+      for (const c of controllers) if (!c.signal.aborted) c.abort(new Error("route hard deadline"));
+      clearInterval(earlyBailPoll);
+      return;
+    }
+    if (fulfilledCount >= 1 && now >= earlyBailAt) {
+      for (const c of controllers) if (!c.signal.aborted) c.abort(new Error("route early-bail deadline (have ≥1 success)"));
+      clearInterval(earlyBailPoll);
+    }
+  }, 500);
+  const wrappedResults = await Promise.all(wrapped);
+  clearInterval(earlyBailPoll);
+  const settled: Array<PromiseSettledResult<Awaited<ReturnType<typeof callOpenAI>>>> = wrappedResults.map((r) =>
+    r.ok
+      ? ({ status: "fulfilled", value: r.v } as PromiseFulfilledResult<Awaited<ReturnType<typeof callOpenAI>>>)
+      : ({ status: "rejected", reason: r.e } as PromiseRejectedResult),
   );
+  req.log.info({ sessionId, fulfilledCount, callCount, fanoutMs: Date.now() - (tRouteStart + elapsedBeforeFanout), totalMs: Date.now() - tRouteStart }, "Model-generation fanout settled");
   scheduleProfileRefresh(req.user?.id, sessionId);
 
   const fulfilled = settled.filter((s): s is PromiseFulfilledResult<Awaited<ReturnType<typeof callOpenAI>>> => s.status === "fulfilled");
