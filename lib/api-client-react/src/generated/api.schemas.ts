@@ -28,6 +28,8 @@ export type AiUsageSummaryByRouteItem = {
   completionTokens: number;
   totalTokens: number;
   costUsd: number;
+  flagshipCostUsd: number;
+  savedCostUsd: number;
 };
 
 export interface AiUsageSummary {
@@ -36,6 +38,10 @@ export interface AiUsageSummary {
   totalCompletionTokens: number;
   totalTokens: number;
   totalCostUsd: number;
+  /** Hypothetical USD cost if every call had been billed at the flagship gpt-5.4 rate. */
+  flagshipCostUsd: number;
+  /** USD saved by routing eligible tasks to cheaper models (flagship − actual, clamped at 0). */
+  savedCostUsd: number;
   byRoute: AiUsageSummaryByRouteItem[];
 }
 

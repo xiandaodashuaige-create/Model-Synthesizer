@@ -72,17 +72,26 @@ export function AiUsagePanel({ sessionId }: { sessionId: number }) {
   const totalCost = usage?.totalCostUsd ?? 0;
   const totalCalls = usage?.totalCalls ?? 0;
   const totalTokens = usage?.totalTokens ?? 0;
+  const totalSaved = usage?.savedCostUsd ?? 0;
   const paperCount = summary?.paperCount ?? 0;
   const variableCount = summary?.variableCount ?? 0;
   const modelCount = summary?.modelCount ?? 0;
   const laborHours = paperCount * HOURS_PER_PAPER + variableCount * HOURS_PER_VARIABLE + modelCount * HOURS_PER_MODEL;
   const panelId = `ai-usage-panel-body-${sessionId}`;
+  const hasSavings = totalSaved > 0;
 
-  // Header byline switches with mode: value-mode shows what the user GOT
-  // (papers, variables, models, labor-hour estimate); dev-mode shows what was
-  // SPENT (cost, tokens, calls). Both are real numbers, not inflated.
-  const valueByline = `${paperCount} ${t("usage.value.papers" as any)} · ${variableCount} ${t("usage.value.variables" as any)} · ${modelCount} ${t("usage.value.models" as any)} · ≈${laborHours.toFixed(1)}h`;
-  const costByline = !usageLoading && !usageError && usage
+  // Header byline ALWAYS includes the credits-spent + credits-saved tail when
+  // the cost figure has loaded, regardless of dev-mode. The previous design
+  // hid both numbers behind a checkbox so the project owner couldn't see
+  // what they were spending without two clicks. Keep dev-mode as the toggle
+  // for the per-route cost breakdown, but make the headline numbers public.
+  const haveCost = !usageLoading && !usageError && !!usage;
+  const moneyTail = haveCost
+    ? ` · ${fmtCredits(totalCost)} ${t("usage.credits.unit" as any)}` +
+      (hasSavings ? ` (−${fmtCredits(totalSaved)})` : "")
+    : "";
+  const valueByline = `${paperCount} ${t("usage.value.papers" as any)} · ${variableCount} ${t("usage.value.variables" as any)} · ${modelCount} ${t("usage.value.models" as any)} · ≈${laborHours.toFixed(1)}h${moneyTail}`;
+  const costByline = haveCost
     ? `${fmtCredits(totalCost)} ${t("usage.credits.unit" as any)} · ${fmtNum(totalTokens)} ${t("usage.tokens" as any)} · ${totalCalls} ${t("usage.calls" as any)}`
     : "";
 
@@ -130,18 +139,42 @@ export function AiUsagePanel({ sessionId }: { sessionId: number }) {
             </label>
           </div>
 
-          {/* Value dashboard — what the AI produced for this project. Always
-              visible. The numbers come straight from the session summary so
-              they match the counts everywhere else in the app. */}
+          {/* Value dashboard — what the AI produced for this project, what it
+              cost in credits, and how many credits were saved by routing easy
+              tasks to a cheaper model. The "credits saved" tile is the
+              user-facing surface of the per-route model downgrades; without it
+              the savings are invisible to anyone who doesn't open dev mode. */}
           {!devMode && (
-            <div data-testid="ai-usage-value-grid" className="grid grid-cols-2 gap-2 text-xs">
-              <ValueTile label={t("usage.value.papers" as any) as string} value={String(paperCount)} />
-              <ValueTile label={t("usage.value.variables" as any) as string} value={String(variableCount)} />
-              <ValueTile label={t("usage.value.models" as any) as string} value={String(modelCount)} />
-              <ValueTile label={t("usage.value.laborHours" as any) as string} value={`≈${laborHours.toFixed(1)}h`} />
-              <div className="col-span-2 text-[11px] text-muted-foreground leading-snug pt-1">
-                {t("usage.value.formula" as any)}
+            <div data-testid="ai-usage-value-grid" className="space-y-2">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
+                <ValueTile label={t("usage.value.papers" as any) as string} value={String(paperCount)} />
+                <ValueTile label={t("usage.value.variables" as any) as string} value={String(variableCount)} />
+                <ValueTile label={t("usage.value.models" as any) as string} value={String(modelCount)} />
+                <ValueTile label={t("usage.value.laborHours" as any) as string} value={`≈${laborHours.toFixed(1)}h`} />
+                <ValueTile
+                  label={t("usage.value.spent" as any) as string}
+                  value={haveCost ? fmtCredits(totalCost) : "—"}
+                  testId="ai-usage-spent"
+                />
+                <ValueTile
+                  label={t("usage.value.saved" as any) as string}
+                  value={haveCost ? (hasSavings ? `+${fmtCredits(totalSaved)}` : "0") : "—"}
+                  accent={hasSavings ? "success" : "muted"}
+                  testId="ai-usage-saved"
+                />
               </div>
+              {/* Only show the savings explainer once cost has actually loaded.
+                  During loading/error the tile reads "—", so emitting "nothing
+                  saved" copy here would mislead the user into thinking the
+                  savings are zero rather than not yet computed. */}
+              {haveCost && (
+                <p className="text-[11px] text-muted-foreground leading-snug">
+                  {hasSavings ? t("usage.value.savedHint" as any) : t("usage.value.noSaved" as any)}
+                </p>
+              )}
+              <p className="text-[11px] text-muted-foreground leading-snug">
+                {t("usage.value.formula" as any)}
+              </p>
             </div>
           )}
 
@@ -198,11 +231,25 @@ export function AiUsagePanel({ sessionId }: { sessionId: number }) {
   );
 }
 
-function ValueTile({ label, value }: { label: string; value: string }) {
+function ValueTile({
+  label,
+  value,
+  accent,
+  testId,
+}: {
+  label: string;
+  value: string;
+  accent?: "success" | "muted";
+  testId?: string;
+}) {
+  const valueClass =
+    accent === "success" ? "text-emerald-700 dark:text-emerald-400"
+    : accent === "muted" ? "text-muted-foreground"
+    : "text-foreground";
   return (
-    <div className="rounded-md border border-border bg-muted/20 px-3 py-2">
+    <div className="rounded-md border border-border bg-muted/20 px-3 py-2" data-testid={testId}>
       <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</div>
-      <div className="text-base font-semibold text-foreground tabular-nums">{value}</div>
+      <div className={`text-base font-semibold tabular-nums ${valueClass}`}>{value}</div>
     </div>
   );
 }

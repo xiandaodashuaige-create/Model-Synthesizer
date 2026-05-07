@@ -36,6 +36,16 @@ export const GetSessionAiUsageResponse = zod.object({
   totalCompletionTokens: zod.number(),
   totalTokens: zod.number(),
   totalCostUsd: zod.number(),
+  flagshipCostUsd: zod
+    .number()
+    .describe(
+      "Hypothetical USD cost if every call had been billed at the flagship gpt-5.4 rate.",
+    ),
+  savedCostUsd: zod
+    .number()
+    .describe(
+      "USD saved by routing eligible tasks to cheaper models (flagship − actual, clamped at 0).",
+    ),
   byRoute: zod.array(
     zod.object({
       route: zod.string(),
@@ -44,6 +54,8 @@ export const GetSessionAiUsageResponse = zod.object({
       completionTokens: zod.number(),
       totalTokens: zod.number(),
       costUsd: zod.number(),
+      flagshipCostUsd: zod.number(),
+      savedCostUsd: zod.number(),
     }),
   ),
 });

@@ -1850,18 +1850,20 @@ components:
             - type: "null"
     AiUsageSummary:
       type: object
-      required: [totalCalls, totalPromptTokens, totalCompletionTokens, totalTokens, totalCostUsd, byRoute]
+      required: [totalCalls, totalPromptTokens, totalCompletionTokens, totalTokens, totalCostUsd, flagshipCostUsd, savedCostUsd, byRoute]
       properties:
         totalCalls: { type: integer }
         totalPromptTokens: { type: integer }
         totalCompletionTokens: { type: integer }
         totalTokens: { type: integer }
         totalCostUsd: { type: number }
+        flagshipCostUsd: { type: number, description: "Hypothetical USD cost if every call had been billed at the flagship gpt-5.4 rate." }
+        savedCostUsd: { type: number, description: "USD saved by routing eligible tasks to cheaper models (flagship − actual, clamped at 0)." }
         byRoute:
           type: array
           items:
             type: object
-            required: [route, calls, promptTokens, completionTokens, totalTokens, costUsd]
+            required: [route, calls, promptTokens, completionTokens, totalTokens, costUsd, flagshipCostUsd, savedCostUsd]
             properties:
               route: { type: string }
               calls: { type: integer }
@@ -1869,6 +1871,8 @@ components:
               completionTokens: { type: integer }
               totalTokens: { type: integer }
               costUsd: { type: number }
+              flagshipCostUsd: { type: number }
+              savedCostUsd: { type: number }
     UserPersonalization:
       type: object
       required: [profile, counters, lastRefreshedAt]
