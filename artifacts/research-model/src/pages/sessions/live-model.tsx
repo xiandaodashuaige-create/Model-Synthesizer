@@ -14,8 +14,9 @@ import {
   getListSessionVariablesQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Loader2, Plus, X, AlertTriangle, BookOpen, ArrowRight, Sparkles, GitBranch, Search, FileDown, FileText } from "lucide-react";
+import { Loader2, Plus, X, AlertTriangle, BookOpen, ArrowRight, Sparkles, GitBranch, Search, FileDown, FileText, ImageDown } from "lucide-react";
 import { exportMarkdown, exportDocx } from "@/lib/export-live-model";
+import { toPng } from "html-to-image";
 import { useToast } from "@/hooks/use-toast";
 import { useT } from "@/lib/i18n";
 import { EditableModelGraph, type CanvasNode, type CanvasEdge, type VariablePoolEntry } from "@/components/editable-model-graph";
@@ -106,6 +107,54 @@ export default function LiveModelPage({ params }: { params?: { id: string } }) {
     query: { enabled: !!sessionId, queryKey: getGetSessionQueryKey(sessionId) },
   });
   const [isExportingDocx, setIsExportingDocx] = useState(false);
+  const [isExportingPng, setIsExportingPng] = useState(false);
+  // Wraps <EditableModelGraph> so we can locate the inner `.react-flow` subtree
+  // for PNG export. Capturing only `.react-flow` skips the absolute-positioned
+  // toolbar (Add Variable + hint) that lives in the same wrapper but outside
+  // the flow viewport — exactly what we want for a clean exported figure.
+  const canvasExportRef = useRef<HTMLDivElement>(null);
+  const handleExportPng = async () => {
+    if (!detail || isExportingPng) return;
+    const root = canvasExportRef.current?.querySelector<HTMLElement>(".react-flow");
+    if (!root) {
+      toast({ title: t("live.export.toastFailed" as any), variant: "destructive" });
+      return;
+    }
+    setIsExportingPng(true);
+    try {
+      const dataUrl = await toPng(root, {
+        backgroundColor: "#ffffff",
+        pixelRatio: 2,
+        cacheBust: true,
+        // Skip the dotted background, controls, minimap, and any panel chrome
+        // so the exported figure is just nodes + edges on white.
+        filter: (node) => {
+          if (!(node instanceof Element)) return true;
+          const cls = node.classList;
+          if (!cls) return true;
+          if (cls.contains("react-flow__background")) return false;
+          if (cls.contains("react-flow__controls")) return false;
+          if (cls.contains("react-flow__minimap")) return false;
+          if (cls.contains("react-flow__panel")) return false;
+          if (cls.contains("react-flow__attribution")) return false;
+          return true;
+        },
+      });
+      const safeName = (sessionData?.name ?? "research-model").replace(/[\\/:*?"<>|]+/g, "_").trim() || "research-model";
+      const filename = `${safeName}.png`;
+      const a = document.createElement("a");
+      a.href = dataUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      toast({ title: t("live.export.toastDone" as any, { filename }) });
+    } catch {
+      toast({ title: t("live.export.toastFailed" as any), variant: "destructive" });
+    } finally {
+      setIsExportingPng(false);
+    }
+  };
   const handleExportMd = () => {
     if (!detail) return;
     try {
@@ -440,6 +489,17 @@ export default function LiveModelPage({ params }: { params?: { id: string } }) {
             {isExportingDocx ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileDown className="w-3.5 h-3.5" />}
             {t("live.export.docx" as any)}
           </button>
+          <button
+            type="button"
+            data-testid="button-export-png"
+            onClick={handleExportPng}
+            disabled={isEmpty || isExportingPng}
+            title={isEmpty ? (t("live.export.empty" as any) as string) : (t("live.export.png" as any) as string)}
+            className="inline-flex items-center gap-1.5 rounded-md text-xs font-medium border border-border bg-secondary text-secondary-foreground hover:bg-accent h-8 px-3 transition-colors disabled:opacity-50"
+          >
+            {isExportingPng ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ImageDown className="w-3.5 h-3.5" />}
+            {t("live.export.png" as any)}
+          </button>
           <span className="inline-flex items-center gap-1.5 text-xs font-medium text-foreground bg-secondary px-2.5 py-1 rounded-full">
             {t("live.stats" as any, { vars: nodes.length, edges: edges.length })}
           </span>
@@ -476,18 +536,20 @@ export default function LiveModelPage({ params }: { params?: { id: string } }) {
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-6">
           {/* Graph + edges */}
           <div className="space-y-4 min-w-0">
-            <EditableModelGraph
-              nodes={canvasNodes}
-              edges={canvasEdges}
-              variablePool={variablePool}
-              height={520}
-              onNodeMove={handleCanvasNodeMove}
-              onNodeDelete={handleCanvasNodeDelete}
-              onEdgeDelete={(edgeId) => handleRemoveEdge(parseInt(edgeId, 10))}
-              onEdgeCreate={handleCanvasEdgeCreate}
-              onEdgeCreateOnEdge={handleCanvasEdgeOnEdge}
-              onAddVariable={handleAddVar}
-            />
+            <div ref={canvasExportRef}>
+              <EditableModelGraph
+                nodes={canvasNodes}
+                edges={canvasEdges}
+                variablePool={variablePool}
+                height={520}
+                onNodeMove={handleCanvasNodeMove}
+                onNodeDelete={handleCanvasNodeDelete}
+                onEdgeDelete={(edgeId) => handleRemoveEdge(parseInt(edgeId, 10))}
+                onEdgeCreate={handleCanvasEdgeCreate}
+                onEdgeCreateOnEdge={handleCanvasEdgeOnEdge}
+                onAddVariable={handleAddVar}
+              />
+            </div>
 
             {/* Pending edge picker — choose relationship before persisting */}
             {pendingEdge && (
