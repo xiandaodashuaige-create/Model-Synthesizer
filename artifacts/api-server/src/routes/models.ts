@@ -956,7 +956,9 @@ A rationale missing any of these three lines, or whose [TOPIC FIT] line shows a 
   // is also restated at the END of the prompt as a closing reminder.
   const directiveBlock = userPrompt
     ? `\n\n================================================================
-PRIMARY USER DIRECTIVE (READ THIS FIRST AND HONOR IT) — the human typed the following constraints into the regenerate form. They override the default style preferences (number of operators, breadth of paper coverage, novelty bias) BUT NOT the topic's domain/outcome lock or the focus-pick contract. If the directive is incompatible with those locks, prefer to honor the directive AND OMIT papers/picks that conflict, rather than silently ignore the directive:
+PRIMARY USER DIRECTIVE (READ THIS FIRST AND HONOR IT) — the human typed the following constraints into the regenerate form. They override the default style preferences (number of operators, breadth of paper coverage, novelty bias) BUT NOT the topic's domain/outcome lock or the focus-pick contract. If the directive is incompatible with those locks, prefer to honor the directive AND OMIT papers/picks that conflict, rather than silently ignore the directive.
+
+BILINGUAL NOTE: the directive is likely written in CHINESE while the source papers, variables, and theory backbones are in ENGLISH. For every Chinese construct mentioned (e.g. "感知有用性" → perceived usefulness; "购买意愿" → purchase intention; "信任" → trust / system trust / brand trust; "AI 主播" → AI broadcaster / virtual streamer / digital human; "调节" → moderator), mentally map it to its standard ACADEMIC ENGLISH equivalent (use field-standard construct names, not literal translations) and 2-3 synonyms BEFORE matching it against the variables/papers below. Never tell the user "your literature doesn't cover this" based on a literal Chinese-string check — always do the English-mapped match first.
 """
 ${userPrompt}
 """
