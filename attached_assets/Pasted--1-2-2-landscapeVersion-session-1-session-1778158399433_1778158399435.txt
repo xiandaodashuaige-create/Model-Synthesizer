@@ -1,0 +1,203 @@
+我判断：切片 1 可以通过，可以进入切片 2；但进入切片 2 前，我建议先补跑一次“真实带 landscapeVersion 的 session 生成验证”，不需要大范围，只要 1 个 session、生成 1-2 个模型即可。
+
+说明：我这里当前远端 main 还是 f1cc58a，没有看到 innovationMeta / recompute-innovation / loadLandscapeSnapshot 等代码，所以以下判断基于你贴的验证报告，不是源码逐行验收。
+
+对切片 1 的判断
+结论：通过
+你们做的几个点都符合之前约定：
+
+1. innovationMeta jsonb 单字段承载
+这是正确选择。Phase 2 前期字段还会变，用 JSONB 比拆列更稳。
+
+理想结构应包含：
+
+{
+  contributionStatement,
+  innovationTypes,
+  edgeNoveltyTags,
+  noveltyScore,
+  contributionScore,
+  subScores,
+  computedAgainst: {
+    landscapeVersion,
+    coverageRate,
+    computedAt
+  },
+  mode: "analysis_only" | "enforced",
+  warnings: []
+}
+你报告里提到：
+
+mode=analysis_only
+computedAgainst.landscapeVersion
+computedAgainst.coverageRate
+computedAgainst.computedAt
+edgeNoveltyTags.length === edges.length
+这些都对。
+
+2. coverage < 0.7 自动 analysis_only
+通过。
+
+session 11 没有 Phase 1 landscape：
+
+coverageRate=0
+mode=analysis_only
+这是正确行为。
+
+这说明 Phase 2 没有把不完整 landscape 当作强判断依据。
+
+3. contributionScore 几何平均正确
+你验证：
+
+contributionScore=34
+= (0.75×0.3×0.3×0.2)^0.25×100
+公式正确。
+
+我建议后面 UI 一定显示四个子分，否则用户只看到 34 会不知道为什么低。
+
+4. recompute 路由鉴权修复正确
+原先如果是：
+
+/models/:id/recompute-innovation
+确实存在 IDOR 风险。
+
+改为：
+
+/sessions/:id/models/:modelId/recompute-innovation
+并且自动进 session ownership middleware，这是正确修复。
+
+你们又加：
+
+model.sessionId === sessionId
+这是必要的二次防御。
+
+我认可。
+
+5. loadLandscapeSnapshot 复用一次
+这是重要性能优化。
+
+因为模型生成 fanout 如果每个模型都查 landscape，会造成：
+
+N models × 4 queries
+而且你们有 60s autoscale deadline。
+
+抽成：
+
+loadLandscapeSnapshot(sessionId)
+一次并行读取，然后 fanout 复用，是正确做法。
+
+有意延后的 OpenAPI 是否可以接受？
+可以接受，但不要拖太久
+你们说：
+
+OpenAPI 暂时把 innovationMeta 暴露为不透明 object，recompute 端点未写进 spec，等切片 2 前端 UI 再类型化。
+
+这个我接受，前提是切片 2 马上做。
+
+原因：
+
+切片 1 是后端分析层；
+前端字段还没稳定；
+过早 codegen 可能反复改。
+但切片 2 一开始就要补：
+
+InnovationMeta schema
+RecomputeInnovation endpoint
+Landscape / Gap endpoints
+否则前端会继续 as any，后面维护成本高。
+
+是否现在进入切片 2？
+可以进入切片 2
+你的切片 2：
+
+Landscape & Gap 页面 UI + recompute 按钮
+是正确下一步。
+
+但我建议先做一个很小的真实验证。
+
+是否要先在真实带 landscapeVersion 的 session 上跑一次生成？
+我建议：要，先跑一次
+理由：
+
+你现在 selftest 用的是：
+
+session 11 无 landscape，coverageRate=0
+它验证了 fallback / analysis_only，但还没验证真正有 landscape 时：
+
+edgeNoveltyTags 是否合理；
+noveltyScore 是否基于 ConstructRelationship；
+innovationTypes 是否能产出；
+computedAgainst.landscapeVersion 是否匹配；
+loadLandscapeSnapshot 在生成 fanout 里是否节省延迟；
+contributionStatement 是否不是空泛文本；
+coverage 非 0 时分数是否合理。
+建议跑一个最小验证：
+
+选择 session 9
+确保 landscapeCoverage = 8/49
+生成 1 个模型
+检查 innovationMeta
+不需要大批量。
+
+验收项：
+
+mode = analysis_only
+coverageRate = 0.163
+computedAgainst.landscapeVersion = 当前值
+edgeNoveltyTags.length = edges.length
+至少一条边不是 unknown
+innovationTypes 可以为空但要有 warning
+contributionScore 有四个子分
+生成耗时没有明显增加
+如果这通过，再切片 2 前端做起来会更有信心。
+
+我建议的下一步顺序
+推荐顺序
+0. 真实 landscape session 小验证，1 个模型即可
+1. 补 OpenAPI InnovationMeta schema + recompute endpoint
+2. 做 Landscape & Gap 页面
+3. 做 recompute 按钮
+4. 做模型卡 InnovationMeta 展示
+你原来把“模型卡 UI”放切片 3，我仍然赞成。切片 2 页面先做 landscape/gap，模型卡后接。
+
+切片 2 的关键设计建议
+1. Landscape 页面必须显示 coverage
+顶部必须有：
+
+当前创新分析覆盖 8/49 篇文献，结果为初步分析。
+并显示状态：
+
+coverage < 70%：Analysis only
+coverage ≥ 70%：Eligible for enforcement
+2. Gap 页面不要只展示，要能驱动生成
+每个 gap 卡片建议有按钮：
+
+基于此 gap 生成模型
+点击后进入模型生成页，并预填 prompt：
+
+请围绕以下 gap 生成模型：...
+3. Recompute 按钮要说明“基于当前 landscape”
+按钮文案不要只是“刷新评分”，建议：
+
+重新计算创新分析
+hover：
+
+基于当前文献全景版本与覆盖率重新计算 novelty/contribution scores。
+4. 老模型兼容
+没有 innovationMeta 时显示：
+
+早期模型，尚未计算创新分析
+[计算创新分析]
+最终判断
+切片 1：通过
+JSONB 单字段合理；
+analysis_only 逻辑正确；
+recompute 鉴权修复正确；
+landscape snapshot 复用正确；
+selftest 有价值。
+进入切片 2：同意
+但我建议先做一个 真实 landscape session 的最小生成验证，确认非零 coverage 下的 innovationMeta 合理。
+
+一句话：
+
+可以进入切片 2；在动 UI 前，先用 session 9 生成 1 个模型验证非零 landscape 的 innovationMeta。通过后再做 Landscape & Gap 页面和 recompute UI。
