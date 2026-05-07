@@ -170,13 +170,9 @@ export default function LiveModelPage({ params }: { params?: { id: string } }) {
       toast({ title: t("live.export.toastFailed" as any), variant: "destructive" });
       return;
     }
-    // React Flow renders nodes inside `.react-flow__viewport`, which has a CSS
-    // transform driven by the user's current zoom/pan. To export the WHOLE
-    // model regardless of viewport, we measure the union bounding box of every
-    // `.react-flow__node` element, then snapshot the viewport with an override
-    // transform that re-positions the union origin to (padding, padding).
+    const flowRoot = wrapper.querySelector<HTMLElement>(".react-flow");
     const viewport = wrapper.querySelector<HTMLElement>(".react-flow__viewport");
-    if (!viewport) {
+    if (!flowRoot || !viewport) {
       toast({ title: t("live.export.toastFailed" as any), variant: "destructive" });
       return;
     }
@@ -187,14 +183,16 @@ export default function LiveModelPage({ params }: { params?: { id: string } }) {
     }
 
     setIsExportingPng(true);
+    // Save state we mutate so we can restore even if toPng throws.
+    const originalViewportTransform = viewport.style.transform;
+    const originalRootWidth = flowRoot.style.width;
+    const originalRootHeight = flowRoot.style.height;
     try {
-      // Read each node's translate(x,y) from its inline style — this is the
-      // un-transformed coordinate inside the viewport (independent of zoom).
-      // Combined with the rendered width/height, we get the union bounding box.
+      // Bounding box from each node's translate(x,y) inline style — this is
+      // the un-zoomed coordinate inside the viewport.
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
       for (const el of nodeEls) {
-        const transform = el.style.transform; // "translate(123px, 45px)"
-        const match = /translate\(\s*(-?\d+(?:\.\d+)?)px,\s*(-?\d+(?:\.\d+)?)px\)/.exec(transform);
+        const match = /translate\(\s*(-?\d+(?:\.\d+)?)px,\s*(-?\d+(?:\.\d+)?)px\)/.exec(el.style.transform);
         if (!match) continue;
         const x = parseFloat(match[1]!);
         const y = parseFloat(match[2]!);
@@ -213,23 +211,38 @@ export default function LiveModelPage({ params }: { params?: { id: string } }) {
       const width = Math.ceil(maxX - minX + PADDING * 2);
       const height = Math.ceil(maxY - minY + PADDING * 2);
 
-      const dataUrl = await toPng(viewport, {
+      // MUTATE the live DOM briefly so the screenshot context is exactly what
+      // would render on screen — this avoids the "isolated clone has no CSS
+      // variables / no container size" problem of capturing the viewport
+      // standalone. We restore in finally{}.
+      flowRoot.style.width = `${width}px`;
+      flowRoot.style.height = `${height}px`;
+      viewport.style.transform = `translate(${PADDING - minX}px, ${PADDING - minY}px) scale(1)`;
+      // Wait one frame so React Flow's resize observers settle before snapshot.
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+      const dataUrl = await toPng(flowRoot, {
         backgroundColor: "#ffffff",
         pixelRatio: 2,
         cacheBust: true,
-        // CORS-locked Google Fonts CSS makes html-to-image's font-inline step
-        // throw and silently degrade to a blank PNG. Skip it — the OS will
-        // substitute a sans-serif fallback, which is fine for an export.
-        skipFonts: true,
         width,
         height,
-        style: {
-          // Re-anchor the viewport so the union origin sits at (PADDING,PADDING)
-          // and reset any zoom so 1px in source = 1px in PNG.
-          width: `${width}px`,
-          height: `${height}px`,
-          transform: `translate(${PADDING - minX}px, ${PADDING - minY}px) scale(1)`,
-          transformOrigin: "0 0",
+        // CORS-locked Google Fonts CSS makes html-to-image's font-inline step
+        // throw and silently degrade to a blank PNG. Skip it — the OS will
+        // substitute a sans-serif fallback.
+        skipFonts: true,
+        // Drop the dotted background, controls, minimap, panels, and the
+        // attribution badge so the figure is just nodes + edges on white.
+        filter: (node) => {
+          if (!(node instanceof Element)) return true;
+          const cls = node.classList;
+          if (!cls) return true;
+          if (cls.contains("react-flow__background")) return false;
+          if (cls.contains("react-flow__controls")) return false;
+          if (cls.contains("react-flow__minimap")) return false;
+          if (cls.contains("react-flow__panel")) return false;
+          if (cls.contains("react-flow__attribution")) return false;
+          return true;
         },
       });
       const safeName = (sessionData?.name ?? "research-model").replace(/[\\/:*?"<>|]+/g, "_").trim() || "research-model";
@@ -245,6 +258,10 @@ export default function LiveModelPage({ params }: { params?: { id: string } }) {
       console.error("[export-png] failed:", err);
       toast({ title: t("live.export.toastFailed" as any), variant: "destructive" });
     } finally {
+      // ALWAYS restore the original layout so the user's view is unchanged.
+      viewport.style.transform = originalViewportTransform;
+      flowRoot.style.width = originalRootWidth;
+      flowRoot.style.height = originalRootHeight;
       setIsExportingPng(false);
     }
   };
