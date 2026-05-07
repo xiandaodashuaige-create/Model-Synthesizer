@@ -324,6 +324,14 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
                   edges: detail.edges.length,
                 }),
               });
+              // Auto-navigate to /live-model so the user lands on the page
+              // that actually shows what they just selected. Pre-fix the
+              // import succeeded but the user stayed on the candidates list,
+              // so the "selection" felt like a no-op (they had to manually
+              // click the sidebar to find their newly-promoted model).
+              if (Number.isFinite(sessionId) && sessionId > 0) {
+                navigate(`/sessions/${sessionId}/live-model`);
+              }
             },
             onError: () => {
               toast({

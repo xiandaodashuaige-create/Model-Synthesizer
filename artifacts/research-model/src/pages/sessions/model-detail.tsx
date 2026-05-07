@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from "react";
-import { useParams, Link } from "wouter";
+import { useParams, Link, useLocation } from "wouter";
 import {
   useGetModel,
   useSelectModel,
@@ -244,6 +244,7 @@ export default function SessionModelDetail({ params: routeParams }: { params?: {
   const modelId = parseInt(routeParams?.modelId ?? params.modelId ?? "0", 10);
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const [, navigate] = useLocation();
 
   const selectModel = useSelectModel();
   const updateModel = useUpdateModel();
@@ -365,6 +366,13 @@ export default function SessionModelDetail({ params: routeParams }: { params?: {
                   edges: detail.edges.length,
                 }),
               });
+              // Auto-navigate to /live-model so the user lands where their
+              // newly-promoted model is actually rendered, instead of staying
+              // on the read-only candidate detail page (the "选用" felt like
+              // a no-op pre-fix because nothing visible changed on screen).
+              if (Number.isFinite(sessionId) && sessionId > 0) {
+                navigate(`/sessions/${sessionId}/live-model`);
+              }
             },
             onError: () => {
               toast({
