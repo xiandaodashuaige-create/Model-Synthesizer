@@ -2620,18 +2620,26 @@ OUTPUT FORMAT — return a JSON object with key "models" containing an array of 
       req.log.warn({ rejected: rejected.map((r) => ({ name: r.m?.name, reason: r.v.reason, soft: r.soft })) }, "Some generated models rejected by validator");
     }
 
-    // Rescue path: when zero hard-pass models, salvage every soft-fail model
-    // so the user sees something to work from instead of a 502 error wall.
-    // We attach the warnings into both partialPassMeta (machine-readable) and
-    // a [质量警告:...] prefix on the rationale (so it shows up in the UI even
-    // before the frontend learns about the new field).
+    // Rescue / top-up path: salvage soft-fail models with a quality-warning
+    // prefix so (a) we never ship a 502 when at least one soft-fail candidate
+    // exists, AND (b) when accepted.length < numModels (the user-reported
+    // "请求 2 但只出 1" bug), we top up by salvaging additional soft-fail
+    // candidates to reach numModels. Pre-fix the rescue only fired when
+    // accepted.length === 0, so a 1-of-2 strict pass returned just 1 card
+    // (the second model — typically rejected for "duplicate operator pair"
+    // or "duplicate base-paper set" — was discarded silently). Now we
+    // always try to fill up to numModels first, only falling through to the
+    // 502 path when literally zero models survive.
+    // We attach warnings into both partialPassMeta (machine-readable) and
+    // a [质量警告:...] prefix on the rationale (so it shows up in the UI
+    // even before the frontend learns about the new field).
     type RescuedItem = typeof generated[number] & { _qualityWarnings?: string[] };
-    if (accepted.length === 0) {
+    if (accepted.length < numModels) {
       const softFails = rejected.filter((r) => r.soft && r.m && typeof r.m.name === "string" && Array.isArray(r.m.nodes) && Array.isArray(r.m.edges) && r.m.nodes.length > 0);
-      if (softFails.length === 0) {
-        // Inline the top 3 rejection reasons in the message body itself so
-        // the user sees actionable info even if the toast component truncates
-        // the appended `rejected[]` summary.
+      if (accepted.length === 0 && softFails.length === 0) {
+        // Hard-fail-only AND zero accepted — surface the top 3 rejection
+        // reasons in the message body itself so the user sees actionable
+        // info even if the toast component truncates `rejected[]`.
         const topReasons = rejected.slice(0, 3)
           .map((r) => `• ${r.m?.name ?? "未命名模型"}: ${r.v.reason}`)
           .join("\n");
@@ -2641,29 +2649,51 @@ OUTPUT FORMAT — return a JSON object with key "models" containing an array of 
         });
         return;
       }
-      // Rescue must respect the same dedup rules the strict path enforced —
-      // otherwise we could reintroduce models that were rejected as duplicate
-      // operator-pairs / base-paper-sets.
-      const rescueOpPairs = new Set<string>();
-      const rescueBaseSets = new Set<string>();
+      // Seed the salvage dedup with whatever the strict pass already
+      // accepted. RELAXED RULE for the entire rescue/top-up path: the
+      // strict pass rejects on op-pair OR base-set collision, but here we
+      // only skip when BOTH match (a true clone). Two models with the
+      // same op pair but different paper sets — or same paper set but
+      // different ops — are still distinct enough to show as two cards.
+      // Without this relaxation, the soft-fails most likely to exist
+      // (those rejected by the strict pass for "duplicate operator pair")
+      // would all be re-skipped here, and we'd ship 1/2 again. NOTE:
+      // this also relaxes the legacy strict-zero rescue path (where
+      // acceptedFingerprints starts empty) — pre-fix that path inherited
+      // the strict OR dedup; now it can salvage e.g. two soft-fails with
+      // the same op pair but different base papers. Acceptable
+      // trade-off: getting 2 distinct-content models always beats getting
+      // 1, even if their operator labels happen to align.
+      const acceptedFingerprints = new Set<string>();
+      const fingerprint = (opPair: string, baseSet: string) => `${opPair}||${baseSet}`;
+      for (const a of accepted) {
+        const op = `${a.operator}+${a.secondaryOperator}`;
+        const bs = [...new Set((a.nodes ?? []).map((n) => n.paperId))].sort((x, y) => x - y).join(",");
+        acceptedFingerprints.add(fingerprint(op, bs));
+      }
       let salvaged = 0;
       for (const r of softFails) {
+        if (accepted.length >= numModels) break;
         const opPair = `${r.m.operator ?? "?"}+${r.m.secondaryOperator ?? "?"}`;
-        const baseSet = [...new Set((r.m.nodes ?? []).map((n) => n.paperId))].sort((a, b) => a - b).join(",");
-        if (rescueOpPairs.has(opPair) || rescueBaseSets.has(baseSet)) continue;
-        rescueOpPairs.add(opPair);
-        rescueBaseSets.add(baseSet);
+        const baseSet = [...new Set((r.m.nodes ?? []).map((n) => n.paperId))].sort((x, y) => x - y).join(",");
+        const fp = fingerprint(opPair, baseSet);
+        if (acceptedFingerprints.has(fp)) continue;
+        acceptedFingerprints.add(fp);
         const item = r.m as RescuedItem;
         item._qualityWarnings = [r.v.reason];
         accepted.push(item);
         salvaged++;
       }
-      req.log.warn({ candidates: softFails.length, salvaged }, "Rescue mode: salvaged soft-fail models because zero passed strict validation");
+      req.log.warn(
+        { candidates: softFails.length, salvaged, requested: numModels, finalAccepted: accepted.length },
+        accepted.length < numModels
+          ? "Top-up mode: salvaged some soft-fail models but still short of requested count"
+          : "Top-up mode: salvaged soft-fail models to fill up to numModels",
+      );
       if (accepted.length === 0) {
         // Even the rescue path (which lowers the bar to soft-fail-only and
         // dedups again) couldn't salvage anything. Surface the top reasons
-        // so the user knows what to adjust — same shape as the strict-fail
-        // path above for UI consistency.
+        // so the user knows what to adjust.
         const topReasons = rejected.slice(0, 3)
           .map((r) => `• ${r.m?.name ?? "未命名模型"}: ${r.v.reason}`)
           .join("\n");
