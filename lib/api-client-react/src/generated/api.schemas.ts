@@ -270,6 +270,16 @@ export interface AddPaperBody {
   url: string;
 }
 
+/**
+ * Machine-readable reason for the skip (only present when skipped is true).
+ */
+export type ExtractionResultSkipReason =
+  (typeof ExtractionResultSkipReason)[keyof typeof ExtractionResultSkipReason];
+
+export const ExtractionResultSkipReason = {
+  out_of_scope: "out_of_scope",
+} as const;
+
 export type VariableType = (typeof VariableType)[keyof typeof VariableType];
 
 export const VariableType = {
@@ -318,6 +328,14 @@ export interface Variable {
    */
   constructLayer?: VariableConstructLayer;
   createdAt: string;
+}
+
+export interface ExtractionResult {
+  variables: Variable[];
+  /** True when the paper was skipped because it is out of scope for the session topic. The full extraction pipeline was not run. */
+  skipped?: boolean;
+  /** Machine-readable reason for the skip (only present when skipped is true). */
+  skipReason?: ExtractionResultSkipReason;
 }
 
 export interface ImageBlocklistEntry {

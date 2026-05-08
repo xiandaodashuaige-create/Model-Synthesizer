@@ -413,13 +413,11 @@ paths:
             type: integer
       responses:
         "200":
-          description: Extracted variables
+          description: Extracted variables (or skipped if paper is out of scope for the session topic)
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/Variable"
+                $ref: "#/components/schemas/ExtractionResult"
 
   /sessions/{id}/variables:
     get:
@@ -2371,6 +2369,22 @@ components:
         - title
         - authors
         - url
+
+    ExtractionResult:
+      type: object
+      required: [variables]
+      properties:
+        variables:
+          type: array
+          items:
+            $ref: "#/components/schemas/Variable"
+        skipped:
+          type: boolean
+          description: True when the paper was skipped because it is out of scope for the session topic. The full extraction pipeline was not run.
+        skipReason:
+          type: string
+          enum: [out_of_scope]
+          description: Machine-readable reason for the skip (only present when skipped is true).
 
     Variable:
       type: object

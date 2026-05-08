@@ -124,13 +124,13 @@ router.post("/sessions/:id/papers/:paperId/extract", async (req, res): Promise<v
   const relevance = await checkPaperRelevance(params.data.id, paper, req.log);
   if (relevance === "out_of_scope") {
     req.log.info({ paperId: paper.id, sessionId: params.data.id }, "relevance-preflight: out_of_scope — skipping full extraction");
-    res.json([]);
+    res.json({ variables: [], skipped: true, skipReason: "out_of_scope" });
     return;
   }
 
   try {
     const result = await extractAndStorePaperVariables(paper, req.log);
-    res.json(result.insertedVariables.map((v) => formatVariable(v, paper)));
+    res.json({ variables: result.insertedVariables.map((v) => formatVariable(v, paper)) });
     return;
   } catch (err) {
     const e = err as { name?: string; message?: string };

@@ -420,37 +420,52 @@ export const ExtractVariablesParams = zod.object({
   paperId: zod.coerce.number(),
 });
 
-export const ExtractVariablesResponseItem = zod.object({
-  id: zod.number(),
-  sessionId: zod.number(),
-  paperId: zod.number(),
-  paperTitle: zod.string(),
-  paperAuthors: zod.array(zod.string()),
-  paperYear: zod.number().nullish(),
-  name: zod.string(),
-  type: zod.enum(["independent", "mediator", "moderator", "dependent"]),
-  definition: zod.string(),
-  citationText: zod.string(),
-  canonicalConstructId: zod
-    .string()
-    .nullish()
+export const ExtractVariablesResponse = zod.object({
+  variables: zod.array(
+    zod.object({
+      id: zod.number(),
+      sessionId: zod.number(),
+      paperId: zod.number(),
+      paperTitle: zod.string(),
+      paperAuthors: zod.array(zod.string()),
+      paperYear: zod.number().nullish(),
+      name: zod.string(),
+      type: zod.enum(["independent", "mediator", "moderator", "dependent"]),
+      definition: zod.string(),
+      citationText: zod.string(),
+      canonicalConstructId: zod
+        .string()
+        .nullish()
+        .describe(
+          'Lower-case canonical construct id (e.g. \"trust\", \"purchase intention\"). Variables across papers that map to the same construct share this id.',
+        ),
+      constructLayer: zod
+        .union([
+          zod.literal("stimulus"),
+          zod.literal("cognitive"),
+          zod.literal("affective"),
+          zod.literal("intention"),
+          zod.literal("behavior"),
+          zod.literal(null),
+        ])
+        .nullish()
+        .describe("Standard psychology pipeline layer for the variable."),
+      createdAt: zod.string(),
+    }),
+  ),
+  skipped: zod
+    .boolean()
+    .optional()
     .describe(
-      'Lower-case canonical construct id (e.g. \"trust\", \"purchase intention\"). Variables across papers that map to the same construct share this id.',
+      "True when the paper was skipped because it is out of scope for the session topic. The full extraction pipeline was not run.",
     ),
-  constructLayer: zod
-    .union([
-      zod.literal("stimulus"),
-      zod.literal("cognitive"),
-      zod.literal("affective"),
-      zod.literal("intention"),
-      zod.literal("behavior"),
-      zod.literal(null),
-    ])
-    .nullish()
-    .describe("Standard psychology pipeline layer for the variable."),
-  createdAt: zod.string(),
+  skipReason: zod
+    .enum(["out_of_scope"])
+    .optional()
+    .describe(
+      "Machine-readable reason for the skip (only present when skipped is true).",
+    ),
 });
-export const ExtractVariablesResponse = zod.array(ExtractVariablesResponseItem);
 
 /**
  * @summary List all extracted variables for a session

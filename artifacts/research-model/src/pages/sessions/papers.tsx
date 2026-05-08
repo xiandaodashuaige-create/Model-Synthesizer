@@ -454,15 +454,22 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
       { id: sessionId, paperId },
       {
         onSettled: () => setExtractingPaperId(null),
-        onSuccess: (vars) => {
+        onSuccess: (result) => {
           queryClient.invalidateQueries({ queryKey: getListSessionPapersQueryKey(sessionId) });
           queryClient.invalidateQueries({ queryKey: getListSessionVariablesQueryKey(sessionId) });
           queryClient.invalidateQueries({ queryKey: getGetSessionSummaryQueryKey(sessionId) });
           queryClient.invalidateQueries({ queryKey: getGetSessionQueryKey(sessionId) });
-          toast({
-            title: t("papers.toast.extracted" as any),
-            description: t("papers.toast.extractedDesc" as any, { count: vars.length, title: title.slice(0, 40) }),
-          });
+          if (result.skipped) {
+            toast({
+              title: t("papers.toast.extracted" as any),
+              description: `「${title.slice(0, 40)}」与研究主题关联度不足，已跳过 AI 提取。`,
+            });
+          } else {
+            toast({
+              title: t("papers.toast.extracted" as any),
+              description: t("papers.toast.extractedDesc" as any, { count: result.variables.length, title: title.slice(0, 40) }),
+            });
+          }
         },
         onError: () =>
           toast({

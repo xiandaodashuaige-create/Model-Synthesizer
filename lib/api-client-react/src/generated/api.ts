@@ -36,6 +36,7 @@ import type {
   EvidenceApplyRequest,
   EvidenceSearchRequest,
   EvidenceSearchResult,
+  ExtractionResult,
   GenerateModelLiteratureReview200,
   GenerateModelLiteratureReviewBody,
   GenerateModelsBody,
@@ -1716,8 +1717,8 @@ export const extractVariables = async (
   id: number,
   paperId: number,
   options?: RequestInit,
-): Promise<Variable[]> => {
-  return customFetch<Variable[]>(getExtractVariablesUrl(id, paperId), {
+): Promise<ExtractionResult> => {
+  return customFetch<ExtractionResult>(getExtractVariablesUrl(id, paperId), {
     ...options,
     method: "POST",
   });
