@@ -274,7 +274,7 @@ function ContributionSection({
                 ? (t("innovation.contribution.generating" as any) as string)
                 : (t("innovation.contribution.generate" as any) as string)}
             </button>
-            <span className="text-xs text-muted-foreground">≈ 1 积分</span>
+            <span className="text-xs text-muted-foreground ml-1">≈ 1 积分</span>
           </div>
         )}
       </div>
@@ -305,7 +305,7 @@ function ContributionSection({
               <span className="text-muted-foreground">{statement.gapTypes.join("、")}</span>
             </div>
           )}
-          <div className="flex justify-end items-center gap-1.5 pt-1">
+          <div className="flex justify-end items-center pt-1">
             <span className="text-xs text-muted-foreground">≈ 2 积分</span>
             <button
               type="button"
@@ -394,7 +394,7 @@ function ReviewerSection({ sessionId, modelId }: { sessionId: number; modelId: n
                 ? (t("innovation.reviewer.aiReview.loading" as any) as string)
                 : (t("innovation.reviewer.aiReview" as any) as string)}
             </button>
-            <span className="text-xs text-muted-foreground">≈ 1 积分</span>
+            <span className="text-xs text-muted-foreground ml-1">≈ 1 积分</span>
           </div>
         ) : (
           <div data-testid="ai-review-result" className="space-y-2">
