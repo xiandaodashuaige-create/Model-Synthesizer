@@ -9,6 +9,7 @@
 import { eq, and, sql } from "drizzle-orm";
 import { db, papersTable } from "@workspace/db";
 import { openai } from "@workspace/integrations-openai-ai-server";
+import { logger } from "./logger";
 
 export type EdgeInput = {
   edgeKey: string;
@@ -138,7 +139,10 @@ async function fetchGoogleScholar(query: string, perPage: number): Promise<Schol
   if (!safe) return [];
   const cacheKey = `${safe}:${perPage}`;
   const cached = scholarCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) return cached.data;
+  if (cached && cached.expiresAt > Date.now()) {
+    logger.debug({ query: safe }, "evidence-search cache hit (scholar)");
+    return cached.data;
+  }
   const url = new URL("https://serpapi.com/search.json");
   url.searchParams.set("engine", "google_scholar");
   url.searchParams.set("q", safe);
@@ -205,7 +209,10 @@ async function fetchEdgeFigures(edge: EdgeInput): Promise<ImageHit[]> {
   const q = `"${edge.fromVariableName}" ${verb} "${edge.toVariableName}" conceptual model OR framework figure`;
   const imgCacheKey = q;
   const cachedImg = imagesCache.get(imgCacheKey);
-  if (cachedImg && cachedImg.expiresAt > Date.now()) return cachedImg.data;
+  if (cachedImg && cachedImg.expiresAt > Date.now()) {
+    logger.debug({ query: q }, "evidence-search cache hit (images)");
+    return cachedImg.data;
+  }
   const url = new URL("https://serpapi.com/search.json");
   url.searchParams.set("engine", "google_images");
   url.searchParams.set("q", q);
