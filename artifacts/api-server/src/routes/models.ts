@@ -42,7 +42,7 @@ import {
 const router: IRouter = Router();
 
 // Robust JSON extractor for LLM output. Handles three failure modes we've
-// actually seen from gpt-5.4 on /models/generate:
+// actually seen from gpt-5.2 on /models/generate:
 //   (a) prose preamble / postamble around the JSON ("Here is the JSON: [...]")
 //   (b) markdown code fences not stripped by the simple regex
 //   (c) hard truncation at max_completion_tokens — the JSON was well-formed
@@ -1468,7 +1468,7 @@ OUTPUT FORMAT — return ONLY a JSON object (NOT a bare array) whose single top-
   };
 
   // PERMISSIVE FALLBACK PROMPT — fired only when the strict prompt above
-  // produces zero models (gpt-5.4 in JSON mode sometimes returns
+  // produces zero models (gpt-5.2 in JSON mode sometimes returns
   // {"models":[]} when the 14 hard rules + alignment contract + anti-drift
   // locks combine into something it can't satisfy with confidence). This
   // permissive variant strips ALL hard constraints and just asks for ONE
@@ -1539,7 +1539,7 @@ OUTPUT FORMAT — return a JSON object with key "models" containing an array of 
   if (elapsedBeforeFanout > ROUTE_DEADLINE_MS - 18_000) {
     req.log.warn({ sessionId, elapsedBeforeFanout, ROUTE_DEADLINE_MS }, "Pre-fanout work consumed nearly all route budget — generation almost certainly times out");
   }
-  // gpt-5.4 is a reasoning model: hidden chain-of-thought tokens count
+  // gpt-5.2 is a reasoning model: hidden chain-of-thought tokens count
   // against `max_completion_tokens` along with the visible output. With a
   // ~25-30k token prompt, reasoning can eat 3-4k tokens before JSON even
   // starts. Bumped to 12_000 per call so reasoning has room AND there's a
@@ -1665,7 +1665,7 @@ OUTPUT FORMAT — return a JSON object with key "models" containing an array of 
       // Try a strict parse first (after fence stripping); on failure fall
       // back to extractAndRepairJson which handles prose wrappers AND
       // truncated-by-length JSON. Without this fallback, a single slow
-      // reasoning step on gpt-5.4 nukes the entire model — the user sees
+      // reasoning step on gpt-5.2 nukes the entire model — the user sees
       // "Failed to parse AI model generation result" with no recovery.
       const cleaned = content.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
       let parsed: unknown = null;
@@ -3012,7 +3012,7 @@ router.post("/sessions/:id/models/:modelId/generate-contribution", async (req, r
 });
 
 // POST /sessions/:id/models/:modelId/refine-contribution
-// gpt-5.4 (flagship), rewrite existing contributionStatement with higher quality.
+// gpt-5.2, rewrite existing contributionStatement with higher quality.
 router.post("/sessions/:id/models/:modelId/refine-contribution", async (req, res): Promise<void> => {
   const sessionId = Number.parseInt(req.params.id, 10);
   const modelId = Number.parseInt(req.params.modelId, 10);
@@ -3500,7 +3500,7 @@ ${edgeLines}`;
     const completion = await openai.chat.completions.create({
       // Cost optimisation: literature-review prose generation is downstream of
       // the heavy lifting — the nodes/edges and their citations are already
-      // assembled by gpt-5.4 in /models/generate. This call only re-shapes the
+      // assembled by gpt-5.2 in /models/generate. This call only re-shapes the
       // pre-computed structure into a single Markdown paragraph, which is well
       // within gpt-5-mini's capabilities.
       model: "gpt-5-mini",

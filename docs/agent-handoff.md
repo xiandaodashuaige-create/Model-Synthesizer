@@ -97,7 +97,7 @@ Cache key：`${modelId}:${landscapeVersion ?? 0}`
 
 `1 积分 = $0.01`。`fmtCredits(microUsd)` 在 `ai-usage-panel.tsx` 中已定义。
 - gpt-5-mini 典型调用 ≈ 1 积分（按钮标签固定显示）
-- gpt-5.4 典型调用 ≈ 2 积分（按钮标签固定显示）
+- gpt-5.2 典型调用 ≈ 2 积分（按钮标签固定显示）
 - 按钮标签样式：`text-xs text-muted-foreground ml-1`
 
 ---
@@ -118,7 +118,7 @@ Cache key：`${modelId}:${landscapeVersion ?? 0}`
 
 - 不要全仓库重构
 - 不要改动 `auth` 中间件
-- 不要默认使用 `gpt-5.4`
+- 不要使用 `gpt-5.4`（已从所有路由移除，改用 `gpt-5.2` 或 `gpt-5-mini`）
 - 不要修改 `normalizeName()` / `canonicalize()` 的 6 步规则（需双端同步）
 - 不要让 selftest 调用真实 OpenAI（用 mock 或跳过 AI 步骤）
 - 不要重跑全量变量提取
