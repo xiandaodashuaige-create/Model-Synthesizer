@@ -71,6 +71,12 @@ const WEB_PER_EDGE = 5;
 const TOP_HITS_PER_EDGE = 3;
 const TOP_OVERALL = 8;
 
+const EVIDENCE_CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
+
+type CacheEntry<T> = { data: T; expiresAt: number };
+const scholarCache = new Map<string, CacheEntry<ScholarCandidate[]>>();
+const imagesCache = new Map<string, CacheEntry<ImageHit[]>>();
+
 const OPENALEX_HEADERS = {
   "User-Agent": "ResearchModelBuilder/1.0 (mailto:research@researchmodelbuilder.app)",
 };
@@ -130,6 +136,9 @@ async function fetchGoogleScholar(query: string, perPage: number): Promise<Schol
   if (!key) return [];
   const safe = query.replace(/["',:|]+/g, " ").replace(/\s+/g, " ").trim();
   if (!safe) return [];
+  const cacheKey = `${safe}:${perPage}`;
+  const cached = scholarCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.data;
   const url = new URL("https://serpapi.com/search.json");
   url.searchParams.set("engine", "google_scholar");
   url.searchParams.set("q", safe);
@@ -181,6 +190,7 @@ async function fetchGoogleScholar(query: string, perPage: number): Promise<Schol
       url: it.link,
     });
   }
+  scholarCache.set(cacheKey, { data: out, expiresAt: Date.now() + EVIDENCE_CACHE_TTL_MS });
   return out;
 }
 
@@ -193,6 +203,9 @@ async function fetchEdgeFigures(edge: EdgeInput): Promise<ImageHit[]> {
   if (!key) return [];
   const verb = edge.relationship === "moderates" ? "moderating" : edge.relationship === "mediates" ? "mediating" : "effect";
   const q = `"${edge.fromVariableName}" ${verb} "${edge.toVariableName}" conceptual model OR framework figure`;
+  const imgCacheKey = q;
+  const cachedImg = imagesCache.get(imgCacheKey);
+  if (cachedImg && cachedImg.expiresAt > Date.now()) return cachedImg.data;
   const url = new URL("https://serpapi.com/search.json");
   url.searchParams.set("engine", "google_images");
   url.searchParams.set("q", q);
@@ -239,6 +252,7 @@ async function fetchEdgeFigures(edge: EdgeInput): Promise<ImageHit[]> {
     });
     if (out.length >= 3) break;
   }
+  imagesCache.set(imgCacheKey, { data: out, expiresAt: Date.now() + EVIDENCE_CACHE_TTL_MS });
   return out;
 }
 
