@@ -2961,13 +2961,14 @@ router.post("/sessions/:id/models/:modelId/generate-contribution", async (req, r
       res.status(500).json({ error: "AI returned invalid JSON" });
       return;
     }
-    // Validate 7 required string fields.
+    // Validate 7 required string fields — reject if any are missing/empty.
     const REQUIRED = ["whatIsKnown","whatIsMissing","whatThisAdds","whyItMatters","researchGapClaim","theoreticalContribution","contributionType"] as const;
     const parsedRec = parsed as unknown as Record<string, unknown>;
-    for (const field of REQUIRED) {
-      if (typeof parsedRec[field] !== "string" || !parsedRec[field]) {
-        req.log.warn({ field, modelId }, "generate-contribution: missing field");
-      }
+    const missingFields = REQUIRED.filter((f) => typeof parsedRec[f] !== "string" || !parsedRec[f]);
+    if (missingFields.length > 0) {
+      req.log.error({ missingFields, modelId }, "generate-contribution: AI returned incomplete JSON, rejecting");
+      res.status(500).json({ error: "AI返回字段不完整，请重试" });
+      return;
     }
     if (!Array.isArray(parsed.gapTypes)) parsed.gapTypes = [];
     // Remove #20 warning now that statement is present.
@@ -2999,6 +3000,10 @@ router.post("/sessions/:id/models/:modelId/refine-contribution", async (req, res
   const meta = model.innovationMeta as InnovationMeta | null;
   if (!meta) {
     res.status(400).json({ error: "model has no innovationMeta — run recompute-innovation first" });
+    return;
+  }
+  if (!meta.contributionStatement) {
+    res.status(400).json({ error: "no existing contributionStatement — call generate-contribution first" });
     return;
   }
   const [session] = await db.select({ topic: sessionsTable.topic }).from(sessionsTable).where(eq(sessionsTable.id, sessionId));
