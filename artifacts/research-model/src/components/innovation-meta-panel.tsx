@@ -261,18 +261,21 @@ function ContributionSection({
           {t("innovation.contribution.title" as any)}
         </div>
         {!statement && (
-          <button
-            type="button"
-            onClick={onGenerate}
-            disabled={busy}
-            data-testid="button-generate-contribution"
-            className="inline-flex items-center gap-1.5 rounded-md text-[11px] font-medium border border-primary/40 bg-primary/5 hover:bg-primary/10 text-primary h-6 px-2.5 transition-colors disabled:opacity-50"
-          >
-            {generate.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
-            {generate.isPending
-              ? (t("innovation.contribution.generating" as any) as string)
-              : (t("innovation.contribution.generate" as any) as string)}
-          </button>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={onGenerate}
+              disabled={busy}
+              data-testid="button-generate-contribution"
+              className="inline-flex items-center gap-1.5 rounded-md text-[11px] font-medium border border-primary/40 bg-primary/5 hover:bg-primary/10 text-primary h-6 px-2.5 transition-colors disabled:opacity-50"
+            >
+              {generate.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+              {generate.isPending
+                ? (t("innovation.contribution.generating" as any) as string)
+                : (t("innovation.contribution.generate" as any) as string)}
+            </button>
+            <span className="text-xs text-muted-foreground">≈ 1 积分</span>
+          </div>
         )}
       </div>
 
@@ -302,7 +305,8 @@ function ContributionSection({
               <span className="text-muted-foreground">{statement.gapTypes.join("、")}</span>
             </div>
           )}
-          <div className="flex justify-end pt-1">
+          <div className="flex justify-end items-center gap-1.5 pt-1">
+            <span className="text-xs text-muted-foreground">≈ 2 积分</span>
             <button
               type="button"
               onClick={onRefine}
@@ -377,18 +381,21 @@ function ReviewerSection({ sessionId, modelId }: { sessionId: number; modelId: n
 
       <div className="mt-3">
         {!aiMarkdown ? (
-          <button
-            type="button"
-            onClick={onAiReview}
-            disabled={aiReview.isPending}
-            data-testid="button-ai-review"
-            className="inline-flex items-center gap-1.5 rounded-md text-[11px] font-medium border border-border bg-background hover:bg-accent h-7 px-3 transition-colors disabled:opacity-50"
-          >
-            {aiReview.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Bot className="w-3 h-3" />}
-            {aiReview.isPending
-              ? (t("innovation.reviewer.aiReview.loading" as any) as string)
-              : (t("innovation.reviewer.aiReview" as any) as string)}
-          </button>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={onAiReview}
+              disabled={aiReview.isPending}
+              data-testid="button-ai-review"
+              className="inline-flex items-center gap-1.5 rounded-md text-[11px] font-medium border border-border bg-background hover:bg-accent h-7 px-3 transition-colors disabled:opacity-50"
+            >
+              {aiReview.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Bot className="w-3 h-3" />}
+              {aiReview.isPending
+                ? (t("innovation.reviewer.aiReview.loading" as any) as string)
+                : (t("innovation.reviewer.aiReview" as any) as string)}
+            </button>
+            <span className="text-xs text-muted-foreground">≈ 1 积分</span>
+          </div>
         ) : (
           <div data-testid="ai-review-result" className="space-y-2">
             <div className="flex items-center justify-between">

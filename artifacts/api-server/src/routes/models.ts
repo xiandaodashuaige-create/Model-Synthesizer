@@ -2863,6 +2863,7 @@ router.post("/sessions/:id/models/:modelId/recompute-innovation", async (req, re
     const snapshot = await loadLandscapeSnapshot(sessionId);
     const meta = await computeInnovationMeta({ sessionId, model, log: req.log, snapshot });
     await db.update(researchModelsTable).set({ innovationMeta: meta }).where(eq(researchModelsTable.id, modelId));
+    invalidateModelCaches(modelId);
     res.json(formatModel({ ...model, innovationMeta: meta }, snapshot.landscapeVersion));
   } catch (err) {
     req.log.error({ err, modelId }, "recompute-innovation failed");
@@ -2872,7 +2873,24 @@ router.post("/sessions/:id/models/:modelId/recompute-innovation", async (req, re
 
 // ---------------------------------------------------------------------------
 // Phase 3 — Contribution statement generation & Reviewer simulator
+// In-memory caches (30 min TTL). Key = `${modelId}:${landscapeVersion ?? 0}`.
+// Invalidated when recompute-innovation runs for the same model.
 // ---------------------------------------------------------------------------
+
+const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
+
+interface CacheEntry<T> { data: T; expiresAt: number; }
+const contributionCache = new Map<string, CacheEntry<object>>();
+const aiReviewCache = new Map<string, CacheEntry<{ markdown: string }>>();
+
+function cacheKey(modelId: number, landscapeVersion: number | null): string {
+  return `${modelId}:${landscapeVersion ?? 0}`;
+}
+function invalidateModelCaches(modelId: number): void {
+  const prefix = `${modelId}:`;
+  for (const k of contributionCache.keys()) if (k.startsWith(prefix)) contributionCache.delete(k);
+  for (const k of aiReviewCache.keys()) if (k.startsWith(prefix)) aiReviewCache.delete(k);
+}
 
 // Shared helper: load a model and verify it belongs to `sessionId`.
 async function loadAuthorizedModel(sessionId: number, modelId: number) {
@@ -2938,6 +2956,14 @@ router.post("/sessions/:id/models/:modelId/generate-contribution", async (req, r
     res.status(400).json({ error: "model has no innovationMeta — run recompute-innovation first" });
     return;
   }
+  // Cache check — skip AI call if a fresh result exists.
+  const ck = cacheKey(modelId, meta.computedAgainst.landscapeVersion ?? null);
+  const cached = contributionCache.get(ck);
+  if (cached && cached.expiresAt > Date.now()) {
+    req.log.info({ modelId, cacheKey: ck }, "generate-contribution: cache hit");
+    res.json(cached.data);
+    return;
+  }
   const [session] = await db.select({ topic: sessionsTable.topic }).from(sessionsTable).where(eq(sessionsTable.id, sessionId));
   const topic = session?.topic ?? "";
   const context = buildInnovationContext(topic, meta);
@@ -2976,7 +3002,9 @@ router.post("/sessions/:id/models/:modelId/generate-contribution", async (req, r
     const updatedMeta: InnovationMeta = { ...meta, contributionStatement: parsed, warnings: updatedWarnings };
     await db.update(researchModelsTable).set({ innovationMeta: updatedMeta }).where(eq(researchModelsTable.id, modelId));
     const snapshot = await loadLandscapeSnapshot(sessionId).catch(() => ({ landscapeVersion: null }));
-    res.json(formatModel({ ...model, innovationMeta: updatedMeta }, snapshot.landscapeVersion ?? null));
+    const responseBody = formatModel({ ...model, innovationMeta: updatedMeta }, snapshot.landscapeVersion ?? null);
+    contributionCache.set(ck, { data: responseBody as object, expiresAt: Date.now() + CACHE_TTL_MS });
+    res.json(responseBody);
   } catch (err) {
     req.log.error({ err, modelId }, "generate-contribution failed");
     res.status(503).json({ error: "AI unavailable" });
@@ -3036,6 +3064,7 @@ router.post("/sessions/:id/models/:modelId/refine-contribution", async (req, res
     const updatedWarnings = (meta.warnings ?? []).filter((w) => w.code !== "contribution_statement_missing");
     const updatedMeta: InnovationMeta = { ...meta, contributionStatement: parsed, warnings: updatedWarnings };
     await db.update(researchModelsTable).set({ innovationMeta: updatedMeta }).where(eq(researchModelsTable.id, modelId));
+    invalidateModelCaches(modelId);
     const snapshot = await loadLandscapeSnapshot(sessionId).catch(() => ({ landscapeVersion: null }));
     res.json(formatModel({ ...model, innovationMeta: updatedMeta }, snapshot.landscapeVersion ?? null));
   } catch (err) {
@@ -3156,6 +3185,14 @@ router.post("/sessions/:id/models/:modelId/ai-review", async (req, res): Promise
     res.status(400).json({ error: "model has no innovationMeta — run recompute-innovation first" });
     return;
   }
+  // Cache check for ai-review.
+  const ck = cacheKey(modelId, meta.computedAgainst.landscapeVersion ?? null);
+  const cachedReview = aiReviewCache.get(ck);
+  if (cachedReview && cachedReview.expiresAt > Date.now()) {
+    req.log.info({ modelId, cacheKey: ck }, "ai-review: cache hit");
+    res.json(cachedReview.data);
+    return;
+  }
   const [session] = await db.select({ topic: sessionsTable.topic }).from(sessionsTable).where(eq(sessionsTable.id, sessionId));
   const topic = session?.topic ?? "";
   const dimensions = computeRuleReview(meta);
@@ -3175,7 +3212,9 @@ router.post("/sessions/:id/models/:modelId/ai-review", async (req, res): Promise
     });
     logAiUsageFromOpenAI(completion, { route: "reviewer/ai-review", sessionId, userId: req.user?.id ?? null });
     const markdown = completion.choices[0]?.message?.content ?? "";
-    res.json({ markdown });
+    const reviewResult = { markdown };
+    aiReviewCache.set(ck, { data: reviewResult, expiresAt: Date.now() + CACHE_TTL_MS });
+    res.json(reviewResult);
   } catch (err) {
     req.log.error({ err, modelId }, "ai-review failed");
     res.status(503).json({ error: "AI unavailable" });
