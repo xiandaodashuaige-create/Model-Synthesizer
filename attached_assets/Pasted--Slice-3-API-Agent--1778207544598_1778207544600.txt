@@ -1,0 +1,134 @@
+判断：Slice 3 可以通过，可以进入下一阶段。
+
+但结合你截图里的账单，我要特别提醒：现在真正的大额开销很可能不只是你的产品 API 调用，而是“开发/Agent 自动执行”本身也在烧钱。
+
+1. Slice 3 功能判断
+从你描述看，这一步完成度很好：
+
+已满足关键要求
+候选模型卡片和模型详情页都复用 InnovationMetaPanel
+4 个子分始终显示：
+差异度
+缺口契合
+理论扎根
+证据支撑
+每条边 novelty tag 可展开解释
+contributionStatement=null 有明确空态
+没有 innovationMeta 时显示“刷新评分”CTA
+analysis_only 有覆盖率 amber banner
+stale=true 有 stale badge
+recompute 后同时刷新列表和详情
+zh/en i18n 完成
+a11y 小问题已修
+这些都对。
+
+结论
+Slice 3 PASS。
+
+2. 但这张账单截图说明另一个严重问题
+截图显示：
+
+Additional usage: $1,067.72
+AI Agent: $1,051.30
+这看起来不是你产品内部 OpenAI 路由那 $17/天，而是开发平台/Agent 使用费。
+
+也就是说，你现在可能有两类成本：
+
+成本来源	说明
+产品运行 AI 成本	用户用系统时，后端调用 GPT
+开发 Agent 成本	让 Replit/Cursor/Agent 自动读代码、改代码、跑任务
+你之前分析的 $17/天是产品运行成本。
+截图里的 $1000+ 更像是开发 Agent 成本。
+
+这两者要分开治理。
+
+3. 对 Slice 3 的一个验收建议
+因为你说没有真实截图，只看到 login wall，所以 Slice 3 还缺一个人工 smoke test：
+
+登录后打开：
+
+/sessions/:id/models
+/sessions/:id/models/:modelId
+检查：
+
+没有 innovationMeta 的旧模型是否显示刷新评分；
+有 innovationMeta 的模型是否显示 4 个子分；
+edge novelty 展开是否正常；
+recompute 是否刷新列表 + 详情；
+coverage < 70% 时 banner 是否出现；
+noveltyScore=null 是否不显示 NaN。
+这不阻塞通过，但建议做。
+
+4. 下一阶段建议
+你说：
+
+Phase 3: AI-emitted contributionStatement + Reviewer simulator
+
+我建议可以继续，但要加成本保护。
+
+contributionStatement
+可以做，但不要默认用最贵模型。
+
+建议：
+
+默认：gpt-5-mini 生成 contributionStatement
+高质量重写：用户点击后才用 gpt-5.2 / gpt-5.4
+因为 contributionStatement 是文本表达，不一定必须旗舰模型。
+
+Reviewer simulator
+这个容易烧钱，要小心。
+
+建议先做规则版：
+
+规则 reviewer:
+- gap 是否存在
+- noveltyScore 是否低
+- evidence grounding 是否弱
+- coverage 是否不足
+- contributionStatement 是否空
+再提供按钮：
+
+AI 深度评审
+这个按钮才调用贵模型。
+
+5. 开发成本也要控制
+从截图看，你现在 Agent 开发成本已经非常高。
+
+建议以后让 Agent 执行任务时限制：
+
+1. 每次只做一个小切片
+不要一次让它：
+
+读全仓库 + 改后端 + 改前端 + codegen + 重启 + 跑 review + 截图
+这类任务非常费 Agent 时间。
+
+2. 明确禁止无意义反复 typecheck
+你们现在多次 typecheck 都撞已知旧错误。可以要求：
+
+只运行目标包 typecheck
+已知旧错误不要重复跑全仓库
+3. 不要每步都让 Agent 做“架构师审查”
+关键节点做即可。每个小改动都审查，会增加成本。
+
+4. 能本地确定的用脚本，不用 Agent 反复读代码
+比如：
+
+rg + selftest + targeted files
+而不是让 Agent 全仓库探索。
+
+6. 最终判断
+Slice 3
+通过。
+
+下一步
+可以进入：
+
+AI contributionStatement + Reviewer simulator
+但建议改成：
+
+先 cheap / rule-based
+再可选 high-quality AI
+成本提醒
+你现在不仅要优化产品里的 GPT 调用，也要控制开发 Agent 使用方式。截图里的 $1000+ 更像是 Agent/开发成本，不是单纯产品运行成本。
+
+一句话：Slice 3 功能上可以收；下一步继续，但必须加“便宜默认 + 贵模型按需触发”的策略，同时减少 Agent 自动化开发的无节制运行。
