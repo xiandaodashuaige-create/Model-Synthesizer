@@ -1333,10 +1333,46 @@ export const GenerateModelsResponseItem = zod.object({
         .max(generateModelsResponseInnovationMetaOneContributionScoreMax)
         .describe("Headline number — geometric mean of the 4 sub-scores."),
       contributionStatement: zod
-        .record(zod.string(), zod.unknown())
+        .object({
+          whatIsKnown: zod
+            .string()
+            .describe(
+              "One sentence summarizing what the existing literature already establishes.",
+            ),
+          whatIsMissing: zod
+            .string()
+            .describe("One sentence on the gap this model addresses."),
+          whatThisAdds: zod
+            .string()
+            .describe("One sentence on what this model structurally adds."),
+          whyItMatters: zod
+            .string()
+            .describe("One sentence on the theoretical significance."),
+          researchGapClaim: zod
+            .string()
+            .describe("Explicit claim statement (≤ 40 words, academic tone)."),
+          theoreticalContribution: zod
+            .string()
+            .describe(
+              "Summary contribution statement suitable for an abstract.",
+            ),
+          gapTypes: zod
+            .array(zod.string())
+            .describe(
+              "Gap types this model addresses (subset of the 6 innovation types).",
+            ),
+          contributionType: zod
+            .string()
+            .describe(
+              'Single dominant contribution type label (e.g. \"mechanism\", \"boundary\").',
+            ),
+        })
+        .describe(
+          "Phase 3 AI-emitted 7-field structured self-explanation of why a model\nconstitutes a theoretical contribution. Null until `generate-contribution`\nis called; afterwards all 8 fields are non-empty.\n",
+        )
         .nullable()
         .describe(
-          "Phase 3 AI-emitted 7-field self-explanation. Always null in slice 1\n— `warnings` will carry `contribution_statement_missing` until the\nAI generation step ships.\n",
+          "Phase 3 AI-emitted 7-field self-explanation. Null until\n`generate-contribution` is called.\n",
         ),
       computedAgainst: zod.object({
         landscapeVersion: zod
@@ -1672,10 +1708,46 @@ export const ListSessionModelsResponseItem = zod.object({
         .max(listSessionModelsResponseInnovationMetaOneContributionScoreMax)
         .describe("Headline number — geometric mean of the 4 sub-scores."),
       contributionStatement: zod
-        .record(zod.string(), zod.unknown())
+        .object({
+          whatIsKnown: zod
+            .string()
+            .describe(
+              "One sentence summarizing what the existing literature already establishes.",
+            ),
+          whatIsMissing: zod
+            .string()
+            .describe("One sentence on the gap this model addresses."),
+          whatThisAdds: zod
+            .string()
+            .describe("One sentence on what this model structurally adds."),
+          whyItMatters: zod
+            .string()
+            .describe("One sentence on the theoretical significance."),
+          researchGapClaim: zod
+            .string()
+            .describe("Explicit claim statement (≤ 40 words, academic tone)."),
+          theoreticalContribution: zod
+            .string()
+            .describe(
+              "Summary contribution statement suitable for an abstract.",
+            ),
+          gapTypes: zod
+            .array(zod.string())
+            .describe(
+              "Gap types this model addresses (subset of the 6 innovation types).",
+            ),
+          contributionType: zod
+            .string()
+            .describe(
+              'Single dominant contribution type label (e.g. \"mechanism\", \"boundary\").',
+            ),
+        })
+        .describe(
+          "Phase 3 AI-emitted 7-field structured self-explanation of why a model\nconstitutes a theoretical contribution. Null until `generate-contribution`\nis called; afterwards all 8 fields are non-empty.\n",
+        )
         .nullable()
         .describe(
-          "Phase 3 AI-emitted 7-field self-explanation. Always null in slice 1\n— `warnings` will carry `contribution_statement_missing` until the\nAI generation step ships.\n",
+          "Phase 3 AI-emitted 7-field self-explanation. Null until\n`generate-contribution` is called.\n",
         ),
       computedAgainst: zod.object({
         landscapeVersion: zod
@@ -2029,10 +2101,46 @@ export const RecomputeModelInnovationResponse = zod.object({
         )
         .describe("Headline number — geometric mean of the 4 sub-scores."),
       contributionStatement: zod
-        .record(zod.string(), zod.unknown())
+        .object({
+          whatIsKnown: zod
+            .string()
+            .describe(
+              "One sentence summarizing what the existing literature already establishes.",
+            ),
+          whatIsMissing: zod
+            .string()
+            .describe("One sentence on the gap this model addresses."),
+          whatThisAdds: zod
+            .string()
+            .describe("One sentence on what this model structurally adds."),
+          whyItMatters: zod
+            .string()
+            .describe("One sentence on the theoretical significance."),
+          researchGapClaim: zod
+            .string()
+            .describe("Explicit claim statement (≤ 40 words, academic tone)."),
+          theoreticalContribution: zod
+            .string()
+            .describe(
+              "Summary contribution statement suitable for an abstract.",
+            ),
+          gapTypes: zod
+            .array(zod.string())
+            .describe(
+              "Gap types this model addresses (subset of the 6 innovation types).",
+            ),
+          contributionType: zod
+            .string()
+            .describe(
+              'Single dominant contribution type label (e.g. \"mechanism\", \"boundary\").',
+            ),
+        })
+        .describe(
+          "Phase 3 AI-emitted 7-field structured self-explanation of why a model\nconstitutes a theoretical contribution. Null until `generate-contribution`\nis called; afterwards all 8 fields are non-empty.\n",
+        )
         .nullable()
         .describe(
-          "Phase 3 AI-emitted 7-field self-explanation. Always null in slice 1\n— `warnings` will carry `contribution_statement_missing` until the\nAI generation step ships.\n",
+          "Phase 3 AI-emitted 7-field self-explanation. Null until\n`generate-contribution` is called.\n",
         ),
       computedAgainst: zod.object({
         landscapeVersion: zod
@@ -2079,6 +2187,860 @@ export const RecomputeModelInnovationResponse = zod.object({
     ),
   createdAt: zod.string(),
 });
+
+/**
+ * Reads the model's existing `innovationMeta` (edgeNoveltyTags,
+innovationTypes, subScores) plus the session topic, builds a compact
+prompt (≤ 2 000 tokens), calls gpt-5-mini in JSON mode, persists the
+result in `innovationMeta.contributionStatement`, and returns the
+updated model. Auth-gated by `loadAuthorizedSession`.
+
+ * @summary Generate a 7-field contributionStatement with gpt-5-mini
+ */
+export const GenerateContributionStatementParams = zod.object({
+  id: zod.coerce.number().describe("Session id (must own the model)."),
+  modelId: zod.coerce.number(),
+});
+
+export const generateContributionStatementResponseInnovationMetaOneEdgeNoveltyTagsItemEdgeIndexMin = 0;
+
+export const generateContributionStatementResponseInnovationMetaOneEdgeNoveltyTagsItemSubscoreMin = 0;
+export const generateContributionStatementResponseInnovationMetaOneEdgeNoveltyTagsItemSubscoreMax = 100;
+
+export const generateContributionStatementResponseInnovationMetaOneEdgeNoveltyTagsItemMatchedRelationshipOneTotalOccurrencesMin = 0;
+
+export const generateContributionStatementResponseInnovationMetaOneNoveltyScoreMin = 0;
+export const generateContributionStatementResponseInnovationMetaOneNoveltyScoreMax = 100;
+
+export const generateContributionStatementResponseInnovationMetaOneSubScoresDifferentiationMin = 0;
+export const generateContributionStatementResponseInnovationMetaOneSubScoresDifferentiationMax = 100;
+
+export const generateContributionStatementResponseInnovationMetaOneSubScoresGapFitMin = 0;
+export const generateContributionStatementResponseInnovationMetaOneSubScoresGapFitMax = 100;
+
+export const generateContributionStatementResponseInnovationMetaOneSubScoresTheoreticalSoundnessMin = 0;
+export const generateContributionStatementResponseInnovationMetaOneSubScoresTheoreticalSoundnessMax = 100;
+
+export const generateContributionStatementResponseInnovationMetaOneSubScoresEvidenceSupportMin = 0;
+export const generateContributionStatementResponseInnovationMetaOneSubScoresEvidenceSupportMax = 100;
+
+export const generateContributionStatementResponseInnovationMetaOneContributionScoreMin = 0;
+export const generateContributionStatementResponseInnovationMetaOneContributionScoreMax = 100;
+
+export const generateContributionStatementResponseInnovationMetaOneComputedAgainstCoverageRateMin = 0;
+export const generateContributionStatementResponseInnovationMetaOneComputedAgainstCoverageRateMax = 1;
+
+export const GenerateContributionStatementResponse = zod.object({
+  id: zod.number(),
+  sessionId: zod.number(),
+  name: zod.string(),
+  description: zod.string(),
+  rationale: zod.string(),
+  selected: zod.boolean(),
+  nodes: zod.array(
+    zod.object({
+      variableId: zod.number(),
+      variableName: zod.string(),
+      type: zod.string(),
+      paperId: zod.number(),
+      paperTitle: zod.string(),
+      paperAuthors: zod.array(zod.string()),
+      paperYear: zod.number().nullish(),
+      positionX: zod
+        .number()
+        .nullish()
+        .describe(
+          "User-arranged X position on the editable canvas (null = use auto layout).",
+        ),
+      positionY: zod
+        .number()
+        .nullish()
+        .describe(
+          "User-arranged Y position on the editable canvas (null = use auto layout).",
+        ),
+    }),
+  ),
+  edges: zod.array(
+    zod.object({
+      fromVariableId: zod.number(),
+      toVariableId: zod.number(),
+      fromVariableName: zod.string(),
+      toVariableName: zod.string(),
+      relationship: zod.string(),
+      evidencePaperId: zod.number(),
+      evidencePaperTitle: zod.string(),
+      evidencePaperAuthors: zod.array(zod.string()),
+      evidencePaperYear: zod.number().nullish(),
+      evidenceCitationText: zod.string(),
+      evidenceHypothesisId: zod
+        .string()
+        .nullish()
+        .describe(
+          'References paper_hypotheses.hypothesis_id (e.g. \"H2a\") when the edge is grounded in a formal hypothesis.',
+        ),
+      effectSize: zod
+        .string()
+        .nullish()
+        .describe(
+          'Reported effect size (e.g. \"β=.34, p<.001\") when extracted from the source paper.',
+        ),
+      evidenceLocation: zod
+        .string()
+        .nullish()
+        .describe(
+          'Where in the source paper the edge is supported (e.g. \"p. 412\", \"Section 3.2\").',
+        ),
+      moderatorJustification: zod
+        .string()
+        .nullish()
+        .describe(
+          'REQUIRED when relationship=\"moderates\". Explains theoretically why the variable can condition the moderated path.',
+        ),
+      additionalEvidence: zod
+        .array(
+          zod.object({
+            paperId: zod.number(),
+            paperTitle: zod.string(),
+            paperAuthors: zod.array(zod.string()).optional(),
+            paperYear: zod.number().nullish(),
+            citationText: zod.string(),
+            source: zod.enum(["library", "web"]),
+            score: zod.number().nullish(),
+            addedAt: zod.coerce.date().optional(),
+          }),
+        )
+        .optional()
+        .describe(
+          "Extra supporting papers attached after-the-fact via the AI evidence-matching feature.",
+        ),
+    }),
+  ),
+  partialPassMeta: zod
+    .object({
+      allowPartial: zod.boolean(),
+      basedOnPaperIds: zod.array(zod.number()),
+      missingPaperIds: zod.array(zod.number()),
+      missingPapers: zod.array(
+        zod.object({
+          id: zod.number(),
+          title: zod.string(),
+        }),
+      ),
+    })
+    .nullish()
+    .describe(
+      "Present only when this model was generated through the partial-pass flow\n(some session papers had not been extracted at generation time).\n",
+    ),
+  innovationMeta: zod
+    .object({
+      edgeNoveltyTags: zod
+        .array(
+          zod
+            .object({
+              edgeIndex: zod
+                .number()
+                .min(
+                  generateContributionStatementResponseInnovationMetaOneEdgeNoveltyTagsItemEdgeIndexMin,
+                )
+                .describe("Index into the parent model's `edges` array."),
+              fromVariableName: zod.string(),
+              toVariableName: zod.string(),
+              relationship: zod
+                .string()
+                .describe(
+                  "Raw model edge relationship (positive \/ negative \/ mediates \/ moderates).",
+                ),
+              tag: zod.enum([
+                "saturated",
+                "established",
+                "underexplored",
+                "context_transferred",
+                "novel",
+                "mechanism_inserted",
+                "boundary_extended",
+                "contradicting",
+              ]),
+              subscore: zod
+                .number()
+                .min(
+                  generateContributionStatementResponseInnovationMetaOneEdgeNoveltyTagsItemSubscoreMin,
+                )
+                .max(
+                  generateContributionStatementResponseInnovationMetaOneEdgeNoveltyTagsItemSubscoreMax,
+                )
+                .describe(
+                  "The actual subscore contributed to `noveltyScore`. For\n`contradicting` this is 80 by default and 95 when the model also\ncontains a moderator\/mediator that resolves the conflict.\n",
+                ),
+              matchedTotalOccurrences: zod
+                .number()
+                .nullable()
+                .describe(
+                  "Convenience copy of `matchedRelationship.totalOccurrences`.",
+                ),
+              matchedRelationship: zod
+                .object({
+                  canonicalFrom: zod.string(),
+                  canonicalTo: zod.string(),
+                  relationshipType: zod.enum([
+                    "direct",
+                    "mediation",
+                    "moderation",
+                  ]),
+                  totalOccurrences: zod
+                    .number()
+                    .min(
+                      generateContributionStatementResponseInnovationMetaOneEdgeNoveltyTagsItemMatchedRelationshipOneTotalOccurrencesMin,
+                    )
+                    .describe(
+                      "Distinct in-scope papers this relationship appears in.",
+                    ),
+                  signConflict: zod.boolean(),
+                  domainsCovered: zod.array(zod.string()),
+                })
+                .describe(
+                  "Snapshot of the `constructRelationships` row that an edge matched\nagainst during scoring. Carried on every `EdgeNoveltyTag` so the UI\ncan explain \*why\* a particular tag was picked (or not picked) without\nround-tripping to the DB. Null when no row matched.\n",
+                )
+                .nullable(),
+              reason: zod
+                .string()
+                .describe(
+                  'zh-CN human-readable explanation of why this tag was chosen.\nStable enough that the UI can display it directly. Includes the\nspecific occurrence count when available so the user understands\nwhy an edge stayed `novel` instead of being upgraded to\n`boundary_extended` (e.g. \"主路径仅在 2 篇文献中出现…\").\n',
+                ),
+            })
+            .describe(
+              "Per-edge novelty classification with explainability payload.\n`tag` follows the single-pick precedence order:\ncontradicting > mechanism_inserted > boundary_extended >\ncontext_transferred > novel > underexplored > established > saturated.\n",
+            ),
+        )
+        .describe("One entry per edge in the parent model, parallel by index."),
+      noveltyScore: zod
+        .number()
+        .min(
+          generateContributionStatementResponseInnovationMetaOneNoveltyScoreMin,
+        )
+        .max(
+          generateContributionStatementResponseInnovationMetaOneNoveltyScoreMax,
+        )
+        .nullable()
+        .describe(
+          "Mean of `edgeNoveltyTags[].subscore`. Null only when the model has zero edges.",
+        ),
+      innovationTypes: zod
+        .array(
+          zod.enum([
+            "mechanism",
+            "boundary",
+            "integration",
+            "correction",
+            "construct",
+            "context",
+          ]),
+        )
+        .describe(
+          "5 of 6 auto-detected from the landscape; `context` joins in Phase 3 via AI.",
+        ),
+      subScores: zod.object({
+        differentiation: zod
+          .number()
+          .min(
+            generateContributionStatementResponseInnovationMetaOneSubScoresDifferentiationMin,
+          )
+          .max(
+            generateContributionStatementResponseInnovationMetaOneSubScoresDifferentiationMax,
+          )
+          .describe(
+            "Mean of edge subscores. Reflects how novel the edges are vs. the literature.",
+          ),
+        gapFit: zod
+          .number()
+          .min(
+            generateContributionStatementResponseInnovationMetaOneSubScoresGapFitMin,
+          )
+          .max(
+            generateContributionStatementResponseInnovationMetaOneSubScoresGapFitMax,
+          )
+          .describe(
+            "Floor 30 in slice 1; full computation in Phase 2.x once contributionStatement.gapTypes wires in.",
+          ),
+        theoreticalSoundness: zod
+          .number()
+          .min(
+            generateContributionStatementResponseInnovationMetaOneSubScoresTheoreticalSoundnessMin,
+          )
+          .max(
+            generateContributionStatementResponseInnovationMetaOneSubScoresTheoreticalSoundnessMax,
+          )
+          .describe(
+            "100 if the model's backbone is in the session's evidenced backbones, else floor 30.",
+          ),
+        evidenceSupport: zod
+          .number()
+          .min(
+            generateContributionStatementResponseInnovationMetaOneSubScoresEvidenceSupportMin,
+          )
+          .max(
+            generateContributionStatementResponseInnovationMetaOneSubScoresEvidenceSupportMax,
+          )
+          .describe(
+            "Floor 20 in slice 1; tiered (direct\/analog\/theory) in Phase 2.x.",
+          ),
+      }),
+      contributionScore: zod
+        .number()
+        .min(
+          generateContributionStatementResponseInnovationMetaOneContributionScoreMin,
+        )
+        .max(
+          generateContributionStatementResponseInnovationMetaOneContributionScoreMax,
+        )
+        .describe("Headline number — geometric mean of the 4 sub-scores."),
+      contributionStatement: zod
+        .object({
+          whatIsKnown: zod
+            .string()
+            .describe(
+              "One sentence summarizing what the existing literature already establishes.",
+            ),
+          whatIsMissing: zod
+            .string()
+            .describe("One sentence on the gap this model addresses."),
+          whatThisAdds: zod
+            .string()
+            .describe("One sentence on what this model structurally adds."),
+          whyItMatters: zod
+            .string()
+            .describe("One sentence on the theoretical significance."),
+          researchGapClaim: zod
+            .string()
+            .describe("Explicit claim statement (≤ 40 words, academic tone)."),
+          theoreticalContribution: zod
+            .string()
+            .describe(
+              "Summary contribution statement suitable for an abstract.",
+            ),
+          gapTypes: zod
+            .array(zod.string())
+            .describe(
+              "Gap types this model addresses (subset of the 6 innovation types).",
+            ),
+          contributionType: zod
+            .string()
+            .describe(
+              'Single dominant contribution type label (e.g. \"mechanism\", \"boundary\").',
+            ),
+        })
+        .describe(
+          "Phase 3 AI-emitted 7-field structured self-explanation of why a model\nconstitutes a theoretical contribution. Null until `generate-contribution`\nis called; afterwards all 8 fields are non-empty.\n",
+        )
+        .nullable()
+        .describe(
+          "Phase 3 AI-emitted 7-field self-explanation. Null until\n`generate-contribution` is called.\n",
+        ),
+      computedAgainst: zod.object({
+        landscapeVersion: zod
+          .number()
+          .nullable()
+          .describe(
+            "Session's `landscapeMeta.landscapeVersion` at compute time.",
+          ),
+        coverageRate: zod
+          .number()
+          .min(
+            generateContributionStatementResponseInnovationMetaOneComputedAgainstCoverageRateMin,
+          )
+          .max(
+            generateContributionStatementResponseInnovationMetaOneComputedAgainstCoverageRateMax,
+          ),
+        computedAt: zod.coerce.date(),
+      }),
+      mode: zod.enum(["analysis_only", "enforced"]),
+      modeReason: zod.enum(["coverage_below_threshold", "ok"]),
+      warnings: zod.array(
+        zod.object({
+          code: zod.enum([
+            "contribution_statement_missing",
+            "no_innovation_type_detected",
+            "all_edges_low_novelty",
+          ]),
+          message: zod.string(),
+        }),
+      ),
+      stale: zod
+        .boolean()
+        .optional()
+        .describe(
+          "True iff the score was computed against an older\n`landscapeVersion` than the session currently has. Decorated by\nthe formatter at read time; not persisted in the JSONB.\n",
+        ),
+    })
+    .describe(
+      "Phase 2 Innovation Layer scoring + provenance for a single research\nmodel. NEVER causes hard rejection — `mode='analysis_only'` is the\ncontract for the whole slice 1 release. The UI MUST display all four\nsub-scores and surface `warnings` non-modally.\n",
+    )
+    .nullish()
+    .describe(
+      "Phase 2 Innovation Layer scoring + provenance. Always written for\nmodels generated after Phase 2 ships; null for older models.\n`mode='analysis_only'` means the score is descriptive — the system\nwill not reject the model on it. `stale=true` means the score was\ncomputed against an older landscape version and should be\nrecomputed before being trusted for hard decisions.\n",
+    ),
+  createdAt: zod.string(),
+});
+
+/**
+ * Same inputs as `generate-contribution` but uses the flagship model
+for higher-quality output. Requires an existing `contributionStatement`
+(generated first). Auth-gated by `loadAuthorizedSession`.
+
+ * @summary Rewrite the contributionStatement with the flagship model (gpt-5.4)
+ */
+export const RefineContributionStatementParams = zod.object({
+  id: zod.coerce.number().describe("Session id (must own the model)."),
+  modelId: zod.coerce.number(),
+});
+
+export const refineContributionStatementResponseInnovationMetaOneEdgeNoveltyTagsItemEdgeIndexMin = 0;
+
+export const refineContributionStatementResponseInnovationMetaOneEdgeNoveltyTagsItemSubscoreMin = 0;
+export const refineContributionStatementResponseInnovationMetaOneEdgeNoveltyTagsItemSubscoreMax = 100;
+
+export const refineContributionStatementResponseInnovationMetaOneEdgeNoveltyTagsItemMatchedRelationshipOneTotalOccurrencesMin = 0;
+
+export const refineContributionStatementResponseInnovationMetaOneNoveltyScoreMin = 0;
+export const refineContributionStatementResponseInnovationMetaOneNoveltyScoreMax = 100;
+
+export const refineContributionStatementResponseInnovationMetaOneSubScoresDifferentiationMin = 0;
+export const refineContributionStatementResponseInnovationMetaOneSubScoresDifferentiationMax = 100;
+
+export const refineContributionStatementResponseInnovationMetaOneSubScoresGapFitMin = 0;
+export const refineContributionStatementResponseInnovationMetaOneSubScoresGapFitMax = 100;
+
+export const refineContributionStatementResponseInnovationMetaOneSubScoresTheoreticalSoundnessMin = 0;
+export const refineContributionStatementResponseInnovationMetaOneSubScoresTheoreticalSoundnessMax = 100;
+
+export const refineContributionStatementResponseInnovationMetaOneSubScoresEvidenceSupportMin = 0;
+export const refineContributionStatementResponseInnovationMetaOneSubScoresEvidenceSupportMax = 100;
+
+export const refineContributionStatementResponseInnovationMetaOneContributionScoreMin = 0;
+export const refineContributionStatementResponseInnovationMetaOneContributionScoreMax = 100;
+
+export const refineContributionStatementResponseInnovationMetaOneComputedAgainstCoverageRateMin = 0;
+export const refineContributionStatementResponseInnovationMetaOneComputedAgainstCoverageRateMax = 1;
+
+export const RefineContributionStatementResponse = zod.object({
+  id: zod.number(),
+  sessionId: zod.number(),
+  name: zod.string(),
+  description: zod.string(),
+  rationale: zod.string(),
+  selected: zod.boolean(),
+  nodes: zod.array(
+    zod.object({
+      variableId: zod.number(),
+      variableName: zod.string(),
+      type: zod.string(),
+      paperId: zod.number(),
+      paperTitle: zod.string(),
+      paperAuthors: zod.array(zod.string()),
+      paperYear: zod.number().nullish(),
+      positionX: zod
+        .number()
+        .nullish()
+        .describe(
+          "User-arranged X position on the editable canvas (null = use auto layout).",
+        ),
+      positionY: zod
+        .number()
+        .nullish()
+        .describe(
+          "User-arranged Y position on the editable canvas (null = use auto layout).",
+        ),
+    }),
+  ),
+  edges: zod.array(
+    zod.object({
+      fromVariableId: zod.number(),
+      toVariableId: zod.number(),
+      fromVariableName: zod.string(),
+      toVariableName: zod.string(),
+      relationship: zod.string(),
+      evidencePaperId: zod.number(),
+      evidencePaperTitle: zod.string(),
+      evidencePaperAuthors: zod.array(zod.string()),
+      evidencePaperYear: zod.number().nullish(),
+      evidenceCitationText: zod.string(),
+      evidenceHypothesisId: zod
+        .string()
+        .nullish()
+        .describe(
+          'References paper_hypotheses.hypothesis_id (e.g. \"H2a\") when the edge is grounded in a formal hypothesis.',
+        ),
+      effectSize: zod
+        .string()
+        .nullish()
+        .describe(
+          'Reported effect size (e.g. \"β=.34, p<.001\") when extracted from the source paper.',
+        ),
+      evidenceLocation: zod
+        .string()
+        .nullish()
+        .describe(
+          'Where in the source paper the edge is supported (e.g. \"p. 412\", \"Section 3.2\").',
+        ),
+      moderatorJustification: zod
+        .string()
+        .nullish()
+        .describe(
+          'REQUIRED when relationship=\"moderates\". Explains theoretically why the variable can condition the moderated path.',
+        ),
+      additionalEvidence: zod
+        .array(
+          zod.object({
+            paperId: zod.number(),
+            paperTitle: zod.string(),
+            paperAuthors: zod.array(zod.string()).optional(),
+            paperYear: zod.number().nullish(),
+            citationText: zod.string(),
+            source: zod.enum(["library", "web"]),
+            score: zod.number().nullish(),
+            addedAt: zod.coerce.date().optional(),
+          }),
+        )
+        .optional()
+        .describe(
+          "Extra supporting papers attached after-the-fact via the AI evidence-matching feature.",
+        ),
+    }),
+  ),
+  partialPassMeta: zod
+    .object({
+      allowPartial: zod.boolean(),
+      basedOnPaperIds: zod.array(zod.number()),
+      missingPaperIds: zod.array(zod.number()),
+      missingPapers: zod.array(
+        zod.object({
+          id: zod.number(),
+          title: zod.string(),
+        }),
+      ),
+    })
+    .nullish()
+    .describe(
+      "Present only when this model was generated through the partial-pass flow\n(some session papers had not been extracted at generation time).\n",
+    ),
+  innovationMeta: zod
+    .object({
+      edgeNoveltyTags: zod
+        .array(
+          zod
+            .object({
+              edgeIndex: zod
+                .number()
+                .min(
+                  refineContributionStatementResponseInnovationMetaOneEdgeNoveltyTagsItemEdgeIndexMin,
+                )
+                .describe("Index into the parent model's `edges` array."),
+              fromVariableName: zod.string(),
+              toVariableName: zod.string(),
+              relationship: zod
+                .string()
+                .describe(
+                  "Raw model edge relationship (positive \/ negative \/ mediates \/ moderates).",
+                ),
+              tag: zod.enum([
+                "saturated",
+                "established",
+                "underexplored",
+                "context_transferred",
+                "novel",
+                "mechanism_inserted",
+                "boundary_extended",
+                "contradicting",
+              ]),
+              subscore: zod
+                .number()
+                .min(
+                  refineContributionStatementResponseInnovationMetaOneEdgeNoveltyTagsItemSubscoreMin,
+                )
+                .max(
+                  refineContributionStatementResponseInnovationMetaOneEdgeNoveltyTagsItemSubscoreMax,
+                )
+                .describe(
+                  "The actual subscore contributed to `noveltyScore`. For\n`contradicting` this is 80 by default and 95 when the model also\ncontains a moderator\/mediator that resolves the conflict.\n",
+                ),
+              matchedTotalOccurrences: zod
+                .number()
+                .nullable()
+                .describe(
+                  "Convenience copy of `matchedRelationship.totalOccurrences`.",
+                ),
+              matchedRelationship: zod
+                .object({
+                  canonicalFrom: zod.string(),
+                  canonicalTo: zod.string(),
+                  relationshipType: zod.enum([
+                    "direct",
+                    "mediation",
+                    "moderation",
+                  ]),
+                  totalOccurrences: zod
+                    .number()
+                    .min(
+                      refineContributionStatementResponseInnovationMetaOneEdgeNoveltyTagsItemMatchedRelationshipOneTotalOccurrencesMin,
+                    )
+                    .describe(
+                      "Distinct in-scope papers this relationship appears in.",
+                    ),
+                  signConflict: zod.boolean(),
+                  domainsCovered: zod.array(zod.string()),
+                })
+                .describe(
+                  "Snapshot of the `constructRelationships` row that an edge matched\nagainst during scoring. Carried on every `EdgeNoveltyTag` so the UI\ncan explain \*why\* a particular tag was picked (or not picked) without\nround-tripping to the DB. Null when no row matched.\n",
+                )
+                .nullable(),
+              reason: zod
+                .string()
+                .describe(
+                  'zh-CN human-readable explanation of why this tag was chosen.\nStable enough that the UI can display it directly. Includes the\nspecific occurrence count when available so the user understands\nwhy an edge stayed `novel` instead of being upgraded to\n`boundary_extended` (e.g. \"主路径仅在 2 篇文献中出现…\").\n',
+                ),
+            })
+            .describe(
+              "Per-edge novelty classification with explainability payload.\n`tag` follows the single-pick precedence order:\ncontradicting > mechanism_inserted > boundary_extended >\ncontext_transferred > novel > underexplored > established > saturated.\n",
+            ),
+        )
+        .describe("One entry per edge in the parent model, parallel by index."),
+      noveltyScore: zod
+        .number()
+        .min(
+          refineContributionStatementResponseInnovationMetaOneNoveltyScoreMin,
+        )
+        .max(
+          refineContributionStatementResponseInnovationMetaOneNoveltyScoreMax,
+        )
+        .nullable()
+        .describe(
+          "Mean of `edgeNoveltyTags[].subscore`. Null only when the model has zero edges.",
+        ),
+      innovationTypes: zod
+        .array(
+          zod.enum([
+            "mechanism",
+            "boundary",
+            "integration",
+            "correction",
+            "construct",
+            "context",
+          ]),
+        )
+        .describe(
+          "5 of 6 auto-detected from the landscape; `context` joins in Phase 3 via AI.",
+        ),
+      subScores: zod.object({
+        differentiation: zod
+          .number()
+          .min(
+            refineContributionStatementResponseInnovationMetaOneSubScoresDifferentiationMin,
+          )
+          .max(
+            refineContributionStatementResponseInnovationMetaOneSubScoresDifferentiationMax,
+          )
+          .describe(
+            "Mean of edge subscores. Reflects how novel the edges are vs. the literature.",
+          ),
+        gapFit: zod
+          .number()
+          .min(
+            refineContributionStatementResponseInnovationMetaOneSubScoresGapFitMin,
+          )
+          .max(
+            refineContributionStatementResponseInnovationMetaOneSubScoresGapFitMax,
+          )
+          .describe(
+            "Floor 30 in slice 1; full computation in Phase 2.x once contributionStatement.gapTypes wires in.",
+          ),
+        theoreticalSoundness: zod
+          .number()
+          .min(
+            refineContributionStatementResponseInnovationMetaOneSubScoresTheoreticalSoundnessMin,
+          )
+          .max(
+            refineContributionStatementResponseInnovationMetaOneSubScoresTheoreticalSoundnessMax,
+          )
+          .describe(
+            "100 if the model's backbone is in the session's evidenced backbones, else floor 30.",
+          ),
+        evidenceSupport: zod
+          .number()
+          .min(
+            refineContributionStatementResponseInnovationMetaOneSubScoresEvidenceSupportMin,
+          )
+          .max(
+            refineContributionStatementResponseInnovationMetaOneSubScoresEvidenceSupportMax,
+          )
+          .describe(
+            "Floor 20 in slice 1; tiered (direct\/analog\/theory) in Phase 2.x.",
+          ),
+      }),
+      contributionScore: zod
+        .number()
+        .min(
+          refineContributionStatementResponseInnovationMetaOneContributionScoreMin,
+        )
+        .max(
+          refineContributionStatementResponseInnovationMetaOneContributionScoreMax,
+        )
+        .describe("Headline number — geometric mean of the 4 sub-scores."),
+      contributionStatement: zod
+        .object({
+          whatIsKnown: zod
+            .string()
+            .describe(
+              "One sentence summarizing what the existing literature already establishes.",
+            ),
+          whatIsMissing: zod
+            .string()
+            .describe("One sentence on the gap this model addresses."),
+          whatThisAdds: zod
+            .string()
+            .describe("One sentence on what this model structurally adds."),
+          whyItMatters: zod
+            .string()
+            .describe("One sentence on the theoretical significance."),
+          researchGapClaim: zod
+            .string()
+            .describe("Explicit claim statement (≤ 40 words, academic tone)."),
+          theoreticalContribution: zod
+            .string()
+            .describe(
+              "Summary contribution statement suitable for an abstract.",
+            ),
+          gapTypes: zod
+            .array(zod.string())
+            .describe(
+              "Gap types this model addresses (subset of the 6 innovation types).",
+            ),
+          contributionType: zod
+            .string()
+            .describe(
+              'Single dominant contribution type label (e.g. \"mechanism\", \"boundary\").',
+            ),
+        })
+        .describe(
+          "Phase 3 AI-emitted 7-field structured self-explanation of why a model\nconstitutes a theoretical contribution. Null until `generate-contribution`\nis called; afterwards all 8 fields are non-empty.\n",
+        )
+        .nullable()
+        .describe(
+          "Phase 3 AI-emitted 7-field self-explanation. Null until\n`generate-contribution` is called.\n",
+        ),
+      computedAgainst: zod.object({
+        landscapeVersion: zod
+          .number()
+          .nullable()
+          .describe(
+            "Session's `landscapeMeta.landscapeVersion` at compute time.",
+          ),
+        coverageRate: zod
+          .number()
+          .min(
+            refineContributionStatementResponseInnovationMetaOneComputedAgainstCoverageRateMin,
+          )
+          .max(
+            refineContributionStatementResponseInnovationMetaOneComputedAgainstCoverageRateMax,
+          ),
+        computedAt: zod.coerce.date(),
+      }),
+      mode: zod.enum(["analysis_only", "enforced"]),
+      modeReason: zod.enum(["coverage_below_threshold", "ok"]),
+      warnings: zod.array(
+        zod.object({
+          code: zod.enum([
+            "contribution_statement_missing",
+            "no_innovation_type_detected",
+            "all_edges_low_novelty",
+          ]),
+          message: zod.string(),
+        }),
+      ),
+      stale: zod
+        .boolean()
+        .optional()
+        .describe(
+          "True iff the score was computed against an older\n`landscapeVersion` than the session currently has. Decorated by\nthe formatter at read time; not persisted in the JSONB.\n",
+        ),
+    })
+    .describe(
+      "Phase 2 Innovation Layer scoring + provenance for a single research\nmodel. NEVER causes hard rejection — `mode='analysis_only'` is the\ncontract for the whole slice 1 release. The UI MUST display all four\nsub-scores and surface `warnings` non-modally.\n",
+    )
+    .nullish()
+    .describe(
+      "Phase 2 Innovation Layer scoring + provenance. Always written for\nmodels generated after Phase 2 ships; null for older models.\n`mode='analysis_only'` means the score is descriptive — the system\nwill not reject the model on it. `stale=true` means the score was\ncomputed against an older landscape version and should be\nrecomputed before being trusted for hard decisions.\n",
+    ),
+  createdAt: zod.string(),
+});
+
+/**
+ * Computes a 5-dimension reviewer report from the model's persisted
+`innovationMeta` without any AI call. Dimensions: gap existence,
+novelty score, evidence grounding, coverage adequacy, statement
+completeness. Each dimension has `status: ok | warn | fail` and a
+`message`. Auth-gated by `loadAuthorizedSession`.
+
+ * @summary Rule-based reviewer report (zero AI cost)
+ */
+export const GetModelReviewParams = zod.object({
+  id: zod.coerce.number().describe("Session id (must own the model)."),
+  modelId: zod.coerce.number(),
+});
+
+export const getModelReviewResponseDimensionsMin = 5;
+export const getModelReviewResponseDimensionsMax = 5;
+
+export const GetModelReviewResponse = zod
+  .object({
+    modelId: zod.number(),
+    dimensions: zod
+      .array(
+        zod.object({
+          dimension: zod.enum([
+            "gap",
+            "novelty",
+            "evidence",
+            "coverage",
+            "statement",
+          ]),
+          label: zod
+            .string()
+            .describe("zh-CN display label for the dimension."),
+          status: zod.enum(["ok", "warn", "fail"]),
+          message: zod
+            .string()
+            .describe("zh-CN human-readable diagnostic message."),
+        }),
+      )
+      .min(getModelReviewResponseDimensionsMin)
+      .max(getModelReviewResponseDimensionsMax),
+    overallStatus: zod
+      .enum(["ok", "warn", "fail"])
+      .describe("Worst status across all 5 dimensions."),
+  })
+  .describe(
+    "Rule-based reviewer report (zero AI cost). 5 dimensions evaluated from `innovationMeta`.",
+  );
+
+/**
+ * Feeds the rule-based reviewer report + a summary of `innovationMeta`
+to gpt-5-mini and returns a Markdown narrative with reviewer-persona
+commentary (max 1 200 completion tokens). Auth-gated by
+`loadAuthorizedSession`. Cost: gpt-5-mini only.
+
+ * @summary AI deep review via gpt-5-mini (Markdown narrative)
+ */
+export const GenerateAiReviewParams = zod.object({
+  id: zod.coerce.number().describe("Session id (must own the model)."),
+  modelId: zod.coerce.number(),
+});
+
+export const GenerateAiReviewResponse = zod
+  .object({
+    markdown: zod
+      .string()
+      .describe("Reviewer-persona commentary in Markdown (max ~1 200 tokens)."),
+  })
+  .describe("AI deep-review narrative (gpt-5-mini, Markdown).");
 
 /**
  * Returns the snapshot the Innovation Layer reasons over: coverage,
@@ -2490,10 +3452,46 @@ export const UpdateModelResponse = zod.object({
         .max(updateModelResponseInnovationMetaOneContributionScoreMax)
         .describe("Headline number — geometric mean of the 4 sub-scores."),
       contributionStatement: zod
-        .record(zod.string(), zod.unknown())
+        .object({
+          whatIsKnown: zod
+            .string()
+            .describe(
+              "One sentence summarizing what the existing literature already establishes.",
+            ),
+          whatIsMissing: zod
+            .string()
+            .describe("One sentence on the gap this model addresses."),
+          whatThisAdds: zod
+            .string()
+            .describe("One sentence on what this model structurally adds."),
+          whyItMatters: zod
+            .string()
+            .describe("One sentence on the theoretical significance."),
+          researchGapClaim: zod
+            .string()
+            .describe("Explicit claim statement (≤ 40 words, academic tone)."),
+          theoreticalContribution: zod
+            .string()
+            .describe(
+              "Summary contribution statement suitable for an abstract.",
+            ),
+          gapTypes: zod
+            .array(zod.string())
+            .describe(
+              "Gap types this model addresses (subset of the 6 innovation types).",
+            ),
+          contributionType: zod
+            .string()
+            .describe(
+              'Single dominant contribution type label (e.g. \"mechanism\", \"boundary\").',
+            ),
+        })
+        .describe(
+          "Phase 3 AI-emitted 7-field structured self-explanation of why a model\nconstitutes a theoretical contribution. Null until `generate-contribution`\nis called; afterwards all 8 fields are non-empty.\n",
+        )
         .nullable()
         .describe(
-          "Phase 3 AI-emitted 7-field self-explanation. Always null in slice 1\n— `warnings` will carry `contribution_statement_missing` until the\nAI generation step ships.\n",
+          "Phase 3 AI-emitted 7-field self-explanation. Null until\n`generate-contribution` is called.\n",
         ),
       computedAgainst: zod.object({
         landscapeVersion: zod
@@ -2820,10 +3818,46 @@ export const GetModelResponse = zod.object({
         .max(getModelResponseInnovationMetaOneContributionScoreMax)
         .describe("Headline number — geometric mean of the 4 sub-scores."),
       contributionStatement: zod
-        .record(zod.string(), zod.unknown())
+        .object({
+          whatIsKnown: zod
+            .string()
+            .describe(
+              "One sentence summarizing what the existing literature already establishes.",
+            ),
+          whatIsMissing: zod
+            .string()
+            .describe("One sentence on the gap this model addresses."),
+          whatThisAdds: zod
+            .string()
+            .describe("One sentence on what this model structurally adds."),
+          whyItMatters: zod
+            .string()
+            .describe("One sentence on the theoretical significance."),
+          researchGapClaim: zod
+            .string()
+            .describe("Explicit claim statement (≤ 40 words, academic tone)."),
+          theoreticalContribution: zod
+            .string()
+            .describe(
+              "Summary contribution statement suitable for an abstract.",
+            ),
+          gapTypes: zod
+            .array(zod.string())
+            .describe(
+              "Gap types this model addresses (subset of the 6 innovation types).",
+            ),
+          contributionType: zod
+            .string()
+            .describe(
+              'Single dominant contribution type label (e.g. \"mechanism\", \"boundary\").',
+            ),
+        })
+        .describe(
+          "Phase 3 AI-emitted 7-field structured self-explanation of why a model\nconstitutes a theoretical contribution. Null until `generate-contribution`\nis called; afterwards all 8 fields are non-empty.\n",
+        )
         .nullable()
         .describe(
-          "Phase 3 AI-emitted 7-field self-explanation. Always null in slice 1\n— `warnings` will carry `contribution_statement_missing` until the\nAI generation step ships.\n",
+          "Phase 3 AI-emitted 7-field self-explanation. Null until\n`generate-contribution` is called.\n",
         ),
       computedAgainst: zod.object({
         landscapeVersion: zod
@@ -3219,10 +4253,46 @@ export const SelectModelResponse = zod.object({
         .max(selectModelResponseInnovationMetaOneContributionScoreMax)
         .describe("Headline number — geometric mean of the 4 sub-scores."),
       contributionStatement: zod
-        .record(zod.string(), zod.unknown())
+        .object({
+          whatIsKnown: zod
+            .string()
+            .describe(
+              "One sentence summarizing what the existing literature already establishes.",
+            ),
+          whatIsMissing: zod
+            .string()
+            .describe("One sentence on the gap this model addresses."),
+          whatThisAdds: zod
+            .string()
+            .describe("One sentence on what this model structurally adds."),
+          whyItMatters: zod
+            .string()
+            .describe("One sentence on the theoretical significance."),
+          researchGapClaim: zod
+            .string()
+            .describe("Explicit claim statement (≤ 40 words, academic tone)."),
+          theoreticalContribution: zod
+            .string()
+            .describe(
+              "Summary contribution statement suitable for an abstract.",
+            ),
+          gapTypes: zod
+            .array(zod.string())
+            .describe(
+              "Gap types this model addresses (subset of the 6 innovation types).",
+            ),
+          contributionType: zod
+            .string()
+            .describe(
+              'Single dominant contribution type label (e.g. \"mechanism\", \"boundary\").',
+            ),
+        })
+        .describe(
+          "Phase 3 AI-emitted 7-field structured self-explanation of why a model\nconstitutes a theoretical contribution. Null until `generate-contribution`\nis called; afterwards all 8 fields are non-empty.\n",
+        )
         .nullable()
         .describe(
-          "Phase 3 AI-emitted 7-field self-explanation. Always null in slice 1\n— `warnings` will carry `contribution_statement_missing` until the\nAI generation step ships.\n",
+          "Phase 3 AI-emitted 7-field self-explanation. Null until\n`generate-contribution` is called.\n",
         ),
       computedAgainst: zod.object({
         landscapeVersion: zod
@@ -4307,10 +5377,46 @@ export const ApplyModelEvidenceResponse = zod.object({
         .max(applyModelEvidenceResponseInnovationMetaOneContributionScoreMax)
         .describe("Headline number — geometric mean of the 4 sub-scores."),
       contributionStatement: zod
-        .record(zod.string(), zod.unknown())
+        .object({
+          whatIsKnown: zod
+            .string()
+            .describe(
+              "One sentence summarizing what the existing literature already establishes.",
+            ),
+          whatIsMissing: zod
+            .string()
+            .describe("One sentence on the gap this model addresses."),
+          whatThisAdds: zod
+            .string()
+            .describe("One sentence on what this model structurally adds."),
+          whyItMatters: zod
+            .string()
+            .describe("One sentence on the theoretical significance."),
+          researchGapClaim: zod
+            .string()
+            .describe("Explicit claim statement (≤ 40 words, academic tone)."),
+          theoreticalContribution: zod
+            .string()
+            .describe(
+              "Summary contribution statement suitable for an abstract.",
+            ),
+          gapTypes: zod
+            .array(zod.string())
+            .describe(
+              "Gap types this model addresses (subset of the 6 innovation types).",
+            ),
+          contributionType: zod
+            .string()
+            .describe(
+              'Single dominant contribution type label (e.g. \"mechanism\", \"boundary\").',
+            ),
+        })
+        .describe(
+          "Phase 3 AI-emitted 7-field structured self-explanation of why a model\nconstitutes a theoretical contribution. Null until `generate-contribution`\nis called; afterwards all 8 fields are non-empty.\n",
+        )
         .nullable()
         .describe(
-          "Phase 3 AI-emitted 7-field self-explanation. Always null in slice 1\n— `warnings` will carry `contribution_statement_missing` until the\nAI generation step ships.\n",
+          "Phase 3 AI-emitted 7-field self-explanation. Null until\n`generate-contribution` is called.\n",
         ),
       computedAgainst: zod.object({
         landscapeVersion: zod
@@ -4668,10 +5774,46 @@ export const RevertModelToVersionResponse = zod.object({
         .max(revertModelToVersionResponseInnovationMetaOneContributionScoreMax)
         .describe("Headline number — geometric mean of the 4 sub-scores."),
       contributionStatement: zod
-        .record(zod.string(), zod.unknown())
+        .object({
+          whatIsKnown: zod
+            .string()
+            .describe(
+              "One sentence summarizing what the existing literature already establishes.",
+            ),
+          whatIsMissing: zod
+            .string()
+            .describe("One sentence on the gap this model addresses."),
+          whatThisAdds: zod
+            .string()
+            .describe("One sentence on what this model structurally adds."),
+          whyItMatters: zod
+            .string()
+            .describe("One sentence on the theoretical significance."),
+          researchGapClaim: zod
+            .string()
+            .describe("Explicit claim statement (≤ 40 words, academic tone)."),
+          theoreticalContribution: zod
+            .string()
+            .describe(
+              "Summary contribution statement suitable for an abstract.",
+            ),
+          gapTypes: zod
+            .array(zod.string())
+            .describe(
+              "Gap types this model addresses (subset of the 6 innovation types).",
+            ),
+          contributionType: zod
+            .string()
+            .describe(
+              'Single dominant contribution type label (e.g. \"mechanism\", \"boundary\").',
+            ),
+        })
+        .describe(
+          "Phase 3 AI-emitted 7-field structured self-explanation of why a model\nconstitutes a theoretical contribution. Null until `generate-contribution`\nis called; afterwards all 8 fields are non-empty.\n",
+        )
         .nullable()
         .describe(
-          "Phase 3 AI-emitted 7-field self-explanation. Always null in slice 1\n— `warnings` will carry `contribution_statement_missing` until the\nAI generation step ships.\n",
+          "Phase 3 AI-emitted 7-field self-explanation. Null until\n`generate-contribution` is called.\n",
         ),
       computedAgainst: zod.object({
         landscapeVersion: zod

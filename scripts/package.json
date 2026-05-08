@@ -7,6 +7,7 @@
     "hello": "tsx ./src/hello.ts",
     "selftest:phase-1": "tsx ./src/selftest-phase-1.ts",
     "selftest:phase-2": "tsx ./src/selftest-phase-2.ts",
+    "selftest:phase-3": "tsx ./src/selftest-phase-3.ts",
     "probe:phase-2-real": "tsx ./src/probe-phase-2-real.ts",
     "d2-probe": "tsx ./src/d2-probe.ts",
     "pilot-reextract": "tsx ./src/pilot-reextract.ts",

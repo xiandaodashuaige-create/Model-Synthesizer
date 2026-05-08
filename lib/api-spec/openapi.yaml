@@ -1331,6 +1331,193 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /sessions/{id}/models/{modelId}/generate-contribution:
+    post:
+      operationId: generateContributionStatement
+      tags: [models]
+      summary: Generate a 7-field contributionStatement with gpt-5-mini
+      description: |
+        Reads the model's existing `innovationMeta` (edgeNoveltyTags,
+        innovationTypes, subScores) plus the session topic, builds a compact
+        prompt (≤ 2 000 tokens), calls gpt-5-mini in JSON mode, persists the
+        result in `innovationMeta.contributionStatement`, and returns the
+        updated model. Auth-gated by `loadAuthorizedSession`.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Session id (must own the model).
+          schema:
+            type: integer
+        - name: modelId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Updated model with contributionStatement populated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResearchModel"
+        "400":
+          description: Model has no innovationMeta to base the statement on.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Model not found or not in this session.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: AI integration unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /sessions/{id}/models/{modelId}/refine-contribution:
+    post:
+      operationId: refineContributionStatement
+      tags: [models]
+      summary: Rewrite the contributionStatement with the flagship model (gpt-5.4)
+      description: |
+        Same inputs as `generate-contribution` but uses the flagship model
+        for higher-quality output. Requires an existing `contributionStatement`
+        (generated first). Auth-gated by `loadAuthorizedSession`.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Session id (must own the model).
+          schema:
+            type: integer
+        - name: modelId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Updated model with refined contributionStatement.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResearchModel"
+        "400":
+          description: Model has no innovationMeta or no existing statement to refine.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Model not found or not in this session.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: AI integration unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /sessions/{id}/models/{modelId}/review:
+    get:
+      operationId: getModelReview
+      tags: [models]
+      summary: Rule-based reviewer report (zero AI cost)
+      description: |
+        Computes a 5-dimension reviewer report from the model's persisted
+        `innovationMeta` without any AI call. Dimensions: gap existence,
+        novelty score, evidence grounding, coverage adequacy, statement
+        completeness. Each dimension has `status: ok | warn | fail` and a
+        `message`. Auth-gated by `loadAuthorizedSession`.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Session id (must own the model).
+          schema:
+            type: integer
+        - name: modelId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Reviewer report.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReviewerReport"
+        "400":
+          description: Model has no innovationMeta yet.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Model not found or not in this session.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /sessions/{id}/models/{modelId}/ai-review:
+    post:
+      operationId: generateAiReview
+      tags: [models]
+      summary: AI deep review via gpt-5-mini (Markdown narrative)
+      description: |
+        Feeds the rule-based reviewer report + a summary of `innovationMeta`
+        to gpt-5-mini and returns a Markdown narrative with reviewer-persona
+        commentary (max 1 200 completion tokens). Auth-gated by
+        `loadAuthorizedSession`. Cost: gpt-5-mini only.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Session id (must own the model).
+          schema:
+            type: integer
+        - name: modelId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: AI review result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiReviewResult"
+        "400":
+          description: Model has no innovationMeta yet.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Model not found or not in this session.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: AI integration unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /sessions/{id}/landscape:
     get:
       operationId: getSessionLandscape
@@ -2846,6 +3033,93 @@ components:
           type: string
       required: [code, message]
 
+    ContributionStatement:
+      type: object
+      description: |
+        Phase 3 AI-emitted 7-field structured self-explanation of why a model
+        constitutes a theoretical contribution. Null until `generate-contribution`
+        is called; afterwards all 8 fields are non-empty.
+      properties:
+        whatIsKnown:
+          type: string
+          description: One sentence summarizing what the existing literature already establishes.
+        whatIsMissing:
+          type: string
+          description: One sentence on the gap this model addresses.
+        whatThisAdds:
+          type: string
+          description: One sentence on what this model structurally adds.
+        whyItMatters:
+          type: string
+          description: One sentence on the theoretical significance.
+        researchGapClaim:
+          type: string
+          description: Explicit claim statement (≤ 40 words, academic tone).
+        theoreticalContribution:
+          type: string
+          description: Summary contribution statement suitable for an abstract.
+        gapTypes:
+          type: array
+          items:
+            type: string
+          description: Gap types this model addresses (subset of the 6 innovation types).
+        contributionType:
+          type: string
+          description: Single dominant contribution type label (e.g. "mechanism", "boundary").
+      required:
+        - whatIsKnown
+        - whatIsMissing
+        - whatThisAdds
+        - whyItMatters
+        - researchGapClaim
+        - theoreticalContribution
+        - gapTypes
+        - contributionType
+
+    ReviewerDimension:
+      type: object
+      properties:
+        dimension:
+          type: string
+          enum: [gap, novelty, evidence, coverage, statement]
+        label:
+          type: string
+          description: zh-CN display label for the dimension.
+        status:
+          type: string
+          enum: [ok, warn, fail]
+        message:
+          type: string
+          description: zh-CN human-readable diagnostic message.
+      required: [dimension, label, status, message]
+
+    ReviewerReport:
+      type: object
+      description: Rule-based reviewer report (zero AI cost). 5 dimensions evaluated from `innovationMeta`.
+      properties:
+        modelId:
+          type: integer
+        dimensions:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReviewerDimension"
+          minItems: 5
+          maxItems: 5
+        overallStatus:
+          type: string
+          enum: [ok, warn, fail]
+          description: Worst status across all 5 dimensions.
+      required: [modelId, dimensions, overallStatus]
+
+    AiReviewResult:
+      type: object
+      description: AI deep-review narrative (gpt-5-mini, Markdown).
+      properties:
+        markdown:
+          type: string
+          description: Reviewer-persona commentary in Markdown (max ~1 200 tokens).
+      required: [markdown]
+
     InnovationMeta:
       type: object
       description: |
@@ -2879,13 +3153,12 @@ components:
           maximum: 100
           description: Headline number — geometric mean of the 4 sub-scores.
         contributionStatement:
-          type: object
           nullable: true
-          additionalProperties: true
+          allOf:
+            - $ref: "#/components/schemas/ContributionStatement"
           description: |
-            Phase 3 AI-emitted 7-field self-explanation. Always null in slice 1
-            — `warnings` will carry `contribution_statement_missing` until the
-            AI generation step ships.
+            Phase 3 AI-emitted 7-field self-explanation. Null until
+            `generate-contribution` is called.
         computedAgainst:
           type: object
           properties:

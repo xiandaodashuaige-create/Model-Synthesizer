@@ -101,6 +101,19 @@ export interface InnovationWarning {
   message: string;
 }
 
+// Phase 3: AI-emitted 7-field structured self-explanation.
+// Persisted in `researchModelsTable.innovationMeta.contributionStatement`.
+export interface ContributionStatement {
+  whatIsKnown: string;
+  whatIsMissing: string;
+  whatThisAdds: string;
+  whyItMatters: string;
+  researchGapClaim: string;
+  theoreticalContribution: string;
+  gapTypes: string[];
+  contributionType: string;
+}
+
 export interface InnovationMeta {
   // Per-edge novelty tagging (parallel to model.edges by index).
   edgeNoveltyTags: EdgeNoveltyTagging[];
@@ -113,8 +126,8 @@ export interface InnovationMeta {
   subScores: InnovationSubScores;
   // The headline number, geometric mean of subscores.
   contributionScore: number;
-  // Phase 3 AI-emitted 7-field statement. Always null in slice-1 (warn-only).
-  contributionStatement: null;
+  // Phase 3 AI-emitted 7-field statement. Null until generate-contribution is called.
+  contributionStatement: ContributionStatement | null;
   // Provenance: which landscape this score was computed against, when, and
   // whether the system is currently allowed to reject on it.
   computedAgainst: {

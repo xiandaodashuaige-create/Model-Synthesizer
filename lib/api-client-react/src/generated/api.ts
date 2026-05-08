@@ -21,6 +21,7 @@ import type {
   AddLiveModelEdgeBody,
   AddLiveModelNodeBody,
   AddPaperBody,
+  AiReviewResult,
   AiUsageSummary,
   AuthUserEnvelope,
   BulkImportPapersBody,
@@ -56,6 +57,7 @@ import type {
   PaperFullTextHit,
   PaperSearchResult,
   ResearchModel,
+  ReviewerReport,
   SearchModelImages200,
   SearchModelImagesBody,
   SearchModelPapers200,
@@ -3517,6 +3519,386 @@ export const useRecomputeModelInnovation = <
   TContext
 > => {
   return useMutation(getRecomputeModelInnovationMutationOptions(options));
+};
+
+/**
+ * Reads the model's existing `innovationMeta` (edgeNoveltyTags,
+innovationTypes, subScores) plus the session topic, builds a compact
+prompt (≤ 2 000 tokens), calls gpt-5-mini in JSON mode, persists the
+result in `innovationMeta.contributionStatement`, and returns the
+updated model. Auth-gated by `loadAuthorizedSession`.
+
+ * @summary Generate a 7-field contributionStatement with gpt-5-mini
+ */
+export const getGenerateContributionStatementUrl = (
+  id: number,
+  modelId: number,
+) => {
+  return `/api/sessions/${id}/models/${modelId}/generate-contribution`;
+};
+
+export const generateContributionStatement = async (
+  id: number,
+  modelId: number,
+  options?: RequestInit,
+): Promise<ResearchModel> => {
+  return customFetch<ResearchModel>(
+    getGenerateContributionStatementUrl(id, modelId),
+    {
+      ...options,
+      method: "POST",
+    },
+  );
+};
+
+export const getGenerateContributionStatementMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof generateContributionStatement>>,
+    TError,
+    { id: number; modelId: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof generateContributionStatement>>,
+  TError,
+  { id: number; modelId: number },
+  TContext
+> => {
+  const mutationKey = ["generateContributionStatement"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof generateContributionStatement>>,
+    { id: number; modelId: number }
+  > = (props) => {
+    const { id, modelId } = props ?? {};
+
+    return generateContributionStatement(id, modelId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type GenerateContributionStatementMutationResult = NonNullable<
+  Awaited<ReturnType<typeof generateContributionStatement>>
+>;
+
+export type GenerateContributionStatementMutationError =
+  ErrorType<ErrorResponse>;
+
+/**
+ * @summary Generate a 7-field contributionStatement with gpt-5-mini
+ */
+export const useGenerateContributionStatement = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof generateContributionStatement>>,
+    TError,
+    { id: number; modelId: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof generateContributionStatement>>,
+  TError,
+  { id: number; modelId: number },
+  TContext
+> => {
+  return useMutation(getGenerateContributionStatementMutationOptions(options));
+};
+
+/**
+ * Same inputs as `generate-contribution` but uses the flagship model
+for higher-quality output. Requires an existing `contributionStatement`
+(generated first). Auth-gated by `loadAuthorizedSession`.
+
+ * @summary Rewrite the contributionStatement with the flagship model (gpt-5.4)
+ */
+export const getRefineContributionStatementUrl = (
+  id: number,
+  modelId: number,
+) => {
+  return `/api/sessions/${id}/models/${modelId}/refine-contribution`;
+};
+
+export const refineContributionStatement = async (
+  id: number,
+  modelId: number,
+  options?: RequestInit,
+): Promise<ResearchModel> => {
+  return customFetch<ResearchModel>(
+    getRefineContributionStatementUrl(id, modelId),
+    {
+      ...options,
+      method: "POST",
+    },
+  );
+};
+
+export const getRefineContributionStatementMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof refineContributionStatement>>,
+    TError,
+    { id: number; modelId: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof refineContributionStatement>>,
+  TError,
+  { id: number; modelId: number },
+  TContext
+> => {
+  const mutationKey = ["refineContributionStatement"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof refineContributionStatement>>,
+    { id: number; modelId: number }
+  > = (props) => {
+    const { id, modelId } = props ?? {};
+
+    return refineContributionStatement(id, modelId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RefineContributionStatementMutationResult = NonNullable<
+  Awaited<ReturnType<typeof refineContributionStatement>>
+>;
+
+export type RefineContributionStatementMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Rewrite the contributionStatement with the flagship model (gpt-5.4)
+ */
+export const useRefineContributionStatement = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof refineContributionStatement>>,
+    TError,
+    { id: number; modelId: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof refineContributionStatement>>,
+  TError,
+  { id: number; modelId: number },
+  TContext
+> => {
+  return useMutation(getRefineContributionStatementMutationOptions(options));
+};
+
+/**
+ * Computes a 5-dimension reviewer report from the model's persisted
+`innovationMeta` without any AI call. Dimensions: gap existence,
+novelty score, evidence grounding, coverage adequacy, statement
+completeness. Each dimension has `status: ok | warn | fail` and a
+`message`. Auth-gated by `loadAuthorizedSession`.
+
+ * @summary Rule-based reviewer report (zero AI cost)
+ */
+export const getGetModelReviewUrl = (id: number, modelId: number) => {
+  return `/api/sessions/${id}/models/${modelId}/review`;
+};
+
+export const getModelReview = async (
+  id: number,
+  modelId: number,
+  options?: RequestInit,
+): Promise<ReviewerReport> => {
+  return customFetch<ReviewerReport>(getGetModelReviewUrl(id, modelId), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetModelReviewQueryKey = (id: number, modelId: number) => {
+  return [`/api/sessions/${id}/models/${modelId}/review`] as const;
+};
+
+export const getGetModelReviewQueryOptions = <
+  TData = Awaited<ReturnType<typeof getModelReview>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  id: number,
+  modelId: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getModelReview>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetModelReviewQueryKey(id, modelId);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getModelReview>>> = ({
+    signal,
+  }) => getModelReview(id, modelId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!(id && modelId),
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getModelReview>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetModelReviewQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getModelReview>>
+>;
+export type GetModelReviewQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Rule-based reviewer report (zero AI cost)
+ */
+
+export function useGetModelReview<
+  TData = Awaited<ReturnType<typeof getModelReview>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  id: number,
+  modelId: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getModelReview>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetModelReviewQueryOptions(id, modelId, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Feeds the rule-based reviewer report + a summary of `innovationMeta`
+to gpt-5-mini and returns a Markdown narrative with reviewer-persona
+commentary (max 1 200 completion tokens). Auth-gated by
+`loadAuthorizedSession`. Cost: gpt-5-mini only.
+
+ * @summary AI deep review via gpt-5-mini (Markdown narrative)
+ */
+export const getGenerateAiReviewUrl = (id: number, modelId: number) => {
+  return `/api/sessions/${id}/models/${modelId}/ai-review`;
+};
+
+export const generateAiReview = async (
+  id: number,
+  modelId: number,
+  options?: RequestInit,
+): Promise<AiReviewResult> => {
+  return customFetch<AiReviewResult>(getGenerateAiReviewUrl(id, modelId), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getGenerateAiReviewMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof generateAiReview>>,
+    TError,
+    { id: number; modelId: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof generateAiReview>>,
+  TError,
+  { id: number; modelId: number },
+  TContext
+> => {
+  const mutationKey = ["generateAiReview"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof generateAiReview>>,
+    { id: number; modelId: number }
+  > = (props) => {
+    const { id, modelId } = props ?? {};
+
+    return generateAiReview(id, modelId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type GenerateAiReviewMutationResult = NonNullable<
+  Awaited<ReturnType<typeof generateAiReview>>
+>;
+
+export type GenerateAiReviewMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary AI deep review via gpt-5-mini (Markdown narrative)
+ */
+export const useGenerateAiReview = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof generateAiReview>>,
+    TError,
+    { id: number; modelId: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof generateAiReview>>,
+  TError,
+  { id: number; modelId: number },
+  TContext
+> => {
+  return useMutation(getGenerateAiReviewMutationOptions(options));
 };
 
 /**

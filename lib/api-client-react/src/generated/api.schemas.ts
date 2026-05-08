@@ -602,6 +602,31 @@ export interface InnovationSubScores {
   evidenceSupport: number;
 }
 
+/**
+ * Phase 3 AI-emitted 7-field structured self-explanation of why a model
+constitutes a theoretical contribution. Null until `generate-contribution`
+is called; afterwards all 8 fields are non-empty.
+
+ */
+export interface ContributionStatement {
+  /** One sentence summarizing what the existing literature already establishes. */
+  whatIsKnown: string;
+  /** One sentence on the gap this model addresses. */
+  whatIsMissing: string;
+  /** One sentence on what this model structurally adds. */
+  whatThisAdds: string;
+  /** One sentence on the theoretical significance. */
+  whyItMatters: string;
+  /** Explicit claim statement (≤ 40 words, academic tone). */
+  researchGapClaim: string;
+  /** Summary contribution statement suitable for an abstract. */
+  theoreticalContribution: string;
+  /** Gap types this model addresses (subset of the 6 innovation types). */
+  gapTypes: string[];
+  /** Single dominant contribution type label (e.g. "mechanism", "boundary"). */
+  contributionType: string;
+}
+
 export type InnovationMetaMode =
   (typeof InnovationMetaMode)[keyof typeof InnovationMetaMode];
 
@@ -631,16 +656,6 @@ export interface InnovationWarning {
   code: InnovationWarningCode;
   message: string;
 }
-
-/**
- * Phase 3 AI-emitted 7-field self-explanation. Always null in slice 1
-— `warnings` will carry `contribution_statement_missing` until the
-AI generation step ships.
-
- */
-export type InnovationMetaContributionStatement = {
-  [key: string]: unknown;
-} | null;
 
 export type InnovationMetaComputedAgainst = {
   /** Session's `landscapeMeta.landscapeVersion` at compute time. */
@@ -678,11 +693,10 @@ export interface InnovationMeta {
    * @maximum 100
    */
   contributionScore: number;
-  /** Phase 3 AI-emitted 7-field self-explanation. Always null in slice 1
-— `warnings` will carry `contribution_statement_missing` until the
-AI generation step ships.
+  /** Phase 3 AI-emitted 7-field self-explanation. Null until
+`generate-contribution` is called.
  */
-  contributionStatement: InnovationMetaContributionStatement;
+  contributionStatement: ContributionStatement | null;
   computedAgainst: InnovationMetaComputedAgainst;
   mode: InnovationMetaMode;
   modeReason: InnovationMetaModeReason;
@@ -816,6 +830,69 @@ export interface SessionLandscape {
 `theoryBackbone`. Lower-cased, de-duplicated, sorted.
  */
   evidencedBackbones: string[];
+}
+
+export type ReviewerDimensionDimension =
+  (typeof ReviewerDimensionDimension)[keyof typeof ReviewerDimensionDimension];
+
+export const ReviewerDimensionDimension = {
+  gap: "gap",
+  novelty: "novelty",
+  evidence: "evidence",
+  coverage: "coverage",
+  statement: "statement",
+} as const;
+
+export type ReviewerDimensionStatus =
+  (typeof ReviewerDimensionStatus)[keyof typeof ReviewerDimensionStatus];
+
+export const ReviewerDimensionStatus = {
+  ok: "ok",
+  warn: "warn",
+  fail: "fail",
+} as const;
+
+export interface ReviewerDimension {
+  dimension: ReviewerDimensionDimension;
+  /** zh-CN display label for the dimension. */
+  label: string;
+  status: ReviewerDimensionStatus;
+  /** zh-CN human-readable diagnostic message. */
+  message: string;
+}
+
+/**
+ * Worst status across all 5 dimensions.
+ */
+export type ReviewerReportOverallStatus =
+  (typeof ReviewerReportOverallStatus)[keyof typeof ReviewerReportOverallStatus];
+
+export const ReviewerReportOverallStatus = {
+  ok: "ok",
+  warn: "warn",
+  fail: "fail",
+} as const;
+
+/**
+ * Rule-based reviewer report (zero AI cost). 5 dimensions evaluated from `innovationMeta`.
+ */
+export interface ReviewerReport {
+  modelId: number;
+  /**
+   * @minItems 5
+   * @maxItems 5
+   */
+  dimensions: ReviewerDimension[];
+  /** Worst status across all 5 dimensions. */
+  overallStatus: ReviewerReportOverallStatus;
+}
+
+/**
+ * AI deep-review narrative (gpt-5-mini, Markdown).
+ */
+export interface AiReviewResult {
+  /** Reviewer-persona commentary in Markdown (max ~1 200 tokens). */
+  markdown: string;
 }
 
 export interface LiveModelNodeOut {

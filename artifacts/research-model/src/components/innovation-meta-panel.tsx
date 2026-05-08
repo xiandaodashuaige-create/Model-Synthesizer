@@ -1,9 +1,14 @@
 import React, { useState } from "react";
-import { ChevronDown, ChevronUp, RefreshCw, Sparkles, AlertTriangle, Info, Loader2 } from "lucide-react";
+import { ChevronDown, ChevronUp, RefreshCw, Sparkles, AlertTriangle, Info, Loader2, CheckCircle, XCircle, AlertCircle, Wand2, Bot } from "lucide-react";
 import {
   useRecomputeModelInnovation,
+  useGenerateContributionStatement,
+  useRefineContributionStatement,
+  useGetModelReview,
+  useGenerateAiReview,
   getGetModelQueryKey,
   getListSessionModelsQueryKey,
+  getGetModelReviewQueryKey,
 } from "@workspace/api-client-react";
 import type {
   InnovationMeta,
@@ -11,23 +16,19 @@ import type {
   InnovationMetaInnovationTypesItem,
   InnovationWarning,
   EdgeNoveltyTagTag,
+  ContributionStatement,
+  ReviewerDimension,
+  ReviewerDimensionStatus,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { useT } from "@/lib/i18n";
 
-// Phase 2 Innovation Layer slice 3 — single shared panel rendered both in
-// the candidate model card (variant="compact") and the model detail page
-// (variant="full"). The compact variant intentionally hides the per-edge
-// novelty list because the detail page is the right place to read it.
-//
-// Per architect-side contract:
-//   - 4 sub-scores ALWAYS shown next to the headline (never collapse)
-//   - innovationMeta missing → empty card with "尚未生成创新分析" + recompute
-//   - mode='analysis_only' → coverage warning banner displayed prominently
-//   - contributionStatement null → friendly empty-state, NOT 0 / NaN / ""
-//   - noveltyScore=null → "暂无可评分关系" (zero-edge model)
-//   - stale=true → amber stale badge with one-click recompute
+// Phase 3 Innovation Layer — contribution statement generation + reviewer simulator.
+// Extends slice 3 (compact + full variants) with:
+//   - "生成贡献陈述" button (gpt-5-mini) + "高质量重写" button (gpt-5.4)
+//   - Rule-based reviewer report (auto-loads in full variant)
+//   - "AI 深度评审" button (gpt-5-mini, on-demand)
 
 type Variant = "compact" | "full";
 
@@ -40,6 +41,21 @@ const TAG_COLOR: Record<EdgeNoveltyTagTag, string> = {
   underexplored: "bg-amber-50 text-amber-800 border-amber-300",
   established: "bg-slate-50 text-slate-700 border-slate-300",
   saturated: "bg-slate-100 text-slate-600 border-slate-300",
+};
+
+const REVIEW_STATUS_CONFIG: Record<ReviewerDimensionStatus, { icon: React.ReactNode; textCls: string }> = {
+  ok: {
+    icon: <CheckCircle className="w-3.5 h-3.5 text-emerald-600 shrink-0" />,
+    textCls: "text-emerald-800 dark:text-emerald-300",
+  },
+  warn: {
+    icon: <AlertCircle className="w-3.5 h-3.5 text-amber-500 shrink-0" />,
+    textCls: "text-amber-800 dark:text-amber-300",
+  },
+  fail: {
+    icon: <XCircle className="w-3.5 h-3.5 text-rose-600 shrink-0" />,
+    textCls: "text-rose-700 dark:text-rose-400",
+  },
 };
 
 function fmtScore(n: number | null | undefined): string {
@@ -185,6 +201,223 @@ function WarningRow({ warning }: { warning: InnovationWarning }) {
   );
 }
 
+// ── Contribution Statement section (full variant only) ──────────────────────
+
+const CONTRIBUTION_FIELDS: Array<{ key: keyof ContributionStatement; i18nKey: string }> = [
+  { key: "whatIsKnown", i18nKey: "innovation.contribution.whatIsKnown" },
+  { key: "whatIsMissing", i18nKey: "innovation.contribution.whatIsMissing" },
+  { key: "whatThisAdds", i18nKey: "innovation.contribution.whatThisAdds" },
+  { key: "whyItMatters", i18nKey: "innovation.contribution.whyItMatters" },
+  { key: "researchGapClaim", i18nKey: "innovation.contribution.researchGapClaim" },
+  { key: "theoreticalContribution", i18nKey: "innovation.contribution.theoreticalContribution" },
+  { key: "contributionType", i18nKey: "innovation.contribution.contributionType" },
+];
+
+function ContributionSection({
+  sessionId,
+  modelId,
+  statement,
+}: {
+  sessionId: number;
+  modelId: number;
+  statement: ContributionStatement | null | undefined;
+}) {
+  const { t } = useT();
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  const generate = useGenerateContributionStatement();
+  const refine = useRefineContributionStatement();
+  const busy = generate.isPending || refine.isPending;
+
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: getGetModelQueryKey(modelId) });
+    queryClient.invalidateQueries({ queryKey: getListSessionModelsQueryKey(sessionId) });
+    queryClient.invalidateQueries({ queryKey: getGetModelReviewQueryKey(sessionId, modelId) });
+  };
+
+  const onGenerate = () =>
+    generate.mutate(
+      { id: sessionId, modelId },
+      {
+        onSuccess: invalidate,
+        onError: () => toast({ title: t("innovation.contribution.generate.error" as any), variant: "destructive" }),
+      },
+    );
+
+  const onRefine = () =>
+    refine.mutate(
+      { id: sessionId, modelId },
+      {
+        onSuccess: invalidate,
+        onError: () => toast({ title: t("innovation.contribution.refine.error" as any), variant: "destructive" }),
+      },
+    );
+
+  return (
+    <div className="border-t border-border pt-3">
+      <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
+        <div className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground">
+          {t("innovation.contribution.title" as any)}
+        </div>
+        {!statement && (
+          <button
+            type="button"
+            onClick={onGenerate}
+            disabled={busy}
+            data-testid="button-generate-contribution"
+            className="inline-flex items-center gap-1.5 rounded-md text-[11px] font-medium border border-primary/40 bg-primary/5 hover:bg-primary/10 text-primary h-6 px-2.5 transition-colors disabled:opacity-50"
+          >
+            {generate.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+            {generate.isPending
+              ? (t("innovation.contribution.generating" as any) as string)
+              : (t("innovation.contribution.generate" as any) as string)}
+          </button>
+        )}
+      </div>
+
+      {!statement ? (
+        <div
+          data-testid="empty-contribution-statement"
+          className="text-[11px] text-muted-foreground italic"
+        >
+          {t("innovation.contribution.empty" as any)}
+        </div>
+      ) : (
+        <div data-testid="contribution-statement-body" className="space-y-2">
+          {CONTRIBUTION_FIELDS.map(({ key, i18nKey }) => {
+            const val = statement[key];
+            const display = Array.isArray(val) ? (val as string[]).join("、") : String(val ?? "");
+            if (!display) return null;
+            return (
+              <div key={key} className="text-[11px]">
+                <span className="font-semibold text-foreground mr-1">{t(i18nKey as any) as string}：</span>
+                <span className="text-muted-foreground leading-relaxed">{display}</span>
+              </div>
+            );
+          })}
+          {Array.isArray(statement.gapTypes) && statement.gapTypes.length > 0 && (
+            <div className="text-[11px]">
+              <span className="font-semibold text-foreground mr-1">{t("innovation.contribution.gapTypes" as any) as string}：</span>
+              <span className="text-muted-foreground">{statement.gapTypes.join("、")}</span>
+            </div>
+          )}
+          <div className="flex justify-end pt-1">
+            <button
+              type="button"
+              onClick={onRefine}
+              disabled={busy}
+              data-testid="button-refine-contribution"
+              className="inline-flex items-center gap-1 rounded-md text-[10px] font-medium border border-border bg-background hover:bg-accent h-6 px-2 transition-colors disabled:opacity-50 text-muted-foreground"
+            >
+              {refine.isPending ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Wand2 className="w-2.5 h-2.5" />}
+              {refine.isPending
+                ? (t("innovation.contribution.refining" as any) as string)
+                : (t("innovation.contribution.refine" as any) as string)}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Reviewer section (full variant only) ────────────────────────────────────
+
+function ReviewDimensionRow({ dim }: { dim: ReviewerDimension }) {
+  const cfg = REVIEW_STATUS_CONFIG[dim.status];
+  return (
+    <div className="flex items-start gap-2 text-[11px]">
+      {cfg.icon}
+      <div className="flex-1 min-w-0">
+        <span className="font-semibold text-foreground">{dim.label}：</span>
+        <span className={cfg.textCls}>{dim.message}</span>
+      </div>
+    </div>
+  );
+}
+
+function ReviewerSection({ sessionId, modelId }: { sessionId: number; modelId: number }) {
+  const { t } = useT();
+  const { toast } = useToast();
+  const [aiMarkdown, setAiMarkdown] = useState<string | null>(null);
+  const aiReview = useGenerateAiReview();
+
+  const reviewQuery = useGetModelReview(sessionId, modelId);
+
+  const onAiReview = () =>
+    aiReview.mutate(
+      { id: sessionId, modelId },
+      {
+        onSuccess: (data) => setAiMarkdown(data.markdown ?? null),
+        onError: () => toast({ title: t("innovation.reviewer.aiReview.error" as any), variant: "destructive" }),
+      },
+    );
+
+  return (
+    <div className="border-t border-border pt-3">
+      <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
+        <div className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground">
+          {t("innovation.reviewer.title" as any)}
+        </div>
+        {reviewQuery.isLoading && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />}
+      </div>
+
+      {reviewQuery.error ? (
+        <div className="text-[11px] text-muted-foreground italic">
+          无法加载规则评审（模型可能尚无创新分析）。
+        </div>
+      ) : reviewQuery.data ? (
+        <div className="space-y-1.5">
+          {reviewQuery.data.dimensions.map((dim) => (
+            <ReviewDimensionRow key={dim.dimension} dim={dim} />
+          ))}
+        </div>
+      ) : null}
+
+      <div className="mt-3">
+        {!aiMarkdown ? (
+          <button
+            type="button"
+            onClick={onAiReview}
+            disabled={aiReview.isPending}
+            data-testid="button-ai-review"
+            className="inline-flex items-center gap-1.5 rounded-md text-[11px] font-medium border border-border bg-background hover:bg-accent h-7 px-3 transition-colors disabled:opacity-50"
+          >
+            {aiReview.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Bot className="w-3 h-3" />}
+            {aiReview.isPending
+              ? (t("innovation.reviewer.aiReview.loading" as any) as string)
+              : (t("innovation.reviewer.aiReview" as any) as string)}
+          </button>
+        ) : (
+          <div data-testid="ai-review-result" className="space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground flex items-center gap-1">
+                <Bot className="w-3 h-3" />
+                {t("innovation.reviewer.aiReview.title" as any)}
+              </div>
+              <button
+                type="button"
+                onClick={onAiReview}
+                disabled={aiReview.isPending}
+                className="inline-flex items-center gap-1 rounded text-[10px] border border-border bg-background hover:bg-accent h-5 px-1.5 transition-colors disabled:opacity-50 text-muted-foreground"
+              >
+                {aiReview.isPending ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <RefreshCw className="w-2.5 h-2.5" />}
+                重新评审
+              </button>
+            </div>
+            <div className="rounded-md border border-border bg-muted/20 p-3 text-[11px] text-foreground leading-relaxed whitespace-pre-wrap">
+              {aiMarkdown}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Main export ─────────────────────────────────────────────────────────────
+
 export function InnovationMetaPanel({
   sessionId,
   modelId,
@@ -201,25 +434,20 @@ export function InnovationMetaPanel({
   const { toast } = useToast();
   const recompute = useRecomputeModelInnovation();
 
-  const onRecompute = () => {
+  const onRecompute = () =>
     recompute.mutate(
       { id: sessionId, modelId },
       {
         onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: getGetModelQueryKey(modelId) });
           queryClient.invalidateQueries({ queryKey: getListSessionModelsQueryKey(sessionId) });
+          queryClient.invalidateQueries({ queryKey: getGetModelReviewQueryKey(sessionId, modelId) });
           toast({ title: t("innovation.recompute.done" as any) });
         },
-        onError: () => {
-          toast({ title: t("innovation.recompute.failed" as any), variant: "destructive" });
-        },
+        onError: () => toast({ title: t("innovation.recompute.failed" as any), variant: "destructive" }),
       },
     );
-  };
 
-  // Empty state — model has no innovationMeta at all (legacy model, or
-  // landscape rebuild pending). Per spec the UI must handle this without
-  // showing 0 / NaN / undefined for any score.
   if (!meta) {
     return (
       <div
@@ -246,7 +474,6 @@ export function InnovationMetaPanel({
   const coveragePct = Math.round((meta.computedAgainst.coverageRate ?? 0) * 100);
   const stale = meta.stale === true;
   const noScoredEdges = meta.noveltyScore == null;
-  const contributionMissing = meta.contributionStatement == null;
 
   return (
     <div
@@ -283,7 +510,7 @@ export function InnovationMetaPanel({
         </button>
       </div>
 
-      {/* Mode banner: analysis_only must be very visible per spec */}
+      {/* Mode banner */}
       {isAnalysisOnly ? (
         <div
           data-testid="banner-innovation-analysis-only"
@@ -308,7 +535,7 @@ export function InnovationMetaPanel({
         </div>
       )}
 
-      {/* Headline + 4 sub-scores: must always be visible together */}
+      {/* Headline + 4 sub-scores: always visible together per spec */}
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
         <ScoreCell
           tone="headline"
@@ -338,8 +565,6 @@ export function InnovationMetaPanel({
         />
       </div>
 
-      {/* noveltyScore=null tells the user "the model has no scorable edges"
-          without ever rendering "0" or "NaN". */}
       {noScoredEdges && (
         <div className="text-[11px] text-muted-foreground italic">
           {t("innovation.noveltyEmpty" as any)}
@@ -373,51 +598,37 @@ export function InnovationMetaPanel({
         </ul>
       )}
 
-      {/* Contribution statement: full variant only, with explicit empty
-          state so users know it is intentionally pending (not a render bug). */}
+      {/* Full-variant only sections */}
       {variant === "full" && (
-        <div className="border-t border-border pt-3">
-          <div className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground mb-1">
-            {t("innovation.contribution.title" as any)}
-          </div>
-          {contributionMissing ? (
-            <div
-              data-testid="empty-contribution-statement"
-              className="text-[11px] text-muted-foreground italic"
-            >
-              {t("innovation.contribution.empty" as any)}
+        <>
+          <ContributionSection
+            sessionId={sessionId}
+            modelId={modelId}
+            statement={meta.contributionStatement ?? null}
+          />
+          <ReviewerSection sessionId={sessionId} modelId={modelId} />
+          <div className="border-t border-border pt-3">
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground">
+                {t("innovation.edges.title" as any)}
+              </div>
+              {meta.edgeNoveltyTags.length > 0 && (
+                <div className="text-[10px] text-muted-foreground">
+                  {t("innovation.edges.help" as any)}
+                </div>
+              )}
             </div>
-          ) : (
-            <pre className="text-[11px] text-foreground whitespace-pre-wrap font-sans leading-relaxed">
-              {JSON.stringify(meta.contributionStatement, null, 2)}
-            </pre>
-          )}
-        </div>
-      )}
-
-      {/* Per-edge novelty list (full variant only) */}
-      {variant === "full" && (
-        <div className="border-t border-border pt-3">
-          <div className="flex items-center justify-between mb-2">
-            <div className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground">
-              {t("innovation.edges.title" as any)}
-            </div>
-            {meta.edgeNoveltyTags.length > 0 && (
-              <div className="text-[10px] text-muted-foreground">
-                {t("innovation.edges.help" as any)}
+            {meta.edgeNoveltyTags.length === 0 ? (
+              <div className="text-[11px] text-muted-foreground italic">
+                {t("innovation.edges.empty" as any)}
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                {meta.edgeNoveltyTags.map((e) => <EdgeRow key={e.edgeIndex} edge={e} />)}
               </div>
             )}
           </div>
-          {meta.edgeNoveltyTags.length === 0 ? (
-            <div className="text-[11px] text-muted-foreground italic">
-              {t("innovation.edges.empty" as any)}
-            </div>
-          ) : (
-            <div className="space-y-1.5">
-              {meta.edgeNoveltyTags.map((e) => <EdgeRow key={e.edgeIndex} edge={e} />)}
-            </div>
-          )}
-        </div>
+        </>
       )}
     </div>
   );

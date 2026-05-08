@@ -12,7 +12,7 @@ import {
   modelAssistantMessagesTable,
 } from "@workspace/db";
 import { findEvidenceForModel, importWebPaper, makeEdgeKey, type EdgeInput } from "../lib/evidence-matching.js";
-import { computeInnovationMeta, isInnovationMetaStale, loadLandscapeSnapshot, type InnovationMeta } from "../lib/innovation-scoring.js";
+import { computeInnovationMeta, isInnovationMetaStale, loadLandscapeSnapshot, type InnovationMeta, type ContributionStatement } from "../lib/innovation-scoring.js";
 import {
   GenerateModelsParams,
   GenerateModelsBody,
@@ -2867,6 +2867,313 @@ router.post("/sessions/:id/models/:modelId/recompute-innovation", async (req, re
   } catch (err) {
     req.log.error({ err, modelId }, "recompute-innovation failed");
     res.status(500).json({ error: "innovation scoring failed" });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Phase 3 — Contribution statement generation & Reviewer simulator
+// ---------------------------------------------------------------------------
+
+// Shared helper: load a model and verify it belongs to `sessionId`.
+async function loadAuthorizedModel(sessionId: number, modelId: number) {
+  const [model] = await db.select().from(researchModelsTable).where(eq(researchModelsTable.id, modelId));
+  if (!model || model.sessionId !== sessionId) return null;
+  return model;
+}
+
+// Build a compact prompt context string from innovationMeta (≤ ~600 tokens).
+function buildInnovationContext(topic: string, meta: InnovationMeta): string {
+  const edgeSummary = meta.edgeNoveltyTags
+    .slice(0, 6)
+    .map((e) => `  · ${e.fromVariableName} →[${e.tag}]→ ${e.toVariableName} (${e.subscore}分)`)
+    .join("\n");
+  const types = meta.innovationTypes.length > 0 ? meta.innovationTypes.join("、") : "暂未识别";
+  return [
+    `研究主题：${topic}`,
+    `创新类型：${types}`,
+    `贡献总分：${meta.contributionScore}/100`,
+    `新颖度：${meta.noveltyScore ?? "—"}/100`,
+    `维度分数：差异化=${meta.subScores.differentiation}, 缺口契合=${meta.subScores.gapFit}, 理论支撑=${meta.subScores.theoreticalSoundness}, 证据基础=${meta.subScores.evidenceSupport}`,
+    `关系边（前 ${Math.min(6, meta.edgeNoveltyTags.length)} 条）：`,
+    edgeSummary || "  （暂无）",
+  ].join("\n");
+}
+
+const CONTRIBUTION_SYSTEM_PROMPT = `你是学术论文审稿人兼研究方法专家（专注量化实证研究）。给你一个研究模型的创新分析摘要，请生成结构化的理论贡献陈述。
+要求：所有字段均用中文；whatIsKnown/whatIsMissing/whatThisAdds/whyItMatters 各一句话；researchGapClaim ≤ 40 词，学术口吻；theoreticalContribution 2-3 句话，可直接放入摘要；gapTypes 从已识别的创新类型中选取；contributionType 填主要类型单个标签（mechanism/boundary/integration/correction/construct/context 之一）。
+只输出 JSON，不加任何其他文字。`;
+
+const CONTRIBUTION_USER_TEMPLATE = `以下是研究模型的创新分析：
+
+{context}
+
+请输出严格符合以下结构的 JSON（不要 markdown 代码块）：
+{
+  "whatIsKnown": "...",
+  "whatIsMissing": "...",
+  "whatThisAdds": "...",
+  "whyItMatters": "...",
+  "researchGapClaim": "...",
+  "theoreticalContribution": "...",
+  "gapTypes": ["..."],
+  "contributionType": "..."
+}`;
+
+// POST /sessions/:id/models/:modelId/generate-contribution
+// gpt-5-mini, generate contributionStatement from innovationMeta.
+router.post("/sessions/:id/models/:modelId/generate-contribution", async (req, res): Promise<void> => {
+  const sessionId = Number.parseInt(req.params.id, 10);
+  const modelId = Number.parseInt(req.params.modelId, 10);
+  if (!Number.isFinite(sessionId) || !Number.isFinite(modelId)) {
+    res.status(400).json({ error: "invalid id" });
+    return;
+  }
+  const model = await loadAuthorizedModel(sessionId, modelId);
+  if (!model) {
+    res.status(404).json({ error: "model not found" });
+    return;
+  }
+  const meta = model.innovationMeta as InnovationMeta | null;
+  if (!meta) {
+    res.status(400).json({ error: "model has no innovationMeta — run recompute-innovation first" });
+    return;
+  }
+  const [session] = await db.select({ topic: sessionsTable.topic }).from(sessionsTable).where(eq(sessionsTable.id, sessionId));
+  const topic = session?.topic ?? "";
+  const context = buildInnovationContext(topic, meta);
+  try {
+    const completion = await openai.chat.completions.create({
+      model: "gpt-5-mini",
+      response_format: { type: "json_object" },
+      max_completion_tokens: 600,
+      messages: [
+        { role: "system", content: CONTRIBUTION_SYSTEM_PROMPT },
+        { role: "user", content: CONTRIBUTION_USER_TEMPLATE.replace("{context}", context) },
+      ],
+    });
+    logAiUsageFromOpenAI(completion, { route: "contribution/generate", sessionId, userId: req.user?.id ?? null });
+    const raw = completion.choices[0]?.message?.content ?? "{}";
+    let parsed: ContributionStatement;
+    try {
+      parsed = JSON.parse(raw) as ContributionStatement;
+    } catch {
+      req.log.error({ raw, modelId }, "generate-contribution: JSON parse failed");
+      res.status(500).json({ error: "AI returned invalid JSON" });
+      return;
+    }
+    // Validate 7 required string fields.
+    const REQUIRED = ["whatIsKnown","whatIsMissing","whatThisAdds","whyItMatters","researchGapClaim","theoreticalContribution","contributionType"] as const;
+    const parsedRec = parsed as unknown as Record<string, unknown>;
+    for (const field of REQUIRED) {
+      if (typeof parsedRec[field] !== "string" || !parsedRec[field]) {
+        req.log.warn({ field, modelId }, "generate-contribution: missing field");
+      }
+    }
+    if (!Array.isArray(parsed.gapTypes)) parsed.gapTypes = [];
+    // Remove #20 warning now that statement is present.
+    const updatedWarnings = (meta.warnings ?? []).filter((w) => w.code !== "contribution_statement_missing");
+    const updatedMeta: InnovationMeta = { ...meta, contributionStatement: parsed, warnings: updatedWarnings };
+    await db.update(researchModelsTable).set({ innovationMeta: updatedMeta }).where(eq(researchModelsTable.id, modelId));
+    const snapshot = await loadLandscapeSnapshot(sessionId).catch(() => ({ landscapeVersion: null }));
+    res.json(formatModel({ ...model, innovationMeta: updatedMeta }, snapshot.landscapeVersion ?? null));
+  } catch (err) {
+    req.log.error({ err, modelId }, "generate-contribution failed");
+    res.status(503).json({ error: "AI unavailable" });
+  }
+});
+
+// POST /sessions/:id/models/:modelId/refine-contribution
+// gpt-5.4 (flagship), rewrite existing contributionStatement with higher quality.
+router.post("/sessions/:id/models/:modelId/refine-contribution", async (req, res): Promise<void> => {
+  const sessionId = Number.parseInt(req.params.id, 10);
+  const modelId = Number.parseInt(req.params.modelId, 10);
+  if (!Number.isFinite(sessionId) || !Number.isFinite(modelId)) {
+    res.status(400).json({ error: "invalid id" });
+    return;
+  }
+  const model = await loadAuthorizedModel(sessionId, modelId);
+  if (!model) {
+    res.status(404).json({ error: "model not found" });
+    return;
+  }
+  const meta = model.innovationMeta as InnovationMeta | null;
+  if (!meta) {
+    res.status(400).json({ error: "model has no innovationMeta — run recompute-innovation first" });
+    return;
+  }
+  const [session] = await db.select({ topic: sessionsTable.topic }).from(sessionsTable).where(eq(sessionsTable.id, sessionId));
+  const topic = session?.topic ?? "";
+  const context = buildInnovationContext(topic, meta);
+  const existingNote = meta.contributionStatement
+    ? `\n\n已有初稿（供参考，请大幅提升质量和学术严谨性）：\n${JSON.stringify(meta.contributionStatement, null, 2)}`
+    : "";
+  try {
+    const completion = await openai.chat.completions.create({
+      model: "gpt-5.4",
+      response_format: { type: "json_object" },
+      max_completion_tokens: 800,
+      messages: [
+        { role: "system", content: CONTRIBUTION_SYSTEM_PROMPT },
+        { role: "user", content: CONTRIBUTION_USER_TEMPLATE.replace("{context}", context) + existingNote },
+      ],
+    });
+    logAiUsageFromOpenAI(completion, { route: "contribution/refine", sessionId, userId: req.user?.id ?? null });
+    const raw = completion.choices[0]?.message?.content ?? "{}";
+    let parsed: ContributionStatement;
+    try {
+      parsed = JSON.parse(raw) as ContributionStatement;
+    } catch {
+      req.log.error({ raw, modelId }, "refine-contribution: JSON parse failed");
+      res.status(500).json({ error: "AI returned invalid JSON" });
+      return;
+    }
+    if (!Array.isArray(parsed.gapTypes)) parsed.gapTypes = [];
+    const updatedWarnings = (meta.warnings ?? []).filter((w) => w.code !== "contribution_statement_missing");
+    const updatedMeta: InnovationMeta = { ...meta, contributionStatement: parsed, warnings: updatedWarnings };
+    await db.update(researchModelsTable).set({ innovationMeta: updatedMeta }).where(eq(researchModelsTable.id, modelId));
+    const snapshot = await loadLandscapeSnapshot(sessionId).catch(() => ({ landscapeVersion: null }));
+    res.json(formatModel({ ...model, innovationMeta: updatedMeta }, snapshot.landscapeVersion ?? null));
+  } catch (err) {
+    req.log.error({ err, modelId }, "refine-contribution failed");
+    res.status(503).json({ error: "AI unavailable" });
+  }
+});
+
+// Rule-based reviewer: compute status for a single dimension.
+type ReviewStatus = "ok" | "warn" | "fail";
+interface ReviewDimension { dimension: string; label: string; status: ReviewStatus; message: string; }
+
+function computeRuleReview(meta: InnovationMeta): ReviewDimension[] {
+  const dims: ReviewDimension[] = [];
+
+  // 1. gap — innovation types detected.
+  if (meta.innovationTypes.length > 0) {
+    dims.push({ dimension: "gap", label: "创新类型", status: "ok", message: `识别到 ${meta.innovationTypes.length} 种创新类型：${meta.innovationTypes.join("、")}。` });
+  } else {
+    dims.push({ dimension: "gap", label: "创新类型", status: "fail", message: "未识别到任何自动可判定的创新类型（机制 / 边界 / 整合 / 矛盾解决 / 构念延展）。建议增加调节变量或中介变量。" });
+  }
+
+  // 2. novelty — mean edge subscore.
+  const ns = meta.noveltyScore;
+  if (ns == null) {
+    dims.push({ dimension: "novelty", label: "新颖程度", status: "warn", message: "模型暂无可评分关系边，无法判定新颖度。" });
+  } else if (ns >= 55) {
+    dims.push({ dimension: "novelty", label: "新颖程度", status: "ok", message: `新颖度得分 ${Math.round(ns)}/100，达到未充分探索或更高水平。` });
+  } else if (ns >= 25) {
+    dims.push({ dimension: "novelty", label: "新颖程度", status: "warn", message: `新颖度得分 ${Math.round(ns)}/100，整体偏低（大部分边已成熟）。建议引入新颖构念或未充分探索的关系。` });
+  } else {
+    dims.push({ dimension: "novelty", label: "新颖程度", status: "fail", message: `新颖度得分 ${Math.round(ns)}/100，严重偏低（几乎全为已成熟关系）。` });
+  }
+
+  // 3. evidence — evidenceSupport sub-score.
+  const ev = meta.subScores.evidenceSupport;
+  if (ev >= 60) {
+    dims.push({ dimension: "evidence", label: "证据支撑", status: "ok", message: `证据支撑得分 ${Math.round(ev)}/100，具有充分的文献依据。` });
+  } else if (ev >= 30) {
+    dims.push({ dimension: "evidence", label: "证据支撑", status: "warn", message: `证据支撑得分 ${Math.round(ev)}/100，部分关系缺乏直接文献依据，建议补充相关引用。` });
+  } else {
+    dims.push({ dimension: "evidence", label: "证据支撑", status: "fail", message: `证据支撑得分 ${Math.round(ev)}/100，大多数关系缺乏文献基础，模型可辩护性较弱。` });
+  }
+
+  // 4. coverage — literature coverage rate.
+  const cr = meta.computedAgainst.coverageRate;
+  if (cr >= 0.7) {
+    dims.push({ dimension: "coverage", label: "文献覆盖", status: "ok", message: `文献覆盖率 ${Math.round(cr * 100)}%，已达完整评分门槛。` });
+  } else if (cr >= 0.5) {
+    dims.push({ dimension: "coverage", label: "文献覆盖", status: "warn", message: `文献覆盖率 ${Math.round(cr * 100)}%（低于 70%），评分仅作参考，建议补充提取更多论文。` });
+  } else {
+    dims.push({ dimension: "coverage", label: "文献覆盖", status: "fail", message: `文献覆盖率 ${Math.round(cr * 100)}%（低于 50%），文献样本严重不足，结论可信度受限。` });
+  }
+
+  // 5. statement — contributionStatement completeness.
+  const cs = meta.contributionStatement;
+  if (!cs) {
+    dims.push({ dimension: "statement", label: "贡献陈述", status: "fail", message: "贡献陈述尚未生成。点击「生成贡献陈述」按钮生成 AI 自解释。" });
+  } else {
+    const REQUIRED_FIELDS = ["whatIsKnown","whatIsMissing","whatThisAdds","whyItMatters","researchGapClaim","theoreticalContribution","contributionType"] as const;
+    const missing = REQUIRED_FIELDS.filter((f) => !cs[f] || typeof cs[f] !== "string");
+    const noGapTypes = !Array.isArray(cs.gapTypes) || cs.gapTypes.length === 0;
+    if (missing.length === 0 && !noGapTypes) {
+      dims.push({ dimension: "statement", label: "贡献陈述", status: "ok", message: "贡献陈述所有字段完整。" });
+    } else {
+      const problems = [...missing.map((f) => `"${f}" 为空`), ...(noGapTypes ? ["gapTypes 为空"] : [])];
+      dims.push({ dimension: "statement", label: "贡献陈述", status: "warn", message: `贡献陈述存在不完整字段：${problems.join("、")}。` });
+    }
+  }
+
+  return dims;
+}
+
+// GET /sessions/:id/models/:modelId/review
+// Rule-based reviewer report, zero AI cost.
+router.get("/sessions/:id/models/:modelId/review", async (req, res): Promise<void> => {
+  const sessionId = Number.parseInt(req.params.id, 10);
+  const modelId = Number.parseInt(req.params.modelId, 10);
+  if (!Number.isFinite(sessionId) || !Number.isFinite(modelId)) {
+    res.status(400).json({ error: "invalid id" });
+    return;
+  }
+  const model = await loadAuthorizedModel(sessionId, modelId);
+  if (!model) {
+    res.status(404).json({ error: "model not found" });
+    return;
+  }
+  const meta = model.innovationMeta as InnovationMeta | null;
+  if (!meta) {
+    res.status(400).json({ error: "model has no innovationMeta — run recompute-innovation first" });
+    return;
+  }
+  const dimensions = computeRuleReview(meta);
+  const overallStatus: ReviewStatus = dimensions.some((d) => d.status === "fail")
+    ? "fail"
+    : dimensions.some((d) => d.status === "warn")
+      ? "warn"
+      : "ok";
+  res.json({ modelId, dimensions, overallStatus });
+});
+
+// POST /sessions/:id/models/:modelId/ai-review
+// gpt-5-mini deep review. Uses rule report + innovationMeta as context.
+router.post("/sessions/:id/models/:modelId/ai-review", async (req, res): Promise<void> => {
+  const sessionId = Number.parseInt(req.params.id, 10);
+  const modelId = Number.parseInt(req.params.modelId, 10);
+  if (!Number.isFinite(sessionId) || !Number.isFinite(modelId)) {
+    res.status(400).json({ error: "invalid id" });
+    return;
+  }
+  const model = await loadAuthorizedModel(sessionId, modelId);
+  if (!model) {
+    res.status(404).json({ error: "model not found" });
+    return;
+  }
+  const meta = model.innovationMeta as InnovationMeta | null;
+  if (!meta) {
+    res.status(400).json({ error: "model has no innovationMeta — run recompute-innovation first" });
+    return;
+  }
+  const [session] = await db.select({ topic: sessionsTable.topic }).from(sessionsTable).where(eq(sessionsTable.id, sessionId));
+  const topic = session?.topic ?? "";
+  const dimensions = computeRuleReview(meta);
+  const ruleReport = dimensions.map((d) => `[${d.status.toUpperCase()}] ${d.label}：${d.message}`).join("\n");
+  const stmtSnippet = meta.contributionStatement
+    ? `贡献陈述摘要：\n  研究空白：${meta.contributionStatement.researchGapClaim}\n  理论贡献：${meta.contributionStatement.theoreticalContribution}`
+    : "贡献陈述：尚未生成";
+  const userMsg = `研究主题：${topic}\n创新类型：${meta.innovationTypes.join("、") || "未识别"}\n贡献总分：${meta.contributionScore}/100\n\n规则评审报告：\n${ruleReport}\n\n${stmtSnippet}\n\n请以资深同行评审专家身份，用中文撰写不超过 400 词的评审意见，指出优点、不足，以及改进建议。输出 Markdown 格式（可用 ## 和 - 分节），语气专业但易读。`;
+  try {
+    const completion = await openai.chat.completions.create({
+      model: "gpt-5-mini",
+      max_completion_tokens: 1200,
+      messages: [
+        { role: "system", content: "你是顶级学术期刊的同行评审专家，擅长评审量化管理学研究。评审时直接、有建设性，不要泛泛而谈。" },
+        { role: "user", content: userMsg },
+      ],
+    });
+    logAiUsageFromOpenAI(completion, { route: "reviewer/ai-review", sessionId, userId: req.user?.id ?? null });
+    const markdown = completion.choices[0]?.message?.content ?? "";
+    res.json({ markdown });
+  } catch (err) {
+    req.log.error({ err, modelId }, "ai-review failed");
+    res.status(503).json({ error: "AI unavailable" });
   }
 });
 
