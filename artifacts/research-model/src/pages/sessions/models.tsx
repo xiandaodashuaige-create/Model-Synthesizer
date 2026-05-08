@@ -709,7 +709,7 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
             {generateModels.isPending ? (
               <><Loader2 className="w-4 h-4 animate-spin" /> {t("models.generating" as any)}</>
             ) : (
-              <><Sparkles className="w-4 h-4" /> {models && models.length > 0 ? t("models.regenerate" as any) : t("models.generate" as any)}</>
+              <><Sparkles className="w-4 h-4" /> {models && models.length > 0 ? t("models.regenerate" as any) : t("models.generate" as any)}<span className="text-xs text-primary-foreground/70 ml-1">≈ 2 积分</span></>
             )}
           </button>
         </div>

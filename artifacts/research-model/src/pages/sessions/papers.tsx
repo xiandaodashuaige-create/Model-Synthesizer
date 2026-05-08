@@ -876,11 +876,12 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
       {(sessionPapers?.length ?? 0) > 0 && !allExtracted && (
         <NextStepHint
           title={t("papers.tip.extractAll.title" as any)}
-          body={
-            extractAllProgress
+          body={(() => {
+            const pendingForCredits = (sessionPapers ?? []).filter((p) => !p.extracted);
+            return extractAllProgress
               ? t("papers.tip.extractAll.progress" as any, { done: extractAllProgress.done, total: extractAllProgress.total })
-              : t("papers.tip.extractAll.body" as any, { count: (sessionPapers ?? []).filter((p) => !p.extracted).length })
-          }
+              : `${t("papers.tip.extractAll.body" as any, { count: pendingForCredits.length })}${pendingForCredits.length > 0 ? ` · 预计消耗约 ${pendingForCredits.length} 积分` : ""}`;
+          })()}
           cta={extractAllProgress ? t("papers.extract.btn.working" as any) : t("papers.extract.btn.all" as any)}
           onClick={handleExtractAll}
           loading={extractAllProgress !== null}
