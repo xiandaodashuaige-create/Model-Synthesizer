@@ -5,6 +5,7 @@ import {
   useLookupPaper,
   useBulkImportPapers,
   useListSessionPapers,
+  useListSessionVariables,
   useAddPaperToSession,
   useRemovePaperFromSession,
   useExtractVariables,
@@ -99,6 +100,13 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
   const { data: sessionPapers, isLoading: papersLoading } = useListSessionPapers(sessionId, {
     query: { enabled: !!sessionId, queryKey: getListSessionPapersQueryKey(sessionId) },
   });
+
+  const { data: sessionVariables } = useListSessionVariables(sessionId, {
+    query: { enabled: !!sessionId, queryKey: getListSessionVariablesQueryKey(sessionId) },
+  });
+  // Paper IDs that have ≥1 extracted variable — used to infer skipped papers
+  // (extracted=true but no variables means the AI relevance gate returned out_of_scope).
+  const paperIdsWithVars = new Set((sessionVariables ?? []).map((v) => v.paperId));
 
   const addedIds = new Set((sessionPapers ?? []).map((p) => p.externalId));
   const allExtracted = (sessionPapers?.length ?? 0) > 0 && (sessionPapers ?? []).every((p) => p.extracted);
@@ -386,7 +394,7 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
     const pending = (sessionPapers ?? []).filter((p) => !p.extracted);
     if (pending.length === 0) return;
     const runId = beginExtraction(sessionId, pending.length);
-    let ok = 0, fail = 0, done = 0;
+    let ok = 0, fail = 0, skipped = 0, done = 0;
     const failedTitles: string[] = [];
     // Concurrency 4 — matches the backend per-variable extraction limit and
     // is a safe ceiling for the OpenAI proxy + Postgres connection pool. With
@@ -399,8 +407,8 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
         if (i >= pending.length) return;
         const p = pending[i];
         try {
-          await extractVariables.mutateAsync({ id: sessionId, paperId: p.id });
-          ok++;
+          const result = await extractVariables.mutateAsync({ id: sessionId, paperId: p.id });
+          if (result.skipped) { skipped++; } else { ok++; }
         } catch (err) {
           fail++;
           failedTitles.push(p.title);
@@ -439,11 +447,14 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
       queryClient.invalidateQueries({ queryKey: getGetSessionSummaryQueryKey(sessionId) }),
       queryClient.invalidateQueries({ queryKey: getGetSessionQueryKey(sessionId) }),
     ]);
+    const failedDesc = failedTitles.length > 0
+      ? failedTitles.slice(0, 3).map((title) => `• ${title.slice(0, 60)}`).join("\n") + (failedTitles.length > 3 ? `\n…（其余 ${failedTitles.length - 3} 篇）` : "")
+      : "";
+    const skippedDesc = skipped > 0 ? `跳过 ${skipped} 篇（主题不相关）` : "";
+    const description = [failedDesc, skippedDesc].filter(Boolean).join("\n") || undefined;
     toast({
       title: t("papers.toast.extractAllDone" as any, { ok, fail }),
-      description: failedTitles.length > 0
-        ? failedTitles.slice(0, 3).map((title) => `• ${title.slice(0, 60)}`).join("\n") + (failedTitles.length > 3 ? `\n…（其余 ${failedTitles.length - 3} 篇）` : "")
-        : undefined,
+      description,
       variant: failedTitles.length > 0 ? "destructive" : undefined,
     });
   };
@@ -998,7 +1009,11 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
                   )}
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
-                  {paper.extracted ? (
+                  {paper.extracted && !paperIdsWithVars.has(paper.id) ? (
+                    <span className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 rounded-md px-2.5 py-1">
+                      已跳过 · 主题不相关
+                    </span>
+                  ) : paper.extracted ? (
                     <span className="inline-flex items-center gap-1.5 text-xs font-medium text-green-700 dark:text-green-400 bg-green-50 dark:bg-green-950/40 border border-green-200 dark:border-green-900 rounded-md px-2.5 py-1">
                       <CheckCircle className="w-3.5 h-3.5" /> {t("papers.extract.done" as any)}
                     </span>
