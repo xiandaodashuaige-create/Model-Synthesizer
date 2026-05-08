@@ -209,6 +209,7 @@ export function NextStepHint({
   body,
   href,
   cta,
+  ctaNote,
   onClick,
   disabled,
   loading,
@@ -217,6 +218,7 @@ export function NextStepHint({
   body: string;
   href?: string;
   cta: string;
+  ctaNote?: string;
   onClick?: () => void;
   disabled?: boolean;
   loading?: boolean;
@@ -233,19 +235,24 @@ export function NextStepHint({
         <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">{body}</p>
       </div>
       {onClick ? (
-        <button
-          type="button"
-          onClick={onClick}
-          disabled={disabled || loading}
-          className={btnClass}
-          data-testid="button-next-step-cta"
-        >
-          {loading ? (
-            <span className="inline-block w-3.5 h-3.5 border-2 border-primary-foreground/40 border-t-primary-foreground rounded-full animate-spin" />
+        <div className="shrink-0 flex flex-col items-end gap-0.5">
+          <button
+            type="button"
+            onClick={onClick}
+            disabled={disabled || loading}
+            className={btnClass}
+            data-testid="button-next-step-cta"
+          >
+            {loading ? (
+              <span className="inline-block w-3.5 h-3.5 border-2 border-primary-foreground/40 border-t-primary-foreground rounded-full animate-spin" />
+            ) : null}
+            {cta}
+            {!loading && <ArrowRight className="w-3.5 h-3.5" />}
+          </button>
+          {!loading && ctaNote ? (
+            <span className="text-xs text-muted-foreground ml-1">{ctaNote}</span>
           ) : null}
-          {cta}
-          {!loading && <ArrowRight className="w-3.5 h-3.5" />}
-        </button>
+        </div>
       ) : (
         <Link href={href ?? "#"} className={btnClass}>
           {cta}
