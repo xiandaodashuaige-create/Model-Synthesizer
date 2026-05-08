@@ -1,0 +1,267 @@
+最烧钱的 5 个地方
+1. 变量/关系抽取最贵
+位置：
+
+routes/variables.ts
+现在用：
+
+model: "gpt-5.4"
+max_completion_tokens: 10000
+fullText.slice(0, 30000)
+也就是说，每篇论文可能把 3 万字符全文塞给旗舰模型，再让它输出变量、关系、gap、context 等结构化 JSON。
+
+如果重抽 50 篇，成本会明显上来。
+
+建议：
+
+不要全量反复重抽。
+只对新增论文/用户选中的核心论文重抽。
+对低价值论文先用 mini 做预筛，相关再用 5.4 抽。
+把 extraction 分两段：
+mini 判断是否相关、抽 context；
+只有核心论文才用 5.4 抽完整变量关系。
+2. 模型生成非常贵
+位置：
+
+routes/models.ts
+现在生成模型时有两层消耗：
+
+第一层：每篇论文抽自己的 paper research model
+extractPaperResearchModel()
+model: "gpt-5.4"
+max_completion_tokens: 2000
+如果很多论文还没缓存，每次生成前会并行抽一批论文模型。
+
+第二层：多模型并行生成
+numModels 默认 2
+每个模型一个 gpt-5.4 调用
+max_completion_tokens: 12000
+prompt 可能 25k-30k tokens
+也就是说，生成 2 个模型不是一次调用，而是：
+
+2 次旗舰模型并行调用
+如果用户反复点“重新生成”，成本会很快上去。
+
+建议：
+
+默认生成 1 个模型，不是 2 或 3。
+第二、第三个模型改成“继续生成一个变体”。
+生成前先给用户展示“预计消耗”。
+如果用户没有明确要求复杂模型，使用 mini 先生成草案，再由 5.4 精修最终 1 个。
+paperResearchModel 必须强缓存，不要每次重新抽。
+3. Evidence Matching 现在也用旗舰模型
+位置：
+
+lib/evidence-matching.ts
+现在：
+
+const MODEL = "gpt-5.4"
+这里做的是：
+
+判断哪些论文支持某条边；
+给每条边找 quote；
+overall ranking。
+这类任务其实很多可以用 gpt-5-mini，因为它是分类/匹配，不一定需要旗舰模型。
+
+建议： 把 evidence matching 改成分级：
+
+gpt-5-mini：初筛 top candidates
+gpt-5.4：只在用户点击“精修证据”时使用
+或者直接先全部用 mini，观察质量。
+
+这是很大的省钱点。
+
+4. AI 助手聊天也用旗舰模型
+位置：
+
+routes/model-assistant.ts
+现在：
+
+model: "gpt-5.4"
+max_completion_tokens: 2400
+而且每次聊天都会塞：
+
+papers
+variables
+existing models
+structural operators
+theory backbones
+personalization context
+如果用户把助手当聊天窗口频繁问，成本会上去。
+
+建议：
+
+普通讨论用 gpt-5-mini。
+只有点击“生成正式建议 / 套用生成”时用 gpt-5.4。
+聊天历史不要全量塞，改成最近 4-6 轮 + 摘要。
+theory backbones / operators 不要每次全塞，可压缩成短版。
+5. 图片搜索不只花 AI，还花 SerpAPI
+图片搜索 AI 已经部分用 mini，这是好的。
+
+但搜索本身会多路调用：
+
+expandedQueries 约 3-5 个
+Lane A 每个 query 一次
+Lane B 前 3 个 query 再各一次
+一次模型图搜索可能就是：
+
+5 + 3 = 8 次 SerpAPI Google Images
+SerpAPI 是外部付费来源，也会烧钱。
+
+建议：
+
+默认只跑 2-3 个 query。
+先展示第一批结果，用户点“扩展搜索”再跑 publisher lane。
+对相同 query 做更长缓存，比如 24 小时。
+image relevance AI gate 保留 mini 即可。
+最该优先做的省钱方案
+P0：立刻做
+1. Evidence Matching 从 5.4 降到 mini
+当前最容易省钱，风险也相对低。
+
+const MODEL = "gpt-5-mini"
+如果担心质量，可以加按钮：
+
+普通匹配
+高精度匹配
+高精度才用 5.4。
+
+2. 模型生成默认只生成 1 个
+不要默认 2-3 个。
+
+改成：
+
+先生成 1 个高质量模型
+用户满意后再生成变体
+这能直接砍掉一半以上生成成本。
+
+3. 变量提取做相关性预筛
+对论文先用 mini 判断：
+
+in_scope / out_of_scope / uncertain
+只有 in_scope 或 uncertain 才进入 5.4 全量抽取。
+
+你已经在做 tangential gate，下一步可以把它前置成 cheap preflight。
+
+4. 给用户显示预计消耗
+在按钮上提示：
+
+预计消耗：约 8-15 积分
+特别是：
+
+一键提取全部；
+生成模型；
+证据匹配；
+全量重建 landscape。
+用户看到成本后，会少点很多无意识重复操作。
+
+P1：中期优化
+5. 两阶段模型生成
+现在：
+
+gpt-5.4 直接生成完整模型
+建议：
+
+mini 生成 3 个候选草案
+规则/landscape 过滤
+5.4 只精修最好的 1 个
+这样比让 5.4 并行生成多个完整模型便宜很多。
+
+6. 缓存所有稳定结果
+必须缓存：
+
+paper extraction result
+paper research model
+evidence search result
+image query expansion
+image relevance result
+assistant distilled query
+innovationMeta
+并且按钮上区分：
+
+重新计算
+强制刷新
+默认不要强刷。
+
+7. Landscape 不用 AI 做的就不要 AI 做
+你现在很多 innovation score 是规则计算，这是对的。
+
+继续保持：
+
+noveltyScore
+edgeNoveltyTag
+coverage
+relationship saturation
+signConflict
+全部规则算，不要交给 AI。
+
+AI 只负责写：
+
+contributionStatement
+gap narrative
+P2：产品层省钱
+8. 批处理队列，不要用户每点一次就真跑
+例如一键提取 50 篇：
+
+先列出待提取清单
+用户选择核心 10 篇
+其余标为 later
+博士论文研究不是所有搜到的文献都值得全文抽。
+
+9. 给论文设优先级
+先抽：
+
+与主题最相关；
+有 fullText；
+有 model / SEM / framework 信号；
+高引用；
+最新核心论文。
+低相关论文只保留 metadata，不做深抽。
+
+当前最可能导致“突然很贵”的场景
+我认为最可能是这些操作：
+
+用户点了“一键重新提取全部”；
+50 篇论文都用 gpt-5.4 深抽；
+用户又生成多个模型；
+生成前又触发 per-paper research model extraction；
+反复点模型生成/证据匹配。
+这会叠加。
+
+建议的省钱架构
+可以改成三级模型策略：
+
+nano:
+- 简单分类
+- 是否相关
+- query 清洗
+- 空态解释
+mini:
+- 图片筛选
+- 文献筛选
+- evidence 初筛
+- gap 初稿
+- assistant 普通聊天
+5.4:
+- 最终变量/关系深抽
+- 最终模型生成
+- 高质量 contribution statement
+- 复杂模型评审
+现在你的系统已经部分这样做了，但还不彻底。
+
+具体改动优先级
+如果要我排优先级：
+
+第一优先
+evidence-matching.ts 改 mini
+第二优先
+模型生成默认 numModels=1
+第三优先
+变量抽取前置 cheap topic preflight
+第四优先
+AI 助手普通聊天改 mini，正式建议再用 5.4
+第五优先
+图片搜索减少 SerpAPI lane 数量 + 强缓存
+一句话判断
+你现在费钱，不是因为某一个 bug，而是因为系统核心链路大量使用 gpt-5.4 做长文本抽取、多模型并行生成和证据匹配。
+最有效的省钱方案是：预筛用 mini、草案用 mini、最终少量关键步骤才用 5.4；同时把默认“多模型/全量/强刷新”改成“单模型/核心论文/缓存优先”。
