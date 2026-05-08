@@ -18,6 +18,7 @@ import {
 import type { PaperFullTextHit } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Search, Plus, Trash2, Loader2, BookOpen, ExternalLink, CheckCircle, Clock, Info, Link2, Upload, FileText } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { useT } from "@/lib/i18n";
 import { NextStepHint, BigNextStep } from "@/components/onboarding-stepper";
@@ -101,12 +102,16 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
     query: { enabled: !!sessionId, queryKey: getListSessionPapersQueryKey(sessionId) },
   });
 
-  const { data: sessionVariables } = useListSessionVariables(sessionId, {
+  const { data: sessionVariables, isSuccess: varsLoaded } = useListSessionVariables(sessionId, {
     query: { enabled: !!sessionId, queryKey: getListSessionVariablesQueryKey(sessionId) },
   });
   // Paper IDs that have ≥1 extracted variable — used to infer skipped papers
   // (extracted=true but no variables means the AI relevance gate returned out_of_scope).
-  const paperIdsWithVars = new Set((sessionVariables ?? []).map((v) => v.paperId));
+  // Only populated after vars are confirmed loaded to avoid false "skipped" labels
+  // while the query is still in-flight.
+  const paperIdsWithVars = varsLoaded
+    ? new Set((sessionVariables ?? []).map((v) => v.paperId))
+    : null;
 
   const addedIds = new Set((sessionPapers ?? []).map((p) => p.externalId));
   const allExtracted = (sessionPapers?.length ?? 0) > 0 && (sessionPapers ?? []).every((p) => p.extracted);
@@ -1009,10 +1014,10 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
                   )}
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
-                  {paper.extracted && !paperIdsWithVars.has(paper.id) ? (
-                    <span className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 rounded-md px-2.5 py-1">
+                  {paper.extracted && paperIdsWithVars !== null && !paperIdsWithVars.has(paper.id) ? (
+                    <Badge variant="outline" className="text-amber-600 border-amber-300 text-xs">
                       已跳过 · 主题不相关
-                    </span>
+                    </Badge>
                   ) : paper.extracted ? (
                     <span className="inline-flex items-center gap-1.5 text-xs font-medium text-green-700 dark:text-green-400 bg-green-50 dark:bg-green-950/40 border border-green-200 dark:border-green-900 rounded-md px-2.5 py-1">
                       <CheckCircle className="w-3.5 h-3.5" /> {t("papers.extract.done" as any)}
