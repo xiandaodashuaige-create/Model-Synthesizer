@@ -70,9 +70,11 @@
 
 | 等级 | 模型 | 适用场景 |
 |------|------|---------|
-| 旗舰 | `gpt-5.4` | 仅用户主动触发"高质量重写" |
-| 默认 | `gpt-5-mini` | 初稿生成、AI 评审、低风险路由 |
+| 标准 | `gpt-5.2` | `models/generate*`、`extract-paper-research-model`、`refine-contribution` |
+| 低成本 | `gpt-5-mini` | 初稿生成、AI 评审、所有低风险路由 |
 | 免费 | 无 AI | 规则计算（review GET） |
+
+`gpt-5.4` 已从所有路由移除（50% 降价，同家族质量一致）。
 
 **禁止**：页面加载时自动调用 AI 路由。
 

@@ -18,7 +18,7 @@ pnpm --filter @workspace/db run push            # Push DB schema changes
 - **Frontend**: React + Vite (TypeScript), TailwindCSS v4, Wouter, TanStack Query
 - **Backend**: Express 5 (TypeScript), Pino, esbuild
 - **Database**: PostgreSQL via Drizzle ORM
-- **AI**: OpenAI GPT-4o (`gpt-5.4` flagship; `gpt-5-mini` on low-stakes routes) via Replit AI Integrations
+- **AI**: OpenAI (`gpt-5.2` for models/generate + refine; `gpt-5-mini` on low-stakes routes) via Replit AI Integrations
 - **Paper Search**: OpenAlex API
 - **Monorepo**: pnpm workspaces
 
@@ -80,7 +80,7 @@ The 3-layer `canonicalize()` returns `{rawName, canonicalName, contextQualifier,
 - Variable pool keyword search; collapsible "+ 自定义新变量"; auto-jump to live-model after 选用此模型 inside `importLiveModel.onSuccess`.
 
 ### Cost & visibility (`lib/ai-usage.ts` + `ai-usage-panel.tsx` + `routes/ai-usage.ts`)
-- Per-route tier with date-suffix-stripping resolver and gpt-5.4 fallback so unknown models never under-bill. 5 low-stakes routes downgraded to `gpt-5-mini`; flagship stays on `models/generate*`, `extract-paper-research-model`, `variables/extract`, `chat`.
+- Per-route tier with date-suffix-stripping resolver and gpt-5.4 fallback so unknown models never under-bill. `models/generate*` and `extract-paper-research-model` use `gpt-5.2` (50% cheaper than gpt-5.4); `refine-contribution` uses `gpt-5.2`; low-stakes routes use `gpt-5-mini`.
 - **积分**: 1 积分 = $0.01; DB stores micro-USD, rate applied at display only.
 - **Savings**: backend recomputes each row at flagship rate, returns `flagshipCostUsd` + `savedCostUsd` per route AND total. Header byline appends ` · N 积分 (−M)`.
 - **Value mode (default)**: papers/variables/models from `useGetSessionSummary` + conservative labor estimate (0.5h/paper + 0.2h/variable + 1.5h/model). Cost-audit table behind `localStorage["ai-usage-dev-mode"]` toggle.

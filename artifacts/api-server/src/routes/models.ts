@@ -623,7 +623,7 @@ Strict rules:
     // budget shaves several seconds per call.
     const completion = await openai.chat.completions.create(
       {
-        model: "gpt-5.4",
+        model: "gpt-5.2",
         // 2000 token output budget. Worst-case payload is summary (≤280 chars)
         // + up to 14 nodes + up to 16 edges with verbatim evidence (capped at
         // 160 chars per edge in the prompt above) + small hypothesis list.
@@ -1564,7 +1564,7 @@ OUTPUT FORMAT — return a JSON object with key "models" containing an array of 
     const signal = AbortSignal.any([AbortSignal.timeout(callTimeoutMs), ctrl.signal]);
     const completion = await openai.chat.completions.create(
       {
-        model: "gpt-5.4",
+        model: "gpt-5.2",
         max_completion_tokens: perCallMaxTokens,
         // JSON mode: forces the model to emit syntactically valid JSON at
         // the token-generation layer (not a post-hoc check). This eliminates
@@ -1775,7 +1775,7 @@ OUTPUT FORMAT — return a JSON object with key "models" containing an array of 
       if (shouldRetry) try {
         const retry = await openai.chat.completions.create(
           {
-            model: "gpt-5.4",
+            model: "gpt-5.2",
             // Permissive prompt is much shorter (~5k input vs ~30k strict),
             // so reasoning has plenty of headroom and we don't need 12k out.
             // 8k keeps wall-clock well under the 18s remaining in the worst
@@ -3042,7 +3042,7 @@ router.post("/sessions/:id/models/:modelId/refine-contribution", async (req, res
     : "";
   try {
     const completion = await openai.chat.completions.create({
-      model: "gpt-5.4",
+      model: "gpt-5.2",
       response_format: { type: "json_object" },
       max_completion_tokens: 800,
       messages: [
