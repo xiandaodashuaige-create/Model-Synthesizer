@@ -1,0 +1,201 @@
+我判断：这个“成本闸门”切片方向正确，可以收，但它只能解决 Phase 3 新增 AI 路由的小额浪费，不能解决你账单里真正的大头。
+
+你截图里的大额成本主要还是两类：
+
+产品运行成本：models/generate、variables/extract
+Agent 开发成本：每次让 Agent 全仓库探索、并行读文件、反复 typecheck/restart/review
+这次做的缓存和积分标签是必要的，但还不够。
+
+1. 对这次成本闸门的判断
+通过项
+这次做了：
+
+ai-review 缓存 30 分钟
+generate-contribution 缓存 30 分钟
+refine-contribution 成功后清 cache
+AI 按钮旁显示静态 ≈N 积分
+前端 typecheck 干净
+API server 路由正常
+新增 docs/agent-handoff.md
+新增 .local/tasks/cost-gate.md
+这些方向都对。
+
+尤其是：
+
+AI 结果缓存 + 点击前成本提示
+这是必须要有的产品体验。
+
+2. 但这次还没解决真正大头
+你前面账单里真正烧钱的是：
+
+models/generate: $10/天
+variables/extract: $5.46/天
+这次成本闸门针对的是：
+
+generate-contribution
+refine-contribution
+ai-review
+这些是新 Phase 3 路由，预计不会是主要账单来源。
+
+所以它是：
+
+防止新增功能继续烧钱
+不是：
+
+降低当前 90% 成本
+当前大头还要继续处理。
+
+3. 这次实现还需要注意的点
+3.1 缓存 key 必须足够精确
+ai-review / generate-contribution 缓存不能只按 modelId。
+
+至少要包含：
+
+sessionId
+modelId
+model.updatedAt 或 model hash
+innovationMeta.computedAt / landscapeVersion
+language
+prompt/options
+否则会出现：
+
+用户改了模型，但拿到旧 review / 旧 contribution。
+
+建议 cache key：
+
+`${sessionId}:${modelId}:${modelUpdatedAt}:${landscapeVersion}:${lang}:${optionHash}`
+3.2 in-memory cache 可以接受，但要说明限制
+30 分钟内存缓存可以先用，但要知道：
+
+服务重启会丢
+多实例不共享
+不能当可靠缓存
+不适合长期审计
+第一版可以接受，后面高频后再落 DB。
+
+3.3 积分标签不要只静态写死
+静态 ≈N 积分 可以先用，但最好下一步变成：
+
+基于模型、输入长度、最大输出 token 的估算
+否则用户会看到估算和实际差很多。
+
+建议用函数：
+
+estimateCredits(route, model, estimatedPromptTokens, maxCompletionTokens)
+3.4 refine-contribution 是否也要缓存？
+你们说 refine 成功清 cache，这是对的。
+
+但 refine 本身如果同样输入重复点，也可能重复花钱。建议也加短缓存或按钮防抖：
+
+同一 model + 同一 instruction 10 分钟内不重复 refine
+4. 更重要：Agent 开发成本要立刻管控
+你贴的过程里，Agent 又做了：
+
+快速了解现有成本代码
+再看成本实现
+写计划
+创建任务
+读路由
+读面板
+并行编辑
+typecheck
+restart
+curl
+follow-up task
+validation
+审查建议
+再修样式
+这个流程仍然偏贵。
+
+建议你以后这样布置任务
+每次任务必须有“文件白名单”
+例如：
+
+只允许读取/修改：
+- artifacts/api-server/src/routes/models.ts
+- artifacts/research-model/src/components/innovation-meta-panel.tsx
+- docs/agent-handoff.md
+禁止全仓库搜索，除非找不到符号。
+限制工具调用
+直接写：
+
+最多读取 6 个文件。
+最多运行 3 个 shell 命令。
+不要截图。
+不要全量 typecheck。
+不要架构师 review，除非涉及 auth/db/ai billing。
+给它现成上下文
+每次开头都给：
+
+已知：
+- TS6305 是旧问题，不要修
+- API 路由 auth 已由 loadAuthorizedSession 保护
+- innovationMeta 已存在
+- 401 unauthenticated 是正常
+这样它不用重新探索。
+
+5. 下一步真正省钱的任务
+我建议马上开一个“大头降本切片”，不要继续做新功能。
+
+大头降本切片 1：模型降级
+models/generate: gpt-5.4 → gpt-5.2
+variables/extract: gpt-5.4 → gpt-5.2
+evidence-matching: gpt-5.4 → gpt-5-mini
+这是最直接的。
+
+大头降本切片 2：models/generate prompt 瘦身
+目标：
+
+63k token → 20k token 以下
+做法：
+
+landscape 只发 focus 相关子集
+hypotheses 只发 top K
+variables 只发相关变量
+theory backbones 只发 top 5
+papers 只发 top 8
+这比缓存小 AI 路由更重要。
+
+大头降本切片 3：默认只生成 1 个模型
+现在并行 fanout 会放大成本。
+
+建议：
+
+默认生成 1 个
+用户点击“再生成一个变体”才继续
+6. 我建议你给 Agent 的下一条任务
+可以这样写：
+
+任务：大头降本切片 1
+不要全仓库探索。只读：
+- artifacts/api-server/src/routes/models.ts
+- artifacts/api-server/src/routes/variables.ts
+- artifacts/api-server/src/lib/evidence-matching.ts
+- artifacts/api-server/src/lib/ai-usage.ts
+- replit.md
+目标：
+1. models/generate 使用 gpt-5.2
+2. variables/extract 使用 gpt-5.2
+3. evidence-matching 使用 gpt-5-mini
+4. 所有路由继续 logAiUsageFromOpenAI
+5. 更新 replit.md 成本策略
+验证：
+- rg 确认三处模型名
+- 不运行全量 typecheck
+- 不截图
+- 不做架构师 review，除非发现 auth/db 改动
+这比让它“帮我优化成本”省很多。
+
+最终判断
+这轮成本闸门
+通过，可以保留。
+
+但它只是小额保护
+主要账单不会因此明显下降。
+
+下一步必须做
+降级大头模型；
+瘦身 models/generate prompt；
+默认 1 个模型；
+严格限制 Agent 每次任务的读文件和命令数量。
+一句话：这轮做的是“防新增浪费”，不是“砍现有大头”。要真正省钱，下一步必须处理 models/generate 和 variables/extract，并且给 Agent 下任务时必须文件白名单 + 工具调用上限。
