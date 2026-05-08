@@ -399,7 +399,7 @@ Be specific. Reference variables and papers BY NAME. Never invent variables that
     // a clean JSON error instead of a generic 502.
     const completion = await openai.chat.completions.create(
       {
-        model: "gpt-5.4",
+        model: "gpt-5-mini",
         max_completion_tokens: 2400,
         messages: oaMessages as any,
       },

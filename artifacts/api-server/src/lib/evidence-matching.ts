@@ -64,7 +64,7 @@ export type SearchOptions = {
   includeImages?: boolean | null;
 };
 
-const MODEL = "gpt-5.4";
+const MODEL = "gpt-5-mini";
 const ABSTRACT_TRUNC = 800;
 const LIBRARY_CAP = 30;
 const WEB_PER_EDGE = 5;

@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { eq, and } from "drizzle-orm";
-import { db, variablesTable, papersTable, paperHypothesesTable } from "@workspace/db";
+import { db, variablesTable, papersTable, paperHypothesesTable, sessionsTable } from "@workspace/db";
 import {
   ExtractVariablesParams,
   ListSessionVariablesParams,
@@ -9,6 +9,8 @@ import {
 import { normalizeName } from "@workspace/canonicalize";
 import { CONSTRUCT_LAYERS } from "../lib/theoryTemplates.js";
 import { extractAndStorePaperVariables, ExtractionError } from "../lib/paper-extraction.js";
+import { openai } from "@workspace/integrations-openai-ai-server";
+import { logAiUsageFromOpenAI } from "../lib/ai-usage.js";
 
 const router: IRouter = Router();
 
@@ -42,6 +44,65 @@ function canonicalize(name: string): string {
 
 const VALID_LAYERS = new Set<string>(CONSTRUCT_LAYERS as readonly string[]);
 
+// ---------------------------------------------------------------------------
+// Mini-model relevance preflight (cost guard)
+//
+// Before handing a paper to the expensive gpt-5.4 full-extraction pipeline,
+// we ask gpt-5-mini a single yes/no question: "is this paper in scope for the
+// session topic?". Cost is ~200–400 tokens (<$0.001), which is negligible
+// compared to the ~10 000 tokens the full extraction consumes on gpt-5.4.
+//
+// Returns: "in_scope" | "out_of_scope" | "uncertain"
+// - out_of_scope → skip extraction, return [] to the caller.
+// - in_scope / uncertain → proceed normally.
+// - If the call fails for any reason → proceed normally (fail-open).
+// ---------------------------------------------------------------------------
+async function checkPaperRelevance(
+  sessionId: number,
+  paper: typeof papersTable.$inferSelect,
+  log: { info: (obj: object, msg: string) => void; warn: (obj: object, msg: string) => void },
+): Promise<"in_scope" | "out_of_scope" | "uncertain"> {
+  const [session] = await db
+    .select({ topic: sessionsTable.topic })
+    .from(sessionsTable)
+    .where(eq(sessionsTable.id, sessionId))
+    .limit(1);
+  const topic = session?.topic?.trim();
+  if (!topic) return "uncertain";
+
+  const snippet = [paper.title, paper.abstract].filter(Boolean).join("\n\n").slice(0, 1200);
+  if (!snippet.trim()) return "uncertain";
+
+  try {
+    const resp = await openai.chat.completions.create(
+      {
+        model: "gpt-5-mini",
+        max_completion_tokens: 20,
+        messages: [
+          {
+            role: "system",
+            content:
+              "You are a relevance classifier. Given a research topic and a paper snippet, reply with exactly one word: in_scope, out_of_scope, or uncertain. No other text.",
+          },
+          {
+            role: "user",
+            content: `RESEARCH TOPIC:\n${topic}\n\nPAPER:\n${snippet}`,
+          },
+        ],
+      },
+      { signal: AbortSignal.timeout(10_000) },
+    );
+    logAiUsageFromOpenAI(resp, { route: "variables/relevance-preflight", sessionId, userId: null });
+    const verdict = resp.choices[0]?.message?.content?.trim().toLowerCase() ?? "uncertain";
+    if (verdict === "out_of_scope") return "out_of_scope";
+    if (verdict === "in_scope") return "in_scope";
+    return "uncertain";
+  } catch (err) {
+    log.warn({ err, paperId: paper.id }, "relevance preflight failed — proceeding with full extraction");
+    return "uncertain";
+  }
+}
+
 router.post("/sessions/:id/papers/:paperId/extract", async (req, res): Promise<void> => {
   const params = ExtractVariablesParams.safeParse(req.params);
   if (!params.success) {
@@ -56,6 +117,14 @@ router.post("/sessions/:id/papers/:paperId/extract", async (req, res): Promise<v
 
   if (!paper) {
     res.status(404).json({ error: "Paper not found" });
+    return;
+  }
+
+  // --- relevance preflight (cheap mini call) ---
+  const relevance = await checkPaperRelevance(params.data.id, paper, req.log);
+  if (relevance === "out_of_scope") {
+    req.log.info({ paperId: paper.id, sessionId: params.data.id }, "relevance-preflight: out_of_scope — skipping full extraction");
+    res.json([]);
     return;
   }
 

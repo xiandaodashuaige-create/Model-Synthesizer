@@ -718,7 +718,7 @@ router.post("/sessions/:id/models/generate", async (req, res): Promise<void> => 
 
   const bodyParse = GenerateModelsBody.safeParse(req.body ?? {});
   const userPrompt = bodyParse.success ? (bodyParse.data.userPrompt ?? "").trim() : "";
-  const numModels = bodyParse.success && bodyParse.data.numModels ? bodyParse.data.numModels : 2;
+  const numModels = bodyParse.success && bodyParse.data.numModels ? bodyParse.data.numModels : 1;
   const focusVariableIds = bodyParse.success && bodyParse.data.focusVariableIds ? bodyParse.data.focusVariableIds : [];
   const allowPartial = bodyParse.success && bodyParse.data.allowPartial === true;
 
