@@ -1,0 +1,499 @@
+我判断：Slice 3 可以通过，可以进入下一阶段。
+
+但结合你截图里的账单，我要特别提醒：现在真正的大额开销很可能不只是你的产品 API 调用，而是“开发/Agent 自动执行”本身也在烧钱。
+
+1. Slice 3 功能判断
+从你描述看，这一步完成度很好：
+
+已满足关键要求
+候选模型卡片和模型详情页都复用 InnovationMetaPanel
+4 个子分始终显示：
+差异度
+缺口契合
+理论扎根
+证据支撑
+每条边 novelty tag 可展开解释
+contributionStatement=null 有明确空态
+没有 innovationMeta 时显示“刷新评分”CTA
+analysis_only 有覆盖率 amber banner
+stale=true 有 stale badge
+recompute 后同时刷新列表和详情
+zh/en i18n 完成
+a11y 小问题已修
+这些都对。
+
+结论
+Slice 3 PASS。
+
+2. 但这张账单截图说明另一个严重问题
+截图显示：
+
+Additional usage: $1,067.72
+AI Agent: $1,051.30
+这看起来不是你产品内部 OpenAI 路由那 $17/天，而是开发平台/Agent 使用费。
+
+也就是说，你现在可能有两类成本：
+
+成本来源	说明
+产品运行 AI 成本	用户用系统时，后端调用 GPT
+开发 Agent 成本	让 Replit/Cursor/Agent 自动读代码、改代码、跑任务
+你之前分析的 $17/天是产品运行成本。
+截图里的 $1000+ 更像是开发 Agent 成本。
+
+这两者要分开治理。
+
+3. 对 Slice 3 的一个验收建议
+因为你说没有真实截图，只看到 login wall，所以 Slice 3 还缺一个人工 smoke test：
+
+登录后打开：
+
+/sessions/:id/models
+/sessions/:id/models/:modelId
+检查：
+
+没有 innovationMeta 的旧模型是否显示刷新评分；
+有 innovationMeta 的模型是否显示 4 个子分；
+edge novelty 展开是否正常；
+recompute 是否刷新列表 + 详情；
+coverage < 70% 时 banner 是否出现；
+noveltyScore=null 是否不显示 NaN。
+这不阻塞通过，但建议做。
+
+4. 下一阶段建议
+你说：
+
+Phase 3: AI-emitted contributionStatement + Reviewer simulator
+
+我建议可以继续，但要加成本保护。
+
+contributionStatement
+可以做，但不要默认用最贵模型。
+
+建议：
+
+默认：gpt-5-mini 生成 contributionStatement
+高质量重写：用户点击后才用 gpt-5.2 / gpt-5.4
+因为 contributionStatement 是文本表达，不一定必须旗舰模型。
+
+Reviewer simulator
+这个容易烧钱，要小心。
+
+建议先做规则版：
+
+规则 reviewer:
+- gap 是否存在
+- noveltyScore 是否低
+- evidence grounding 是否弱
+- coverage 是否不足
+- contributionStatement 是否空
+再提供按钮：
+
+AI 深度评审
+这个按钮才调用贵模型。
+
+5. 开发成本也要控制
+从截图看，你现在 Agent 开发成本已经非常高。
+
+建议以后让 Agent 执行任务时限制：
+
+1. 每次只做一个小切片
+不要一次让它：
+
+读全仓库 + 改后端 + 改前端 + codegen + 重启 + 跑 review + 截图
+这类任务非常费 Agent 时间。
+
+2. 明确禁止无意义反复 typecheck
+你们现在多次 typecheck 都撞已知旧错误。可以要求：
+
+只运行目标包 typecheck
+已知旧错误不要重复跑全仓库
+3. 不要每步都让 Agent 做“架构师审查”
+关键节点做即可。每个小改动都审查，会增加成本。
+
+4. 能本地确定的用脚本，不用 Agent 反复读代码
+比如：
+
+rg + selftest + targeted files
+而不是让 Agent 全仓库探索。
+
+6. 最终判断
+Slice 3
+通过。
+
+下一步
+可以进入：
+
+AI contributionStatement + Reviewer simulator
+但建议改成：
+
+先 cheap / rule-based
+再可选 high-quality AI
+成本提醒
+你现在不仅要优化产品里的 GPT 调用，也要控制开发 Agent 使用方式。截图里的 $1000+ 更像是 Agent/开发成本，不是单纯产品运行成本。
+
+一句话：Slice 3 功能上可以收；下一步继续，但必须加“便宜默认 + 贵模型按需触发”的策略，同时减少 Agent 自动化开发的无节制运行。
+
+继续帮我判断：并且帮我考虑成本问题 以及怎么给他布置多重任务 不需要每次都重新查看一遍全部代码 导致成本高：
+
+
+开始实施。先并行读取所有关键文件。
+
+
+5 actions
+需要再看几个文件来确定新路由的实现细节：
+
+
+10 actions
+现在我有足够信息了，开始并行实施。第一批：更新类型定义、OpenAPI schema、i18n。
+
+
+4 actions
+现在并行添加 i18n 键、更新 OpenAPI spec、以及在 models.ts 中添加新路由。
+
+
+3 actions
+现在添加 OpenAPI schemas、新路由，以及更新前端面板。先并行添加 schemas 和读取 models.ts 末尾：
+
+
+4 actions
+现在添加 4 条新路由到 models.ts，同时更新 import：
+
+
+2 actions
+现在插入4条新路由到 models.ts，位置在 recompute-innovation 路由之后：
+
+
+2 actions
+路由已添加好。现在运行 codegen，同时开始写前端面板更新和自测脚本：
+
+
+3 actions
+Codegen 成功（typecheck:libs 的报错是已知的预存问题）。现在并行检查生成的 hooks、更新前端面板、写自测脚本：
+
+
+8 actions
+hooks 生成成功。现在并行更新 scripts/package.json 和查看 review 相关 hooks：
+
+
+3 actions
+现在更新前端面板。先确认生成的类型名称：
+
+
+2 actions
+现在完整重写前端面板，加入 Phase 3 全部功能：
+
+
+5 actions
+现在检查服务器日志、并验证类型：
+
+
+2 actions
+API 服务器需要重启以加载新路由，同时检查生成的 hook 签名：
+
+
+4 actions
+服务器启动成功。现在做类型检查和路由验证：
+
+
+4 actions
+路由响应正确（401 表示找到了路由但需要认证）。需要修复一个类型错误：useGetModelReview 的选项参数格式不对：
+
+
+2 actions
+UseQueryOptions 在 React Query v5 中要求 queryKey，直接去掉 retry 选项就行：
+
+
+5 actions
+修复 models.ts 中的类型转换错误：
+
+
+7 actions
+类型错误只剩下预存问题（TS6305 integrations-openai-ai-server），需要重启服务器来应用修复：
+
+
+2 actions
+服务器运行正常。最后验证 API 路由正常，再准备完成任务：
+
+
+3 actions
+所有路由运行正常。现在提议后续任务并写提交信息：
+
+
+4 actions
+
+Ran validation · 1 passed
+
+Validating contribution data requirements
+审查通过但有两点需要加固。现在并行修复：
+
+
+2 actions
+看到 refine-contribution 路由，现在并行修复两个问题：
+
+
+4 actions
+修复两个问题：
+
+
+2 actions
+现在加第二个修复——refine-contribution 的服务端守卫：
+
+
+7 actions
+类型检查只剩下预存的 TS6305 错误，路由均正常响应。任务完成：
+
+
+Worked for 3m 5s
+我的判断：这轮可以算通过，但成本控制上要立刻收紧 Agent 的工作方式。
+
+从你贴的过程看，功能实现本身是稳的：
+
+新路由已加；
+OpenAPI codegen 成功；
+前端 panel 已接；
+API 重启后路由返回 401，说明路由存在且鉴权生效；
+类型检查只剩既有 TS6305；
+review 后又补了两个加固点；
+validation 通过。
+所以功能上可以继续推进。
+
+但问题也很明显：每个切片都让 Agent “重新并行读取关键文件 + 再读几个文件 + codegen + typecheck + restart + review”，这会非常烧钱。
+
+一、这轮功能判断
+结论：通过，但注意 AI 触发成本
+如果这轮是 Phase 3：
+
+contributionStatement
+reviewer simulator
+refine contribution
+model review
+前端 panel 集成
+那我建议通过。
+
+但要确认一点：
+
+这些 AI 评审/润色功能不能页面加载就自动调用。
+
+必须是：
+
+用户点击按钮 → 才调用 AI
+否则模型详情页一打开就自动评审/润色，会很快烧钱。
+
+建议分三档：
+
+功能	默认模型	触发方式
+规则 review	不用 AI	自动
+contribution 初稿	gpt-5-mini	用户点击
+深度 reviewer / refine	gpt-5.2 或 5.4	用户明确点击“高质量优化”
+二、这轮最大的成本问题
+你让 Agent 做了很多重复动作：
+
+先并行读取所有关键文件
+再看几个文件
+再读取 models.ts 末尾
+再确认 hooks
+再查类型名称
+再重写 panel
+再 typecheck
+再 restart
+再 review
+再修复
+再 typecheck
+再 restart
+这些动作本身在 Cursor/Replit Agent 里都可能计费。
+
+真正的问题不是它“不会做”，而是任务提示太宽，导致它每次都重新建立上下文。
+
+三、以后怎么布置任务，减少 Agent 成本
+核心原则
+以后不要说：
+
+请继续做下一步
+而要给它一个“压缩上下文包”。
+
+例如：
+
+你不需要重新探索全仓库。只读以下文件：
+1. artifacts/api-server/src/routes/models.ts
+2. artifacts/research-model/src/components/innovation-meta-panel.tsx
+3. lib/api-spec/openapi.yaml
+已知事实：
+- OpenAPI codegen 命令是 xxx
+- typecheck 已知 TS6305 是旧问题，不要修
+- route 必须在 /sessions/:id/models/:modelId 下
+- auth 已由 loadAuthorizedSession 保护
+- innovationMeta 已存在
+任务：
+只做 X，不做 Y。
+完成后只运行 A/B/C 三个验证。
+这样它不会重新扫一遍全项目。
+
+四、建议建立一个 Agent Handoff 文件
+你现在项目迭代很快，建议建一个固定文件：
+
+docs/agent-handoff.md
+里面放：
+
+当前阶段：
+Phase 3 - contribution/reviewer UI
+已完成：
+- Phase 1 landscape
+- Phase 2 innovationMeta
+- Slice 3 InnovationMetaPanel
+关键文件：
+- routes/models.ts
+- components/innovation-meta-panel.tsx
+- openapi.yaml
+- i18n.tsx
+已知错误：
+- typecheck:libs TS6305 是旧问题，不要修
+- App.tsx Lang 类型旧问题，不要修
+- live-model ExportEdge 旧问题，不要修
+禁止：
+- 不要全仓库重构
+- 不要重跑全量 extraction
+- 不要无指令修改 auth
+- 不要默认调用 gpt-5.4
+以后每次给 Agent：
+
+先读 docs/agent-handoff.md，再只读本任务列出的文件。
+这会大幅减少探索成本。
+
+五、多任务怎么拆，才不会重复读代码
+不要让一个 Agent 同时做：
+
+后端 + OpenAPI + 前端 + i18n + 自测 + review + 文档
+这样它会一直读。
+
+建议拆成 3 类任务。
+
+Task A：后端 API 切片
+只允许读：
+
+routes/models.ts
+lib/api-spec/openapi.yaml
+lib/db schema 相关文件
+验收：
+
+路由 401
+OpenAPI path 存在
+无新增明显 TS 错误
+不要让它碰前端。
+
+Task B：前端 UI 切片
+只允许读：
+
+innovation-meta-panel.tsx
+models.tsx
+model-detail.tsx
+i18n.tsx
+generated api types
+验收：
+
+组件渲染空态
+按钮调用 hook
+coverage warning 显示
+不要让它改后端。
+
+Task C：验证/文档切片
+只允许读：
+
+scripts
+replit.md
+docs
+验收：
+
+selftest 通过
+文档记录已知错误
+不要让它改业务代码。
+
+六、给 Agent 的低成本任务模板
+你可以直接复制这个模板：
+
+任务：实现【具体功能名】
+成本限制：
+- 不要全仓库探索。
+- 只读取以下文件：...
+- 不要修改未列出的文件，除非必须，并先说明原因。
+- 不要运行全量 typecheck；只运行目标包检查。
+- 已知旧错误：TS6305 / App.tsx Lang / live-model ExportEdge，不要修。
+- 不要调用真实 AI，不要跑全量 extraction。
+- 如果需要 codegen，只运行一次。
+当前上下文：
+- innovationMeta 已存在，结构为...
+- recompute endpoint 为...
+- coverage < 0.7 时 analysis_only
+- 401 unauthenticated 是正常结果
+交付：
+1. 修改文件列表
+2. 验证命令和结果
+3. 是否触发 codegen
+4. 风险/后续项
+这个比“继续帮我做”省很多钱。
+
+七、Agent 不要每次做架构师审查
+你现在每轮都：
+
+实现 → 架构师 review → 修复
+这很贵。
+
+建议改成：
+
+任务类型	是否 review
+小 UI 文案	不需要
+i18n 补 key	不需要
+OpenAPI schema 小改	不需要
+新 DB schema	需要
+新 AI 调用链路	需要
+鉴权/权限	需要
+计费/成本	需要
+也就是说，review 用在高风险点，不要每轮默认开。
+
+八、产品运行成本也要同步控制
+这轮如果加了 reviewer/contribution AI，需要加成本闸门：
+
+必须有
+AI review 不自动运行
+AI refine 不自动运行
+默认 mini
+高质量按钮才用 5.2/5.4
+结果缓存 30 分钟
+重复点击不重复扣费
+显示预计积分
+路由建议
+GET /models/:id/innovation-review
+这个如果是规则版，不花钱。
+
+POST /models/:id/ai-review
+这个才花钱。
+
+POST /models/:id/refine-contribution
+默认 mini，高质量参数才用贵模型。
+
+九、我建议下一步怎么做
+现在不要马上继续大切片。先让执行方做一个“成本闸门切片”。
+
+成本闸门切片内容
+所有新 AI 路由加 usage logging。
+所有新 AI 路由默认 gpt-5-mini。
+加 30 分钟缓存。
+加重复点击防抖。
+前端按钮显示：
+预计消耗 X 积分
+页面加载不自动调用 AI。
+这一步做完，再继续 Phase 3 的 reviewer simulator。
+
+十、最终判断
+功能上
+这轮通过，可以收。
+
+成本上
+必须调整工作方式，否则 Agent 开发成本会继续飙。
+
+我的建议
+你回复执行方：
+
+功能通过，但后续每个任务必须带上下文包，不要再全仓库探索。接下来先做成本闸门：新增 AI 路由默认 mini、禁止自动调用、加缓存、加 usage logging、按钮显示预计积分。之后再继续 reviewer simulator。
+
+一句话：代码功能可以继续，但任务管理方式必须改；以后让 Agent “按文件清单施工”，不要让它每次重新理解整个系统。
+
