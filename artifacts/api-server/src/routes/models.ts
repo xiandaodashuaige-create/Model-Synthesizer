@@ -2221,16 +2221,7 @@ OUTPUT FORMAT — return a JSON object with key "models" containing an array of 
       if (floatingNames.length > 0) {
         return { ok: false, reason: `floating node(s) not connected by any edge: ${floatingNames.join(", ")}` };
       }
-      // Relax node floor by 1 when the repair pass legitimately pruned a
-      // floating node (e.g. an ungrounded edge was removed and its endpoint
-      // became orphaned). A repaired 4-node model is still structurally
-      // coherent; hard-rejecting it wastes a full model generation round for
-      // a single bad citation. The marker is set in the floating-node prune
-      // step of the repair pass, never on freshly-parsed models.
-      const effectiveMinNodes = (m as { _nodesPrunedInRepair?: boolean })._nodesPrunedInRepair
-        ? Math.max(4, minNodes - 1)
-        : minNodes;
-      if (m.nodes.length < effectiveMinNodes || m.nodes.length > 8) return { ok: false, reason: `node count out of range (${m.nodes.length}, need ≥${effectiveMinNodes})` };
+      if (m.nodes.length < minNodes || m.nodes.length > 8) return { ok: false, reason: `node count out of range (${m.nodes.length}, need ≥${minNodes})` };
       if (m.edges.length < 4 || m.edges.length > 8) return { ok: false, reason: `edge count out of range (${m.edges.length}, need ≥4)` };
 
       // HARD: user-named role bindings parsed from the directive prompt.
@@ -2595,18 +2586,7 @@ OUTPUT FORMAT — return a JSON object with key "models" containing an array of 
           if (nm && focusNameSet.has(nm)) return true;
           return false;
         });
-        const prunedCount = beforeNodes - m.nodes.length;
-        repairStats.droppedNodes += prunedCount;
-        // Mark this model so validate() can allow minNodes-1 (4 instead of 5)
-        // when a legitimate floating-node prune shrunk it below the nominal
-        // floor. Without this, a clean 5-node model that loses 1 node because
-        // 1 of its 5 edges had an ungrounded citation is hard-rejected for
-        // "node count out of range (4, need ≥5)" even though the remaining
-        // 4-node / 4-edge structure is theoretically coherent. The marker only
-        // relaxes by 1 — a 3-node model still fails.
-        if (prunedCount > 0) {
-          (m as { _nodesPrunedInRepair?: boolean })._nodesPrunedInRepair = true;
-        }
+        repairStats.droppedNodes += beforeNodes - m.nodes.length;
       }
       // ── DANGLING-MEDIATOR OUTGOING RESCUE ──────────────────────────────
       // Companion to the focus-pick orphan rescue above. When a mediator

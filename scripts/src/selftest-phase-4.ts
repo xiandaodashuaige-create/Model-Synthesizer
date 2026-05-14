@@ -1,14 +1,15 @@
 // Phase 4 Innovation Layer end-to-end smoke test.
 //
 // Walks the full Phase 4 chain for a target session:
-//   0. (auto) If landscapeVersion is null, POST landscape/rebuild first
-//   1. GET  /sessions/:id/landscape — confirms landscapeVersion + gapReport
-//   2. POST /sessions/:id/landscape/gap-report — auto-generates if absent
-//   3. POST /sessions/:id/models/generate (numModels=1) — generates one model
-//   4. Reads the freshest ai_usage_log row(s) for models/generate from DB
-//   5. Reads the returned model's innovationMeta and verifies all Phase 4 fields
-//   6. Context-propagation assertion: gapReport.allGapTypes⊇{context} ∧
-//      model has ≥1 context_transferred edge → innovationTypes must include "context"
+//   0. GET /sessions/:id/landscape — verify landscapeVersion is present
+//   1. Check gapReport: if absent, warn and skip gap/context assertions
+//   2. POST /sessions/:id/models/generate (numModels=1) — generates one model
+//   3. Reads the freshest ai_usage_log row(s) for models/generate from DB
+//   4. Reads the returned model's innovationMeta and verifies all Phase 4 fields
+//   5. Context-propagation assertion: gapReport.allGapTypes⊇{context} ∧
+//      model has ≥1 context_transferred edge ↔ innovationTypes must include "context"
+//      (negative case is also asserted: if neither condition is met, "context"
+//       must NOT appear in innovationTypes)
 //
 // Auth: the script auto-creates a temporary auth_sessions row (Bearer token)
 // using the session's own userId. No browser cookie is needed. The row is
@@ -17,12 +18,11 @@
 // Usage:
 //   pnpm --filter @workspace/scripts run selftest:phase-4 <sessionId>
 //
-//   SKIP_GAP_REPORT=1   — skip auto-generate (use existing gap report only)
 //   API_BASE_URL=http://... — default: http://localhost:80
 //
-// Recommended session: 11 (19 papers, 156 vars, model generation works).
-// Session 9 has a landscape but evidence grounding fails for all generated
-// edges (prompt too large → AI paraphrases instead of verbatim-quoting).
+// The target session must already have a landscape built (landscapeVersion ≥ 1)
+// and, for context-propagation checks, a gap report generated. If either is
+// absent the script warns and skips the corresponding assertions.
 //
 // Exits non-zero on any assertion failure.
 
@@ -158,37 +158,12 @@ async function setupTestAuth(): Promise<{ headers: Record<string, string>; clean
 // ---------------------------------------------------------------------------
 // Step helpers
 // ---------------------------------------------------------------------------
-async function triggerRebuild(authHeaders: Record<string, string>): Promise<number> {
-  console.log("  → Triggering landscape rebuild (POST landscape/rebuild)…");
-  const r = await fetch(`${baseUrl}/api/sessions/${sessionId}/landscape/rebuild`, {
-    method: "POST",
-    headers: authHeaders,
-    body: JSON.stringify({}),
-  });
-  if (!r.ok) throw new Error(`POST landscape/rebuild returned ${r.status}: ${await r.text()}`);
-  const body = (await r.json()) as { landscapeVersion: number; rebuildMs: number };
-  console.log(`  ✔ Rebuild done: landscapeVersion=${body.landscapeVersion} (${body.rebuildMs}ms)`);
-  return body.landscapeVersion;
-}
-
 async function getLandscape(authHeaders: Record<string, string>): Promise<LandscapeResponse> {
   const r = await fetch(`${baseUrl}/api/sessions/${sessionId}/landscape`, {
     headers: authHeaders,
   });
   if (!r.ok) throw new Error(`GET landscape returned ${r.status}: ${await r.text()}`);
   return (await r.json()) as LandscapeResponse;
-}
-
-// POST /sessions/:id/landscape/gap-report returns the gapReport object directly.
-async function generateGapReport(authHeaders: Record<string, string>): Promise<GapReport> {
-  console.log("  → Generating gap report (POST landscape/gap-report)…");
-  const r = await fetch(`${baseUrl}/api/sessions/${sessionId}/landscape/gap-report`, {
-    method: "POST",
-    headers: authHeaders,
-    body: JSON.stringify({}),
-  });
-  if (!r.ok) throw new Error(`POST gap-report returned ${r.status}: ${await r.text()}`);
-  return (await r.json()) as GapReport;
 }
 
 const MAX_GENERATE_ATTEMPTS = 5;
@@ -241,21 +216,11 @@ let totalCostMicroUsd = 0;
 let modelUsed = "(unknown)";
 
 async function runTests(authHeaders: Record<string, string>, tStart: number): Promise<void> {
-  // ── Step 0: Ensure landscape is built ─────────────────────────────────────
-  // Session may not have had its landscape built yet (e.g. session 11 which
-  // has model-generation data but was set up before the landscape feature).
-  // Trigger a synchronous rebuild so steps 1-5 can rely on landscapeVersion.
-  console.log("\n[0/4] Checking landscape status…");
-  const preCheck = await getLandscape(authHeaders);
-  if (!preCheck.landscapeVersion) {
-    console.log("  landscapeVersion is null — triggering rebuild first");
-    await triggerRebuild(authHeaders);
-  } else {
-    console.log(`  ✔ landscapeVersion already present: ${preCheck.landscapeVersion}`);
-  }
-
-  // ── Step 1: Read landscape ──────────────────────────────────────────────
-  console.log("\n[1/4] GET landscape…");
+  // ── Step 0: Verify landscape is present ───────────────────────────────────
+  // The session must already have a landscape built (landscapeVersion ≥ 1).
+  // If it doesn't, the test fails with a clear message — the caller should
+  // run a manual landscape rebuild before invoking this selftest.
+  console.log("\n[0/4] GET landscape…");
   const landscape = await getLandscape(authHeaders);
   const { landscapeVersion, coverage, gapReport: existingGapReport } = landscape;
 
@@ -267,50 +232,48 @@ async function runTests(authHeaders: Record<string, string>, tStart: number): Pr
 
   assert(
     landscapeVersion !== null && landscapeVersion > 0,
-    "landscapeVersion is null or 0 after rebuild — rebuildLandscape must have failed",
+    "landscapeVersion is null or 0 — session must have a built landscape before running this selftest",
   );
   assert(coverage.totalEligiblePaperCount > 0, "session has no eligible papers");
 
-  // ── Step 2: Ensure gap report exists ───────────────────────────────────
-  console.log("\n[2/4] Gap report…");
+  // ── Step 1: Check gap report ─────────────────────────────────────────────
+  // If no gap report is present (or it is stale), warn and skip the
+  // gap-dependent assertions.  We do NOT auto-generate here — gap report
+  // generation is a separate product action, not part of this smoke test.
+  console.log("\n[1/4] Gap report…");
   let gapReport: GapReport;
+  let skipGapChecks = false;
   if (existingGapReport && existingGapReport.version === landscapeVersion) {
     gapReport = existingGapReport;
-    console.log(`  ✔ Using existing gap report (version ${gapReport.version})`);
+    console.log(`  ✔ Gap report present (version ${gapReport.version})`);
     console.log(`  allGapTypes : [${gapReport.allGapTypes.join(", ")}]`);
     console.log(`  gaps        : ${gapReport.gaps.length}`);
     for (const g of gapReport.gaps.slice(0, 3)) {
       console.log(`    [${g.type}] ${g.summary.slice(0, 70)}`);
     }
-  } else if (process.env.SKIP_GAP_REPORT) {
-    console.log("  WARN: no gap report and SKIP_GAP_REPORT is set — context propagation test will be skipped");
-    gapReport = { version: 0, gaps: [], allGapTypes: [], topGapTypes: [] };
+    // When gap report is present, assert non-empty allGapTypes for sessions
+    // with sufficient coverage so the gap-type contract is verified.
+    if (gapReport.allGapTypes.length === 0 && coverage.coverageRate >= 0.3) {
+      assert(false, "gap report allGapTypes is empty despite coverage ≥30%");
+    }
+    if (gapReport.gaps.length === 0) {
+      console.log(`  WARN: gap report has 0 gaps (coverage=${(coverage.coverageRate * 100).toFixed(1)}% — may be too low for gap detection)`);
+    }
   } else {
+    skipGapChecks = true;
     if (existingGapReport && existingGapReport.version !== landscapeVersion) {
-      console.log(`  Gap report version ${existingGapReport.version} ≠ landscapeVersion ${landscapeVersion} — regenerating`);
+      console.log(`  WARN: gap report version ${existingGapReport.version} ≠ landscapeVersion ${landscapeVersion} — skipping gap/context assertions`);
+    } else {
+      console.log("  WARN: no gap report found — skipping gap/context assertions");
     }
-    gapReport = await generateGapReport(authHeaders);
-    console.log(`  ✔ Generated gap report (version ${gapReport.version})`);
-    console.log(`  allGapTypes : [${gapReport.allGapTypes.join(", ")}]`);
-    console.log(`  gaps        : ${gapReport.gaps.length}`);
-    for (const g of gapReport.gaps.slice(0, 3)) {
-      console.log(`    [${g.type}] ${g.summary.slice(0, 70)}`);
-    }
-  }
-
-  // Low coverage sessions may yield 0 gaps (AI can't identify patterns). Warn only.
-  if (gapReport.gaps.length === 0) {
-    console.log(`  WARN: gap report has 0 gaps (coverage=${(coverage.coverageRate * 100).toFixed(1)}% — may be too low for gap detection)`);
-  }
-  if (gapReport.allGapTypes.length === 0 && coverage.coverageRate >= 0.3) {
-    assert(false, "gap report allGapTypes is empty despite coverage ≥30%");
+    gapReport = { version: 0, gaps: [], allGapTypes: [], topGapTypes: [] };
   }
 
   // Snapshot time so we can isolate the ai_usage_log rows produced by THIS run.
   const tBeforeGenerate = new Date();
 
-  // ── Step 3: Generate one model ─────────────────────────────────────────
-  console.log("\n[3/4] POST models/generate (numModels=1)…");
+  // ── Step 2: Generate one model ─────────────────────────────────────────
+  console.log("\n[2/4] POST models/generate (numModels=1)…");
   const models = await generateOneModel(authHeaders);
   const tAfterGenerate = new Date();
   const generationMs = tAfterGenerate.getTime() - tBeforeGenerate.getTime();
@@ -326,8 +289,8 @@ async function runTests(authHeaders: Record<string, string>, tStart: number): Pr
   console.log(`  model.id   : ${model.id}`);
   console.log(`  model.name : "${model.name.slice(0, 60)}"`);
 
-  // ── Step 4: Read ai_usage_log for this generation run ─────────────────
-  console.log("\n[4/4] Reading ai_usage_log…");
+  // ── Step 3: Read ai_usage_log for this generation run ─────────────────
+  console.log("\n[3/4] Reading ai_usage_log…");
   const usageLogs = await db
     .select()
     .from(aiUsageLogTable)
@@ -367,7 +330,7 @@ async function runTests(authHeaders: Record<string, string>, tStart: number): Pr
     console.log(`    (looked for sessionId=${sessionId} route=models/generate within 90s of generation)`);
   }
 
-  // ── Step 5: innovationMeta assertions ──────────────────────────────────
+  // ── Step 4: innovationMeta assertions ──────────────────────────────────
   console.log("\n── innovationMeta ──────────────────────────────────────────");
   const im = model.innovationMeta;
   assert(im !== null, "innovationMeta is null — Phase 1 scoring should have populated it");
@@ -412,23 +375,30 @@ async function runTests(authHeaders: Record<string, string>, tStart: number): Pr
 
     // ── Phase 4 core: context propagation check ──────────────────────────
     console.log("\n── Phase 4: context propagation check ─────────────────────");
-    const gapHasContext = gapReport.allGapTypes.includes("context");
-    const modelHasContextTransferred = im.edgeNoveltyTags.some((t) => t.tag === "context_transferred");
-    const innovationHasContext = im.innovationTypes.includes("context");
-
-    console.log(`  gap allGapTypes has "context" : ${gapHasContext}`);
-    console.log(`  model has context_transferred : ${modelHasContextTransferred}`);
-    console.log(`  innovationTypes has "context" : ${innovationHasContext}`);
-
-    if (gapHasContext && modelHasContextTransferred) {
-      assert(innovationHasContext, "FAIL: gapReport has context gap + model has context_transferred edge, but innovationTypes is missing 'context'");
-      console.log("  ✔ Both conditions met → context correctly in innovationTypes");
-    } else if (!gapHasContext && !modelHasContextTransferred) {
-      console.log("  — Neither condition met → context correctly absent from innovationTypes");
-    } else if (gapHasContext && !modelHasContextTransferred) {
-      console.log("  — gapReport has context but model has no context_transferred edge → context correctly absent");
+    if (skipGapChecks) {
+      console.log("  — gap report absent; skipping context propagation check");
     } else {
-      console.log("  — model has context_transferred edge but gapReport lacks context gap → context correctly absent");
+      const gapHasContext = gapReport.allGapTypes.includes("context");
+      const modelHasContextTransferred = im.edgeNoveltyTags.some((t) => t.tag === "context_transferred");
+      const innovationHasContext = im.innovationTypes.includes("context");
+
+      console.log(`  gap allGapTypes has "context" : ${gapHasContext}`);
+      console.log(`  model has context_transferred : ${modelHasContextTransferred}`);
+      console.log(`  innovationTypes has "context" : ${innovationHasContext}`);
+
+      if (gapHasContext && modelHasContextTransferred) {
+        assert(innovationHasContext, "FAIL: gapReport has context gap + model has context_transferred edge, but innovationTypes is missing 'context'");
+        console.log("  ✔ Both conditions met → context correctly in innovationTypes");
+      } else if (!gapHasContext && !modelHasContextTransferred) {
+        assert(!innovationHasContext, "FAIL: neither gapReport context gap nor context_transferred edge, but innovationTypes spuriously includes 'context'");
+        console.log("  ✔ Neither condition met → context correctly absent from innovationTypes");
+      } else if (gapHasContext && !modelHasContextTransferred) {
+        assert(!innovationHasContext, "FAIL: gapReport has context gap but model has no context_transferred edge — innovationTypes must not include 'context'");
+        console.log("  ✔ gapReport has context gap but no context_transferred edge → context correctly absent from innovationTypes");
+      } else {
+        assert(!innovationHasContext, "FAIL: model has context_transferred edge but gapReport lacks context gap — innovationTypes must not include 'context'");
+        console.log("  ✔ model has context_transferred edge but gapReport lacks context gap → context correctly absent from innovationTypes");
+      }
     }
 
     // No duplicate innovationTypes
