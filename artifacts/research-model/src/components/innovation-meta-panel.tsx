@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { ChevronDown, ChevronUp, RefreshCw, Sparkles, AlertTriangle, Info, Loader2, CheckCircle, XCircle, AlertCircle, Wand2, Bot, Copy, Download } from "lucide-react";
 import {
   useRecomputeModelInnovation,
@@ -353,6 +353,15 @@ function ReviewerSection({ sessionId, modelId, initialMarkdown }: { sessionId: n
   const { toast } = useToast();
   const [aiMarkdown, setAiMarkdown] = useState<string | null>(initialMarkdown ?? null);
   const aiReview = useGenerateAiReview();
+
+  // Sync from backend when the model query refetches (e.g. after recompute-innovation
+  // invalidates the cache). Only update when a real value arrives and we are not
+  // currently generating — avoids overwriting an in-progress generation.
+  useEffect(() => {
+    if (!aiReview.isPending && initialMarkdown != null) {
+      setAiMarkdown(initialMarkdown);
+    }
+  }, [initialMarkdown]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const reviewQuery = useGetModelReview(sessionId, modelId);
 
