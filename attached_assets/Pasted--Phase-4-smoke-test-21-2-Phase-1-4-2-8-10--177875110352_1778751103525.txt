@@ -1,0 +1,134 @@
+现在应该先做 Phase 4 smoke test（#21），不要先合并 #2。
+
+原因：你现在 Phase 1-4 都已经“代码完成”，但还缺一次真正的端到端验证。继续合并 #2、#8、#10、#12 都是局部优化，不能证明主链路没问题。
+
+当前状态判断
+你们现在已经完成很多：
+
+降本
+prompt 压缩
+InnovationMeta
+contribution/review
+gap report
+context innovation
+gap hints 注入
+但还没有一个完整测试证明：
+
+gap report → model generation → innovationMeta → context type → prompt size → cost
+这条链路能跑通。
+
+所以当前最重要的是：
+
+#21 Phase 4 smoke test
+为什么不建议先合并 #2
+#2 是：
+
+显示跳过论文详情
+它有用，但不是主链路 blocker。
+
+如果现在先合并 #2，可能又引入新 UI 状态或数据读取变化，反而干扰 smoke test。
+
+我的建议是：
+
+先测试主链路
+再合并周边体验任务
+推荐顺序
+第一优先：#21 Smoke Test
+测试目标：
+
+session 9 生成 gap report；
+生成 1 个模型；
+检查生成 prompt token 是否 ≤20k 左右；
+检查 gap hints 是否注入；
+检查 innovationMeta 是否生成；
+检查 context innovationType 是否出现或合理缺失；
+检查 mode 是否仍 analysis_only；
+检查本次花费。
+第二优先：#2
+Smoke test 通过后，再合并 #2。
+
+第三优先：#8 + #12
+这两个可以一起做：
+
+#8 贡献陈述 warning 自动消失；
+#12 评审意见存 DB。
+其中 #12 比 #10 更优先，因为导出应该基于持久化数据。
+
+第四优先：#10
+评审意见导出。
+
+第五优先：Phase 5
+等主链路和评审持久化都稳了，再做 Phase 5。
+
+Smoke Test 怎么做
+我建议 smoke test 不要太复杂，也不要反复触发 AI。
+
+只跑一次：
+
+Session 9
+numModels = 1
+测试脚本应输出：
+
+sessionId
+landscapeVersion
+coverageRate
+gapReportExists
+gapCount
+generatedModelId
+promptEstimatedTokens
+actualPromptTokens
+completionTokens
+modelUsed
+costUsd
+innovationTypes
+edgeNoveltyTagCounts
+contributionScore
+subScores
+mode
+warnings
+特别关注：
+
+promptEstimatedTokens <= 20k
+actualPromptTokens <= 22k
+如果没有实际 token，就先用日志 estimatedTokens，但最好查 ai_usage_log。
+
+给 Replit 的指令建议
+你可以直接回复：
+
+先做 #21 Phase 4 smoke test，不要合并 #2，也不要继续新功能。
+限制：
+- 只写/改 smoke test 脚本和 package.json script。
+- 不改业务逻辑。
+- 不跑全量提取。
+- 不生成多个模型，只生成 1 个。
+- 不做截图。
+- 不做架构师 review。
+- 输出一次端到端报告。
+测试步骤：
+1. 确认 session 9 有 gapReport；如果没有，只手动调用一次 generate gap report。
+2. 调用 models/generate，numModels=1。
+3. 读取 ai_usage_log 的最新 models/generate 记录。
+4. 读取新模型 innovationMeta。
+5. 输出 prompt token、cost、innovationTypes、coverage、mode、warnings。
+关于成本
+Smoke test 会花一次生成费用，但这是必要成本。
+
+你现在已经花了很多钱做开发，如果不跑这个测试，就不知道：
+
+Phase 4 是否真的闭环
+#14 是否真的省钱
+context innovation 是否能出现
+所以这一次值得跑。
+
+最终建议
+当前不要继续扩散任务。
+先做：
+
+#21 Phase 4 smoke test
+通过后：
+
+合并 #2
+做 #8 + #12
+再做 #10
+最后 Phase 5
+一句话：先验主链路，再合小功能

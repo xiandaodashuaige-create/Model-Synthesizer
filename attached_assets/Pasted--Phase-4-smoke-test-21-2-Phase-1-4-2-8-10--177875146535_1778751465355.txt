@@ -1,0 +1,302 @@
+现在应该先做 Phase 4 smoke test（#21），不要先合并 #2。
+
+原因：你现在 Phase 1-4 都已经“代码完成”，但还缺一次真正的端到端验证。继续合并 #2、#8、#10、#12 都是局部优化，不能证明主链路没问题。
+
+当前状态判断
+你们现在已经完成很多：
+
+降本
+prompt 压缩
+InnovationMeta
+contribution/review
+gap report
+context innovation
+gap hints 注入
+但还没有一个完整测试证明：
+
+gap report → model generation → innovationMeta → context type → prompt size → cost
+这条链路能跑通。
+
+所以当前最重要的是：
+
+#21 Phase 4 smoke test
+为什么不建议先合并 #2
+#2 是：
+
+显示跳过论文详情
+它有用，但不是主链路 blocker。
+
+如果现在先合并 #2，可能又引入新 UI 状态或数据读取变化，反而干扰 smoke test。
+
+我的建议是：
+
+先测试主链路
+再合并周边体验任务
+推荐顺序
+第一优先：#21 Smoke Test
+测试目标：
+
+session 9 生成 gap report；
+生成 1 个模型；
+检查生成 prompt token 是否 ≤20k 左右；
+检查 gap hints 是否注入；
+检查 innovationMeta 是否生成；
+检查 context innovationType 是否出现或合理缺失；
+检查 mode 是否仍 analysis_only；
+检查本次花费。
+第二优先：#2
+Smoke test 通过后，再合并 #2。
+
+第三优先：#8 + #12
+这两个可以一起做：
+
+#8 贡献陈述 warning 自动消失；
+#12 评审意见存 DB。
+其中 #12 比 #10 更优先，因为导出应该基于持久化数据。
+
+第四优先：#10
+评审意见导出。
+
+第五优先：Phase 5
+等主链路和评审持久化都稳了，再做 Phase 5。
+
+Smoke Test 怎么做
+我建议 smoke test 不要太复杂，也不要反复触发 AI。
+
+只跑一次：
+
+Session 9
+numModels = 1
+测试脚本应输出：
+
+sessionId
+landscapeVersion
+coverageRate
+gapReportExists
+gapCount
+generatedModelId
+promptEstimatedTokens
+actualPromptTokens
+completionTokens
+modelUsed
+costUsd
+innovationTypes
+edgeNoveltyTagCounts
+contributionScore
+subScores
+mode
+warnings
+特别关注：
+
+promptEstimatedTokens <= 20k
+actualPromptTokens <= 22k
+如果没有实际 token，就先用日志 estimatedTokens，但最好查 ai_usage_log。
+
+给 Replit 的指令建议
+你可以直接回复：
+
+先做 #21 Phase 4 smoke test，不要合并 #2，也不要继续新功能。
+限制：
+- 只写/改 smoke test 脚本和 package.json script。
+- 不改业务逻辑。
+- 不跑全量提取。
+- 不生成多个模型，只生成 1 个。
+- 不做截图。
+- 不做架构师 review。
+- 输出一次端到端报告。
+测试步骤：
+1. 确认 session 9 有 gapReport；如果没有，只手动调用一次 generate gap report。
+2. 调用 models/generate，numModels=1。
+3. 读取 ai_usage_log 的最新 models/generate 记录。
+4. 读取新模型 innovationMeta。
+5. 输出 prompt token、cost、innovationTypes、coverage、mode、warnings。
+关于成本
+Smoke test 会花一次生成费用，但这是必要成本。
+
+你现在已经花了很多钱做开发，如果不跑这个测试，就不知道：
+
+Phase 4 是否真的闭环
+#14 是否真的省钱
+context innovation 是否能出现
+所以这一次值得跑。
+
+最终建议
+当前不要继续扩散任务。
+先做：
+
+#21 Phase 4 smoke test
+通过后：
+
+合并 #2
+做 #8 + #12
+再做 #10
+最后 Phase 5
+一句话：先验主链路，再合小功能。
+
+请帮我继续审核：
+
+
+ 需要先确认的两件事
+
+#9 和 #14 显示"活跃"，但代码实际已经合并
+上一轮我们已完成 Phase 4 context 传播 + gap hints（#9），以及 prompt 压缩（#14），代码都在主分支里了。这两个任务的状态没有通过任务系统关闭，你需要告诉我是否直接关闭它们，否则 #21（smoke test）会一直显示被 #9 阻塞。
+
+#4 和 #16 是重复任务，#3 和 #15 也可能重复
+
+#16 已合并（高消耗操作积分预估），#4 还挂着相同标题 → 可以关闭 #4
+#15 已合并（减少图片搜索 API 调用），#3 还挂着 → 需确认 #3 是否有额外内容，或直接关闭
+活跃任务优先级（去除重复后）
+
+优先	#	任务	工作量	理由
+🔴 立刻	#2	显示跳过论文详情	0（代码已完成，等合并）	IMPLEMENTED 状态，不需要任何开发，只差你点确认
+🔴 立刻	#21	Phase 4 smoke test 脚本	小	关闭 #9 后自动解锁；确认整条链路无误后才安全继续开发
+🟡 本周	#12	评审意见持久化到数据库	中	服务重启就丢失是稳定性隐患，用户无感知
+🟡 本周	#8	贡献陈述警告生成后消失	小	当前 UX 让用户困惑（刚生成完还显示警告）
+🟡 本周	#20	"不相关"标记持久化	小	刷新后需要重新推断，体验差
+🟢 下轮	#10	评审意见导出	中	功能性增强，不影响现有流程
+🟢 下轮	#3	进一步降低图片搜索 API 调用	中	成本优化，#15 已做一轮，确认是否有额外空间
+草稿任务（等你决定）
+
+#	内容	依赖
+#5	提取进度汇总显示跳过数	#2 合并后才能开始
+#6	批量提取自动重试跳过论文	#2 合并后才能开始
+#18	SerpAPI 缓存持久化	可独立做
+#19	证据搜索按钮旁积分预估	可独立做
+建议下一步：先告诉我 #9 / #14 是否可以直接关闭（以及 #4 是否与 #16 重复可关闭），我来更新任务状态，然后直接开始做 #21 smoke test 脚本。
+
+我的判断：可以关闭 #9 和 #14；可以关闭 #4；#3 先不要直接关闭，标记为“待复核是否还有额外降本空间”。然后立刻做 #21 smoke test。
+
+逐项判断
+#9 Phase 4 Gap 报告自动化
+可以关闭。
+
+理由：
+
+你之前已经完成：
+
+gap report endpoint；
+gapReport 写入 landscapeMeta；
+landscape 页面展示；
+recompute 使用 gapReport；
+context innovationType 传播；
+top 3 gap hints 注入 generation prompt；
+coverage < 70% 仍 analysis_only。
+所以 #9 已经完成，继续挂着只会阻塞 #21。
+
+✅ 建议：关闭 #9。
+
+#14 Prompt 压缩
+可以关闭，但备注“已静态达标，待 smoke test 实测确认”。
+
+理由：
+
+你已经完成：
+
+originalGraphsBlock cap 15；
+hypothesesBlock cap 60；
+variable pool compact mode；
+hard rules 精简；
+Session 9 静态估算约 19,107 tokens。
+虽然还缺一次真实日志，但这正是 #21 的目的。
+所以 #14 不应该继续阻塞 smoke test。
+
+✅ 建议：关闭 #14，备注：
+
+Static estimate passed; real-token verification moved to #21 smoke test.
+#4 高消耗操作积分预估
+可以关闭。
+
+如果 #16 已经合并并覆盖：
+
+高消耗按钮积分预估；
+AI 操作前提示；
+成本标签；
+那 #4 就是重复任务。
+
+✅ 建议：关闭 #4，标记 duplicate of #16。
+
+#3 减少图片搜索 SerpAPI 调用
+不要直接关闭，先复核。
+
+如果 #15 已经做了：
+
+query 数减少；
+publisher lane 延后；
+缓存；
+图片搜索不默认扩展；
+那 #3 可以关闭。
+
+但你描述里说：
+
+#15 已合并（减少图片搜索 API 调用），#3 可能重复
+我建议先标记为：
+
+Needs triage / maybe duplicate of #15
+因为 SerpAPI 是外部成本，可能还有额外优化空间，比如：
+
+持久化缓存；
+raw mode 不跑 AI expansion；
+默认只跑 first page；
+publisher lane 由用户手动触发；
+per-edge figure search 限流。
+⚠️ 建议：暂不关闭 #3，等 #21 后再复核。
+
+对活跃任务优先级的调整
+我建议排序改成这样：
+
+立刻做
+1. #21 Phase 4 smoke test
+这是现在最重要的。
+
+它会验证：
+
+#9 是否真的闭环；
+#14 是否真实降到 20k；
+生成模型后 innovationMeta 是否正确；
+context innovationType 是否出现；
+本次成本是多少。
+2. #2 显示跳过论文详情
+如果代码已完成且风险低，可以在 #21 后合并。
+
+我不建议 #2 排在 #21 前面，因为 smoke test 是主链路验证，应该先跑。
+
+本周做
+#12 评审意见持久化
+重要，解决重启丢失。
+
+#8 贡献陈述警告生成后消失
+小 UX 修复。
+
+#20 不相关标记持久化
+这个也重要，和 tangential 治理有关。
+
+下轮做
+#10 评审意见导出
+等 #12 持久化后做更合理。
+
+#3 SerpAPI 进一步降本
+先复核 #15 覆盖程度。
+
+我建议你回复 Replit
+可以直接这样说：
+
+可以关闭 #9 和 #14。
+#9 已完成 Phase 4：gap report、gapFit、context innovationType 传播、gap hints 注入都已完成。
+#14 已完成静态压缩，Session 9 估算 19,107 tokens；真实 token 验证转入 #21 smoke test。
+#4 与 #16 重复，可以关闭。
+#3 暂不关闭，先标记为待复核是否还有额外 SerpAPI 降本空间。
+现在请先更新任务状态，然后立即做 #21 Phase 4 smoke test。
+不要继续新功能，不要合并 #2 之前先跑 smoke test。
+最终判断
+✅ 关闭：
+
+#9
+#14
+#4
+⏸ 暂不关闭：
+
+#3
+🚀 下一步：
+
+#21 Phase 4 smoke test
+一句话：先清掉假阻塞，再跑主链路 smoke test
