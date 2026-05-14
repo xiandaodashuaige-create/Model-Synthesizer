@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { DefenseQuestionsPanel } from "@/components/defense-questions-panel";
 import { ChevronDown, ChevronUp, RefreshCw, Sparkles, AlertTriangle, Info, Loader2, CheckCircle, XCircle, AlertCircle, Wand2, Bot, Copy, Download } from "lucide-react";
 import {
   useRecomputeModelInnovation,
@@ -682,6 +683,7 @@ export function InnovationMetaPanel({
               </div>
             )}
           </div>
+          <DefenseQuestionsPanel meta={meta} />
         </>
       )}
     </div>
