@@ -110,6 +110,10 @@ router.post("/sessions/:id/papers/:paperId/extract", async (req, res): Promise<v
     return;
   }
 
+  // bypassPreflight=true lets the user force a full extraction even when the
+  // mini relevance preflight previously judged the paper out_of_scope.
+  const bypassPreflight = req.query.bypassPreflight === "true" || req.query.bypassPreflight === "1";
+
   const [paper] = await db
     .select()
     .from(papersTable)
@@ -121,11 +125,28 @@ router.post("/sessions/:id/papers/:paperId/extract", async (req, res): Promise<v
   }
 
   // --- relevance preflight (cheap mini call) ---
-  const relevance = await checkPaperRelevance(params.data.id, paper, req.log);
-  if (relevance === "out_of_scope") {
-    req.log.info({ paperId: paper.id, sessionId: params.data.id }, "relevance-preflight: out_of_scope — skipping full extraction");
-    res.json({ variables: [], skipped: true, skipReason: "out_of_scope" });
-    return;
+  // Skipped when bypassPreflight is requested (user clicked "仍然提取").
+  // Also skipped when the paper was already successfully extracted (extracted=true)
+  // to avoid re-marking a paper with real variables as "skipped" if preflight
+  // changes its verdict after variables were already written.
+  const alreadyExtracted = paper.extracted === "true";
+  if (!bypassPreflight && !alreadyExtracted) {
+    const relevance = await checkPaperRelevance(params.data.id, paper, req.log);
+    if (relevance === "out_of_scope") {
+      req.log.info({ paperId: paper.id, sessionId: params.data.id }, "relevance-preflight: out_of_scope — skipping full extraction");
+      // Persist the skipped state so the UI can show a distinct badge across
+      // page reloads. We use extracted='skipped' (text column, not boolean).
+      await db
+        .update(papersTable)
+        .set({ extracted: "skipped" })
+        .where(eq(papersTable.id, paper.id));
+      res.json({ variables: [], skipped: true, skipReason: "out_of_scope" });
+      return;
+    }
+  } else if (bypassPreflight) {
+    req.log.info({ paperId: paper.id, sessionId: params.data.id }, "relevance-preflight: bypassed by user request");
+  } else {
+    req.log.info({ paperId: paper.id, sessionId: params.data.id }, "relevance-preflight: skipped — paper already successfully extracted");
   }
 
   try {

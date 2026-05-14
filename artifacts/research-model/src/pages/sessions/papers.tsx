@@ -17,7 +17,7 @@ import {
 } from "@workspace/api-client-react";
 import type { PaperFullTextHit } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Search, Plus, Trash2, Loader2, BookOpen, ExternalLink, CheckCircle, Clock, Info, Link2, Upload, FileText } from "lucide-react";
+import { Search, Plus, Trash2, Loader2, BookOpen, ExternalLink, CheckCircle, Clock, Info, Link2, Upload, FileText, AlertCircle, SkipForward } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { useT } from "@/lib/i18n";
@@ -114,7 +114,9 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
     : null;
 
   const addedIds = new Set((sessionPapers ?? []).map((p) => p.externalId));
-  const allExtracted = (sessionPapers?.length ?? 0) > 0 && (sessionPapers ?? []).every((p) => p.extracted);
+  // "allExtracted" treats relevance-skipped papers as "processed" so the
+  // next-step CTA is not permanently blocked by intentionally skipped papers.
+  const allExtracted = (sessionPapers?.length ?? 0) > 0 && (sessionPapers ?? []).every((p) => p.extracted || p.relevanceSkipped);
   const someExtracted = (sessionPapers ?? []).some((p) => p.extracted);
 
   // Monotonic request id — only the latest in-flight search is allowed to
@@ -396,7 +398,9 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
   const extractAllProgress = useExtractionProgress(sessionId);
 
   const handleExtractAll = async () => {
-    const pending = (sessionPapers ?? []).filter((p) => !p.extracted);
+    // Exclude relevance-skipped papers from "extract all" — they were already
+    // screened and the user can bypass individually via the "仍然提取" button.
+    const pending = (sessionPapers ?? []).filter((p) => !p.extracted && !p.relevanceSkipped);
     if (pending.length === 0) return;
     const runId = beginExtraction(sessionId, pending.length);
     let ok = 0, fail = 0, skipped = 0, done = 0;
@@ -464,10 +468,10 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
     });
   };
 
-  const handleExtract = (paperId: number, title: string) => {
+  const handleExtract = (paperId: number, title: string, opts?: { bypassPreflight?: boolean }) => {
     setExtractingPaperId(paperId);
     extractVariables.mutate(
-      { id: sessionId, paperId },
+      { id: sessionId, paperId, params: opts?.bypassPreflight ? { bypassPreflight: true } : undefined },
       {
         onSettled: () => setExtractingPaperId(null),
         onSuccess: (result) => {
@@ -477,8 +481,8 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
           queryClient.invalidateQueries({ queryKey: getGetSessionQueryKey(sessionId) });
           if (result.skipped) {
             toast({
-              title: t("papers.toast.extracted" as any),
-              description: `「${title.slice(0, 40)}」与研究主题关联度不足，已跳过 AI 提取。`,
+              title: t("papers.extract.skipped" as any),
+              description: `「${title.slice(0, 40)}」${t("papers.extract.skipped.reason" as any)}`,
             });
           } else {
             toast({
@@ -895,7 +899,7 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
           body={
             extractAllProgress
               ? t("papers.tip.extractAll.progress" as any, { done: extractAllProgress.done, total: extractAllProgress.total })
-              : t("papers.tip.extractAll.body" as any, { count: (sessionPapers ?? []).filter((p) => !p.extracted).length })
+              : t("papers.tip.extractAll.body" as any, { count: (sessionPapers ?? []).filter((p) => !p.extracted && !p.relevanceSkipped).length })
           }
           cta={extractAllProgress ? t("papers.extract.btn.working" as any) : t("papers.extract.btn.all" as any)}
           ctaNote={!extractAllProgress && (sessionPapers ?? []).filter((p) => !p.extracted).length > 0 ? `≈ ${(sessionPapers ?? []).filter((p) => !p.extracted).length} 积分` : undefined}
@@ -1022,6 +1026,29 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
                     <span className="inline-flex items-center gap-1.5 text-xs font-medium text-green-700 dark:text-green-400 bg-green-50 dark:bg-green-950/40 border border-green-200 dark:border-green-900 rounded-md px-2.5 py-1">
                       <CheckCircle className="w-3.5 h-3.5" /> {t("papers.extract.done" as any)}
                     </span>
+                  ) : paper.relevanceSkipped ? (
+                    <div className="flex flex-col items-end gap-1.5">
+                      <span
+                        className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900 rounded-md px-2.5 py-1"
+                        title={t("papers.extract.skipped.reason" as any) as string}
+                      >
+                        <SkipForward className="w-3.5 h-3.5" /> {t("papers.extract.skipped" as any)}
+                      </span>
+                      <button
+                        data-testid={`button-bypass-extract-${paper.id}`}
+                        onClick={() => handleExtract(paper.id, paper.title, { bypassPreflight: true })}
+                        disabled={extractingPaperId === paper.id || extractAllProgress !== null}
+                        className="inline-flex items-center gap-1.5 rounded-md text-[11px] font-medium h-7 px-2.5 border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/40 transition-colors disabled:opacity-50"
+                        title={t("papers.extract.bypass.tip" as any) as string}
+                      >
+                        {extractingPaperId === paper.id ? (
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                        ) : (
+                          <AlertCircle className="w-3 h-3" />
+                        )}
+                        {t("papers.extract.bypass" as any)}
+                      </button>
+                    </div>
                   ) : (
                     <button
                       data-testid={`button-extract-${paper.id}`}
@@ -1059,7 +1086,9 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
           the safety net. Previously this hard-blocked navigation, leaving
           users stuck whenever a single paper failed extraction. */}
       {someExtracted && (() => {
-        const pendingCount = (sessionPapers ?? []).filter((p) => !p.extracted).length;
+        // Skipped papers are intentionally excluded from the pending count —
+        // they were pre-screened as off-topic; only truly un-processed papers count.
+        const pendingCount = (sessionPapers ?? []).filter((p) => !p.extracted && !p.relevanceSkipped).length;
         const isExtracting = !!extractAllProgress;
         // Only block navigation while bulk extraction is actively running.
         // When extraction is idle but some papers stayed pending (e.g. AI

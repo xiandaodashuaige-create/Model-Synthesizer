@@ -411,6 +411,12 @@ paths:
           required: true
           schema:
             type: integer
+        - name: bypassPreflight
+          in: query
+          required: false
+          schema:
+            type: boolean
+          description: When true, skip the mini relevance preflight and force full extraction regardless of topic relevance verdict.
       responses:
         "200":
           description: Extracted variables (or skipped if paper is out of scope for the session topic)
@@ -2553,6 +2559,9 @@ components:
           type: string
         extracted:
           type: boolean
+        relevanceSkipped:
+          type: boolean
+          description: True when the paper was skipped by the mini relevance preflight (out_of_scope verdict). extracted will be false for these papers. The user can force re-extraction by calling the extract endpoint with bypassPreflight=true.
         createdAt:
           type: string
       required:
@@ -2563,6 +2572,7 @@ components:
         - authors
         - url
         - extracted
+        - relevanceSkipped
         - createdAt
 
     AddPaperBody:

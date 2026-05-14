@@ -250,6 +250,8 @@ export interface Paper {
   openAccessUrl?: string | null;
   url: string;
   extracted: boolean;
+  /** True when the paper was skipped by the mini relevance preflight (out_of_scope verdict). extracted will be false for these papers. The user can force re-extraction by calling the extract endpoint with bypassPreflight=true. */
+  relevanceSkipped: boolean;
   createdAt: string;
 }
 
@@ -1159,6 +1161,13 @@ export type SearchSessionPapersFullTextParams = {
 
 export type LookupPaper404 = {
   error: string;
+};
+
+export type ExtractVariablesParams = {
+  /**
+   * When true, skip the mini relevance preflight and force full extraction regardless of topic relevance verdict.
+   */
+  bypassPreflight?: boolean;
 };
 
 export type CreateSessionVariableBodyType =

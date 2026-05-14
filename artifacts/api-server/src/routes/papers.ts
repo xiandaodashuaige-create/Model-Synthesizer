@@ -382,6 +382,7 @@ function formatPaper(paper: typeof papersTable.$inferSelect) {
   return {
     ...paper,
     extracted: paper.extracted === "true",
+    relevanceSkipped: paper.extracted === "skipped",
     createdAt: paper.createdAt.toISOString(),
   };
 }

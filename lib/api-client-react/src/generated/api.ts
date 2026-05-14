@@ -37,6 +37,7 @@ import type {
   EvidenceApplyRequest,
   EvidenceSearchRequest,
   EvidenceSearchResult,
+  ExtractVariablesParams,
   ExtractionResult,
   GapReport,
   GenerateModelLiteratureReview200,
@@ -1712,19 +1713,39 @@ export const useRemovePaperFromSession = <
 /**
  * @summary Extract research variables from a paper using AI
  */
-export const getExtractVariablesUrl = (id: number, paperId: number) => {
-  return `/api/sessions/${id}/papers/${paperId}/extract`;
+export const getExtractVariablesUrl = (
+  id: number,
+  paperId: number,
+  params?: ExtractVariablesParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/sessions/${id}/papers/${paperId}/extract?${stringifiedParams}`
+    : `/api/sessions/${id}/papers/${paperId}/extract`;
 };
 
 export const extractVariables = async (
   id: number,
   paperId: number,
+  params?: ExtractVariablesParams,
   options?: RequestInit,
 ): Promise<ExtractionResult> => {
-  return customFetch<ExtractionResult>(getExtractVariablesUrl(id, paperId), {
-    ...options,
-    method: "POST",
-  });
+  return customFetch<ExtractionResult>(
+    getExtractVariablesUrl(id, paperId, params),
+    {
+      ...options,
+      method: "POST",
+    },
+  );
 };
 
 export const getExtractVariablesMutationOptions = <
@@ -1734,14 +1755,14 @@ export const getExtractVariablesMutationOptions = <
   mutation?: UseMutationOptions<
     Awaited<ReturnType<typeof extractVariables>>,
     TError,
-    { id: number; paperId: number },
+    { id: number; paperId: number; params?: ExtractVariablesParams },
     TContext
   >;
   request?: SecondParameter<typeof customFetch>;
 }): UseMutationOptions<
   Awaited<ReturnType<typeof extractVariables>>,
   TError,
-  { id: number; paperId: number },
+  { id: number; paperId: number; params?: ExtractVariablesParams },
   TContext
 > => {
   const mutationKey = ["extractVariables"];
@@ -1755,11 +1776,11 @@ export const getExtractVariablesMutationOptions = <
 
   const mutationFn: MutationFunction<
     Awaited<ReturnType<typeof extractVariables>>,
-    { id: number; paperId: number }
+    { id: number; paperId: number; params?: ExtractVariablesParams }
   > = (props) => {
-    const { id, paperId } = props ?? {};
+    const { id, paperId, params } = props ?? {};
 
-    return extractVariables(id, paperId, requestOptions);
+    return extractVariables(id, paperId, params, requestOptions);
   };
 
   return { mutationFn, ...mutationOptions };
@@ -1781,14 +1802,14 @@ export const useExtractVariables = <
   mutation?: UseMutationOptions<
     Awaited<ReturnType<typeof extractVariables>>,
     TError,
-    { id: number; paperId: number },
+    { id: number; paperId: number; params?: ExtractVariablesParams },
     TContext
   >;
   request?: SecondParameter<typeof customFetch>;
 }): UseMutationResult<
   Awaited<ReturnType<typeof extractVariables>>,
   TError,
-  { id: number; paperId: number },
+  { id: number; paperId: number; params?: ExtractVariablesParams },
   TContext
 > => {
   return useMutation(getExtractVariablesMutationOptions(options));

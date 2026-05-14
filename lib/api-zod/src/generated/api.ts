@@ -379,6 +379,11 @@ export const ListSessionPapersResponseItem = zod.object({
   openAccessUrl: zod.string().nullish(),
   url: zod.string(),
   extracted: zod.boolean(),
+  relevanceSkipped: zod
+    .boolean()
+    .describe(
+      "True when the paper was skipped by the mini relevance preflight (out_of_scope verdict). extracted will be false for these papers. The user can force re-extraction by calling the extract endpoint with bypassPreflight=true.",
+    ),
   createdAt: zod.string(),
 });
 export const ListSessionPapersResponse = zod.array(
@@ -418,6 +423,15 @@ export const RemovePaperFromSessionParams = zod.object({
 export const ExtractVariablesParams = zod.object({
   id: zod.coerce.number(),
   paperId: zod.coerce.number(),
+});
+
+export const ExtractVariablesQueryParams = zod.object({
+  bypassPreflight: zod.coerce
+    .boolean()
+    .optional()
+    .describe(
+      "When true, skip the mini relevance preflight and force full extraction regardless of topic relevance verdict.",
+    ),
 });
 
 export const ExtractVariablesResponse = zod.object({
@@ -552,6 +566,11 @@ export const UploadSessionPaperPdfResponse = zod.object({
   openAccessUrl: zod.string().nullish(),
   url: zod.string(),
   extracted: zod.boolean(),
+  relevanceSkipped: zod
+    .boolean()
+    .describe(
+      "True when the paper was skipped by the mini relevance preflight (out_of_scope verdict). extracted will be false for these papers. The user can force re-extraction by calling the extract endpoint with bypassPreflight=true.",
+    ),
   createdAt: zod.string(),
 });
 
