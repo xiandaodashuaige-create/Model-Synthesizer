@@ -137,7 +137,7 @@ async function setupTestAuth(): Promise<{ headers: Record<string, string>; clean
       user: { id: sessionRow.userId },
       access_token: "selftest-phase-4-ephemeral",
       expires_at: Math.floor(Date.now() / 1000) + 3600,
-    } as unknown as Record<string, unknown>,
+    } as Record<string, unknown>,
     expire: new Date(Date.now() + 3600 * 1000),
   });
 
@@ -251,13 +251,17 @@ async function runTests(authHeaders: Record<string, string>, tStart: number): Pr
     for (const g of gapReport.gaps.slice(0, 3)) {
       console.log(`    [${g.type}] ${g.summary.slice(0, 70)}`);
     }
-    // When gap report is present, assert non-empty allGapTypes for sessions
-    // with sufficient coverage so the gap-type contract is verified.
-    if (gapReport.allGapTypes.length === 0 && coverage.coverageRate >= 0.3) {
-      assert(false, "gap report allGapTypes is empty despite coverage ≥30%");
-    }
-    if (gapReport.gaps.length === 0) {
-      console.log(`  WARN: gap report has 0 gaps (coverage=${(coverage.coverageRate * 100).toFixed(1)}% — may be too low for gap detection)`);
+    // Structural assertions: arrays must be present regardless of coverage.
+    assert(Array.isArray(gapReport.gaps), "gapReport.gaps must be an array");
+    assert(Array.isArray(gapReport.allGapTypes), "gapReport.allGapTypes must be an array");
+    // Non-empty assertions: only enforceable when coverage is sufficient for
+    // gap detection.  Below 30% coverage the AI sees too few relationships to
+    // identify any gaps, so 0-length results are correct and expected.
+    if (coverage.coverageRate >= 0.3) {
+      assert(gapReport.gaps.length > 0, `gap report has 0 gaps despite coverage=${(coverage.coverageRate * 100).toFixed(1)}% ≥30%`);
+      assert(gapReport.allGapTypes.length > 0, `gap report allGapTypes is empty despite coverage=${(coverage.coverageRate * 100).toFixed(1)}% ≥30%`);
+    } else {
+      console.log(`  WARN: gap report has ${gapReport.gaps.length} gap(s) (coverage=${(coverage.coverageRate * 100).toFixed(1)}% < 30% — insufficient for gap detection)`);
     }
   } else {
     skipGapChecks = true;
@@ -318,13 +322,15 @@ async function runTests(authHeaders: Record<string, string>, tStart: number): Pr
     }
     const costUsd = totalCostMicroUsd / 1_000_000;
     const credits = Math.round(costUsd * 100);
+    const maxPromptTokens = Math.max(...thisRunLogs.map((r) => r.promptTokens));
     console.log(`  calls logged      : ${thisRunLogs.length}`);
     console.log(`  model used        : ${modelUsed}`);
-    console.log(`  promptTokens      : ${totalPromptTokens.toLocaleString()}`);
+    console.log(`  promptTokens      : ${totalPromptTokens.toLocaleString()} total (max per call: ${maxPromptTokens.toLocaleString()})`);
     console.log(`  completionTokens  : ${totalCompletionTokens.toLocaleString()}`);
     console.log(`  cost              : $${costUsd.toFixed(4)} (${credits} 积分)`);
-    // Core #14 assertion: prompt compression target
-    assertApprox(totalPromptTokens, 22_000, "promptTokens (target ≤20k, hard limit 22k)");
+    // Core #14 assertion: prompt compression target — checked per-call so
+    // retried attempts (which use the same prompt) don't inflate the total.
+    assertApprox(maxPromptTokens, 22_000, "promptTokens per call (target ≤20k, hard limit 22k)");
   } else {
     console.log("  WARN: no matching ai_usage_log rows found for this run window");
     console.log(`    (looked for sessionId=${sessionId} route=models/generate within 90s of generation)`);
