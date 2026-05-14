@@ -679,7 +679,7 @@ export default function LiveModelPage({ params }: { params?: { id: string } }) {
             data-testid="button-evidence-match"
             className="inline-flex items-center gap-1.5 rounded-md text-xs font-medium border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 h-8 px-3 transition-colors disabled:opacity-50"
           >
-            <Sparkles className="w-3.5 h-3.5" /> {t("evidence.btn" as any)}
+            <Sparkles className="w-3.5 h-3.5" /> {t("evidence.btn" as any)}<span className="text-xs text-muted-foreground ml-1">≈ 1 积分</span>
           </button>
           <button
             type="button"

@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { ChevronDown, ChevronUp, RefreshCw, Sparkles, AlertTriangle, Info, Loader2, CheckCircle, XCircle, AlertCircle, Wand2, Bot } from "lucide-react";
+import { ChevronDown, ChevronUp, RefreshCw, Sparkles, AlertTriangle, Info, Loader2, CheckCircle, XCircle, AlertCircle, Wand2, Bot, Copy, Download } from "lucide-react";
 import {
   useRecomputeModelInnovation,
   useGenerateContributionStatement,
@@ -328,6 +328,13 @@ function ContributionSection({
 
 // ── Reviewer section (full variant only) ────────────────────────────────────
 
+const REVIEW_STATUS_EMOJI: Record<string, string> = { ok: "✅", warn: "⚠️", error: "❌" };
+
+function formatReviewMd(dims: ReviewerDimension[], aiMd: string): string {
+  const rulePart = dims.map((d) => `${REVIEW_STATUS_EMOJI[d.status] ?? "•"} **${d.label}**：${d.message}`).join("\n");
+  return `## 规则评审\n\n${rulePart}\n\n## AI 深度评审\n\n${aiMd}`;
+}
+
 function ReviewDimensionRow({ dim }: { dim: ReviewerDimension }) {
   const cfg = REVIEW_STATUS_CONFIG[dim.status];
   return (
@@ -341,10 +348,10 @@ function ReviewDimensionRow({ dim }: { dim: ReviewerDimension }) {
   );
 }
 
-function ReviewerSection({ sessionId, modelId }: { sessionId: number; modelId: number }) {
+function ReviewerSection({ sessionId, modelId, initialMarkdown }: { sessionId: number; modelId: number; initialMarkdown?: string | null }) {
   const { t } = useT();
   const { toast } = useToast();
-  const [aiMarkdown, setAiMarkdown] = useState<string | null>(null);
+  const [aiMarkdown, setAiMarkdown] = useState<string | null>(initialMarkdown ?? null);
   const aiReview = useGenerateAiReview();
 
   const reviewQuery = useGetModelReview(sessionId, modelId);
@@ -403,15 +410,46 @@ function ReviewerSection({ sessionId, modelId }: { sessionId: number; modelId: n
                 <Bot className="w-3 h-3" />
                 {t("innovation.reviewer.aiReview.title" as any)}
               </div>
-              <button
-                type="button"
-                onClick={onAiReview}
-                disabled={aiReview.isPending}
-                className="inline-flex items-center gap-1 rounded text-[10px] border border-border bg-background hover:bg-accent h-5 px-1.5 transition-colors disabled:opacity-50 text-muted-foreground"
-              >
-                {aiReview.isPending ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <RefreshCw className="w-2.5 h-2.5" />}
-                重新评审
-              </button>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  title="复制为 Markdown"
+                  onClick={() => {
+                    const md = formatReviewMd(reviewQuery.data?.dimensions ?? [], aiMarkdown!);
+                    navigator.clipboard.writeText(md).then(() => toast({ title: "已复制到剪贴板" }));
+                  }}
+                  className="inline-flex items-center gap-1 rounded text-[10px] border border-border bg-background hover:bg-accent h-5 px-1.5 transition-colors text-muted-foreground"
+                >
+                  <Copy className="w-2.5 h-2.5" />
+                  复制
+                </button>
+                <button
+                  type="button"
+                  title="下载为 .md 文件"
+                  onClick={() => {
+                    const md = formatReviewMd(reviewQuery.data?.dimensions ?? [], aiMarkdown!);
+                    const blob = new Blob([md], { type: "text/markdown" });
+                    const a = document.createElement("a");
+                    a.href = URL.createObjectURL(blob);
+                    a.download = `review-model-${modelId}.md`;
+                    a.click();
+                    URL.revokeObjectURL(a.href);
+                  }}
+                  className="inline-flex items-center gap-1 rounded text-[10px] border border-border bg-background hover:bg-accent h-5 px-1.5 transition-colors text-muted-foreground"
+                >
+                  <Download className="w-2.5 h-2.5" />
+                  下载
+                </button>
+                <button
+                  type="button"
+                  onClick={onAiReview}
+                  disabled={aiReview.isPending}
+                  className="inline-flex items-center gap-1 rounded text-[10px] border border-border bg-background hover:bg-accent h-5 px-1.5 transition-colors disabled:opacity-50 text-muted-foreground"
+                >
+                  {aiReview.isPending ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <RefreshCw className="w-2.5 h-2.5" />}
+                  重新评审
+                </button>
+              </div>
             </div>
             <div className="rounded-md border border-border bg-muted/20 p-3 text-[11px] text-foreground leading-relaxed whitespace-pre-wrap">
               {aiMarkdown}
@@ -613,7 +651,7 @@ export function InnovationMetaPanel({
             modelId={modelId}
             statement={meta.contributionStatement ?? null}
           />
-          <ReviewerSection sessionId={sessionId} modelId={modelId} />
+          <ReviewerSection sessionId={sessionId} modelId={modelId} initialMarkdown={meta.aiReviewMarkdown} />
           <div className="border-t border-border pt-3">
             <div className="flex items-center justify-between mb-2">
               <div className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground">

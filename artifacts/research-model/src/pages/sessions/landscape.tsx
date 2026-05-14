@@ -1,7 +1,13 @@
 import React from "react";
 import { Link } from "wouter";
-import { Loader2, AlertCircle, Layers, Network, BookOpen } from "lucide-react";
-import { useGetSessionLandscape, getGetSessionLandscapeQueryKey } from "@workspace/api-client-react";
+import { Loader2, AlertCircle, Layers, Network, BookOpen, Lightbulb, RotateCw } from "lucide-react";
+import {
+  useGetSessionLandscape,
+  getGetSessionLandscapeQueryKey,
+  useGenerateSessionGapReport,
+  type GapReport,
+} from "@workspace/api-client-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useT } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
@@ -59,12 +65,30 @@ function formatDateTime(iso: string | null, lang: string): string {
   }
 }
 
+const GAP_TYPE_COLORS: Record<string, string> = {
+  mechanism: "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800",
+  boundary: "bg-teal-50 text-teal-700 border-teal-200 dark:bg-teal-950/40 dark:text-teal-300 dark:border-teal-800",
+  integration: "bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-950/40 dark:text-violet-300 dark:border-violet-800",
+  correction: "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-800",
+  construct: "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800",
+  context: "bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-800",
+};
+
 export default function SessionLandscape({ params }: { params: { id: string } }) {
   const { t, lang } = useT();
   const sessionId = params.id ? parseInt(params.id, 10) : 0;
+  const queryClient = useQueryClient();
 
   const { data, isLoading, error } = useGetSessionLandscape(sessionId, {
     query: { enabled: !!sessionId, queryKey: getGetSessionLandscapeQueryKey(sessionId) },
+  });
+
+  const gapReportMutation = useGenerateSessionGapReport({
+    mutation: {
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: getGetSessionLandscapeQueryKey(sessionId) });
+      },
+    },
   });
 
   if (isLoading) {
@@ -91,6 +115,12 @@ export default function SessionLandscape({ params }: { params: { id: string } })
   }
 
   const { coverage, landscapeVersion, lastRebuildAt, relationships, theoryClusters, evidencedBackbones } = data;
+  const gapReport = (data.gapReport ?? null) as GapReport | null;
+  const gapReportStale =
+    gapReport !== null &&
+    landscapeVersion !== null &&
+    typeof gapReport.version === "number" &&
+    gapReport.version !== landscapeVersion;
   const total = coverage.totalEligiblePaperCount ?? 0;
   const extracted = coverage.extractedWithInnovationFieldsCount ?? 0;
   const ratePct = Math.round((coverage.coverageRate ?? 0) * 100);
@@ -308,6 +338,106 @@ export default function SessionLandscape({ params }: { params: { id: string } })
           )}
         </section>
       </div>
+
+      {/* Research Gap Report */}
+      <section className="bg-card border border-border rounded-lg shadow-sm">
+        <header className="px-4 py-3 border-b border-border flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <Lightbulb className="w-4 h-4 text-muted-foreground" />
+            <div>
+              <div className="font-semibold text-sm">{t("landscape.gaps.title" as any)}</div>
+              <div className="text-xs text-muted-foreground mt-0.5">{t("landscape.gaps.help" as any)}</div>
+            </div>
+          </div>
+          <button
+            onClick={() => gapReportMutation.mutate({ id: sessionId })}
+            disabled={gapReportMutation.isPending || !landscapeVersion}
+            className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+          >
+            {gapReportMutation.isPending ? (
+              <>
+                <Loader2 className="w-3 h-3 animate-spin" />
+                {t("landscape.gaps.generating" as any)}
+              </>
+            ) : gapReport ? (
+              <>
+                <RotateCw className="w-3 h-3" />
+                {t("landscape.gaps.regenerate" as any)}
+              </>
+            ) : (
+              t("landscape.gaps.generate" as any)
+            )}
+          </button>
+        </header>
+
+        {gapReportStale && (
+          <div className="px-4 py-2 bg-amber-50 border-b border-amber-200 text-amber-800 text-xs dark:bg-amber-950/30 dark:border-amber-800 dark:text-amber-200">
+            {t("landscape.gaps.stale" as any)}
+          </div>
+        )}
+
+        {!gapReport && !gapReportMutation.isPending ? (
+          <div className="p-6 text-sm text-muted-foreground text-center">
+            {t("landscape.gaps.empty" as any)}
+          </div>
+        ) : gapReportMutation.isPending ? (
+          <div className="flex justify-center items-center p-8">
+            <Loader2 className="w-6 h-6 animate-spin text-primary" />
+          </div>
+        ) : gapReport ? (
+          <div className="divide-y divide-border">
+            {/* Top gap type pills */}
+            {gapReport.topGapTypes && gapReport.topGapTypes.length > 0 && (
+              <div className="px-4 py-3 flex items-center gap-2 flex-wrap">
+                <span className="text-xs text-muted-foreground font-medium">
+                  {t("landscape.gaps.topLabel" as any)}：
+                </span>
+                {gapReport.topGapTypes.map((gtype) => (
+                  <span
+                    key={gtype}
+                    className={cn(
+                      "inline-flex items-center text-xs px-2 py-0.5 rounded-full border font-medium",
+                      GAP_TYPE_COLORS[gtype] ?? "bg-muted text-muted-foreground border-border",
+                    )}
+                  >
+                    {t(`landscape.gaps.type.${gtype}` as any)}
+                  </span>
+                ))}
+              </div>
+            )}
+            {/* Gap rows */}
+            {gapReport.gaps.map((gap, idx) => (
+              <div key={idx} className="px-4 py-3">
+                <div className="flex items-start gap-2">
+                  <span
+                    className={cn(
+                      "mt-0.5 inline-flex items-center text-xs px-2 py-0.5 rounded-full border shrink-0",
+                      GAP_TYPE_COLORS[gap.type] ?? "bg-muted text-muted-foreground border-border",
+                    )}
+                  >
+                    {t(`landscape.gaps.type.${gap.type}` as any)}
+                  </span>
+                  <div className="min-w-0">
+                    <div className="text-sm text-foreground">{gap.summary}</div>
+                    {gap.evidence && (
+                      <div className="text-xs text-muted-foreground mt-1">
+                        <span className="font-medium">{t("landscape.gaps.evidence" as any)}</span>
+                        {gap.evidence}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+            {/* Timestamp */}
+            {gapReport.generatedAt && (
+              <div className="px-4 py-2 text-xs text-muted-foreground text-right">
+                {String(t("landscape.gaps.generatedAt" as any)).replace("{when}", formatDateTime(gapReport.generatedAt, lang))}
+              </div>
+            )}
+          </div>
+        ) : null}
+      </section>
     </div>
   );
 }

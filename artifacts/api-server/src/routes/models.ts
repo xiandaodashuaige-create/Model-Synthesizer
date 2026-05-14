@@ -29,6 +29,7 @@ import { logAiUsageFromOpenAI } from "../lib/ai-usage";
 import {
   THEORY_BACKBONES,
   backbonesAsPromptBlock,
+  backbonesAsCompactPromptBlock,
   operatorsAsPromptBlock,
   recommendBackbones,
   layerIndex,
@@ -689,7 +690,7 @@ function renderPaperGraph(tag: string, paperTitle: string, model: PaperResearchM
     .map((e) => {
       const sign = e.sign === "positive" ? "(+)" : e.sign === "negative" ? "(-)" : e.sign === "moderates" ? "(mod)" : e.sign === "mediates" ? "(med)" : "(?)";
       const hyp = e.hypothesisId ? ` [${e.hypothesisId}]` : "";
-      const evidence = typeof e.evidence === "string" ? e.evidence.slice(0, 160) : "";
+      const evidence = typeof e.evidence === "string" ? e.evidence.slice(0, 80) : "";
       return `      • ${e.from}  --${sign}-->  ${e.to}${hyp}    «${evidence}»`;
     })
     .join("\n");
@@ -913,7 +914,7 @@ Use these to bias variable selection and structural focus toward what the user h
         const via = h.viaVariable ? ` via ${h.viaVariable}` : "";
         const fx = h.effectSize ? ` [${h.effectSize}]` : "";
         const loc = h.pageOrSection ? ` (${h.pageOrSection})` : "";
-        return `  - [${tag}] ${h.hypothesisId}: ${h.fromVariable} -(${h.relationship})-> ${h.toVariable}${via}${fx}${loc}\n      "${h.statement.slice(0, 220)}"`;
+        return `  - [${tag}] ${h.hypothesisId}: ${h.fromVariable} -(${h.relationship})-> ${h.toVariable}${via}${fx}${loc}\n      "${h.statement.slice(0, 120)}"`;
       }).join("\n")
     : "";
 
@@ -924,7 +925,7 @@ Use these to bias variable selection and structural focus toward what the user h
     .map((v) => `${v.canonicalConstructId ?? v.name}`);
   const recommendedBackbones = recommendBackbones(dvKeywords, 8);
   const recommendedBackbonesBlock = recommendedBackbones.map(
-    (b) => `  - ${b.id} | ${b.name} (${b.domain})\n    Shape: ${b.shape}\n    When to use: ${b.description}`,
+    (b) => `  - ${b.id} | ${b.name} — ${b.description}`,
   ).join("\n");
 
   // Build a "backbones the user's actual papers already use" tally — the AI's
@@ -1394,8 +1395,8 @@ ${recommendedBackbonesBlock}
 BACKBONES ALREADY EVIDENCED IN THIS SESSION'S SOURCE PAPERS (STRONGLY PREFER ONE OF THESE — the user's papers concretely demonstrate them, so a model built on one of these can cite real evidence; a backbone with no evidenced source paper means you're inventing a framework the literature here doesn't support):
 ${evidencedBackbonesBlock}
 
-(Full backbone catalog if none of the above fit:
-${backbonesAsPromptBlock()}
+(Full backbone catalog if none of the above fit — see RECOMMENDED section above for details; these are name-only references:
+${backbonesAsCompactPromptBlock()}
 )${priorPatternBlock}
 ${hypothesesBlock}
 
@@ -2861,7 +2862,11 @@ router.post("/sessions/:id/models/:modelId/recompute-innovation", async (req, re
   }
   try {
     const snapshot = await loadLandscapeSnapshot(sessionId);
-    const meta = await computeInnovationMeta({ sessionId, model, log: req.log, snapshot });
+    const existingMeta = model.innovationMeta as InnovationMeta | null;
+    const meta = await computeInnovationMeta({
+      sessionId, model, log: req.log, snapshot,
+      existingContributionStatement: existingMeta?.contributionStatement ?? null,
+    });
     await db.update(researchModelsTable).set({ innovationMeta: meta }).where(eq(researchModelsTable.id, modelId));
     invalidateModelCaches(modelId);
     res.json(formatModel({ ...model, innovationMeta: meta }, snapshot.landscapeVersion));
@@ -3214,6 +3219,10 @@ router.post("/sessions/:id/models/:modelId/ai-review", async (req, res): Promise
     const markdown = completion.choices[0]?.message?.content ?? "";
     const reviewResult = { markdown };
     aiReviewCache.set(ck, { data: reviewResult, expiresAt: Date.now() + CACHE_TTL_MS });
+    // Persist so page refresh doesn't require re-generation.
+    const updatedMeta: InnovationMeta = { ...meta, aiReviewMarkdown: markdown };
+    await db.update(researchModelsTable).set({ innovationMeta: updatedMeta }).where(eq(researchModelsTable.id, modelId));
+    invalidateModelCaches(modelId);
     res.json(reviewResult);
   } catch (err) {
     req.log.error({ err, modelId }, "ai-review failed");

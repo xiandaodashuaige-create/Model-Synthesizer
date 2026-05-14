@@ -38,6 +38,7 @@ import type {
   EvidenceSearchRequest,
   EvidenceSearchResult,
   ExtractionResult,
+  GapReport,
   GenerateModelLiteratureReview200,
   GenerateModelLiteratureReviewBody,
   GenerateModelsBody,
@@ -3993,6 +3994,96 @@ export function useGetSessionLandscape<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * Calls gpt-5-mini to identify research gaps from the landscape snapshot.
+Result is cached in `sessions.landscapeMeta.gapReport` keyed by
+`landscapeVersion`. Re-calling after a landscape rebuild regenerates
+automatically (old version != new landscapeVersion → cache miss).
+Auth-gated by `loadAuthorizedSession`.
+
+ * @summary Generate (or return cached) AI gap report for this session's landscape
+ */
+export const getGenerateSessionGapReportUrl = (id: number) => {
+  return `/api/sessions/${id}/landscape/gap-report`;
+};
+
+export const generateSessionGapReport = async (
+  id: number,
+  options?: RequestInit,
+): Promise<GapReport> => {
+  return customFetch<GapReport>(getGenerateSessionGapReportUrl(id), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getGenerateSessionGapReportMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof generateSessionGapReport>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof generateSessionGapReport>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  const mutationKey = ["generateSessionGapReport"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof generateSessionGapReport>>,
+    { id: number }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return generateSessionGapReport(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type GenerateSessionGapReportMutationResult = NonNullable<
+  Awaited<ReturnType<typeof generateSessionGapReport>>
+>;
+
+export type GenerateSessionGapReportMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Generate (or return cached) AI gap report for this session's landscape
+ */
+export const useGenerateSessionGapReport = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof generateSessionGapReport>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof generateSessionGapReport>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  return useMutation(getGenerateSessionGapReportMutationOptions(options));
+};
 
 /**
  * @summary How many feedback rounds the AI has learned from for this session/global

@@ -10,6 +10,8 @@ import {
   GetSessionSummaryParams,
 } from "@workspace/api-zod";
 import { requireAuth } from "../middlewares/authMiddleware";
+import { openai } from "@workspace/integrations-openai-ai-server";
+import { logAiUsageFromOpenAI } from "../lib/ai-usage";
 
 const router: IRouter = Router();
 
@@ -294,6 +296,16 @@ router.get("/sessions/:id/landscape", async (_req, res): Promise<void> => {
       typeof cov.extractedWithInnovationFieldsCount === "number" ? cov.extractedWithInnovationFieldsCount : 0,
   };
 
+  // Include cached gap report in the response if present.
+  const gr = (lm as { gapReport?: unknown }).gapReport;
+  const gapReport =
+    gr &&
+    typeof gr === "object" &&
+    typeof (gr as Record<string, unknown>).version === "number" &&
+    Array.isArray((gr as Record<string, unknown>).gaps)
+      ? gr
+      : null;
+
   res.json({
     landscapeVersion: typeof lm.landscapeVersion === "number" ? lm.landscapeVersion : null,
     lastRebuildAt: typeof lm.lastRebuildAt === "string" ? lm.lastRebuildAt : null,
@@ -301,7 +313,240 @@ router.get("/sessions/:id/landscape", async (_req, res): Promise<void> => {
     relationships,
     theoryClusters,
     evidencedBackbones,
+    gapReport,
   });
+});
+
+// ---------------------------------------------------------------------------
+// POST /sessions/:id/landscape/gap-report
+// AI-generated gap analysis. Cached in landscapeMeta.gapReport keyed by
+// landscapeVersion. Re-running after a landscape rebuild produces a fresh
+// report. Auth-gated by loadAuthorizedSession (same as the GET above).
+// ---------------------------------------------------------------------------
+const VALID_GAP_TYPES = new Set([
+  "mechanism", "boundary", "integration", "correction", "construct", "context",
+]);
+
+router.post("/sessions/:id/landscape/gap-report", async (req, res): Promise<void> => {
+  const session = (res.locals["session"] ?? null) as typeof sessionsTable.$inferSelect | null;
+  const sessionId = (res.locals["sessionId"] ?? null) as number | null;
+  if (!session || !sessionId) {
+    res.status(404).json({ error: "session not found" });
+    return;
+  }
+
+  const lm = (session.landscapeMeta ?? {}) as {
+    landscapeVersion?: number;
+    lastRebuildAt?: string;
+    theoryClusters?: Array<{ id?: string; label?: string }>;
+    gapReport?: {
+      version?: number;
+      generatedAt?: string;
+      gaps?: unknown[];
+      topGapTypes?: string[];
+      allGapTypes?: string[];
+    } | null;
+  };
+  const landscapeVersion = typeof lm.landscapeVersion === "number" ? lm.landscapeVersion : null;
+
+  // Cache hit: gap report already computed for this landscapeVersion.
+  if (
+    landscapeVersion !== null &&
+    lm.gapReport &&
+    typeof lm.gapReport.version === "number" &&
+    lm.gapReport.version === landscapeVersion &&
+    Array.isArray(lm.gapReport.gaps) &&
+    lm.gapReport.gaps.length > 0
+  ) {
+    res.json(lm.gapReport);
+    return;
+  }
+
+  if (!landscapeVersion) {
+    res.status(400).json({ error: "landscape_not_built", message: "请先完成文献提取以重建文献全景" });
+    return;
+  }
+
+  // Fetch CR rows + paper context in parallel.
+  const [crRows, paperRows] = await Promise.all([
+    db
+      .select({
+        canonicalFrom: constructRelationshipsTable.canonicalFrom,
+        contextQualifierFrom: constructRelationshipsTable.contextQualifierFrom,
+        canonicalTo: constructRelationshipsTable.canonicalTo,
+        contextQualifierTo: constructRelationshipsTable.contextQualifierTo,
+        relationshipType: constructRelationshipsTable.relationshipType,
+        sign: constructRelationshipsTable.sign,
+        totalOccurrences: constructRelationshipsTable.totalOccurrences,
+        signConflict: constructRelationshipsTable.signConflict,
+      })
+      .from(constructRelationshipsTable)
+      .where(eq(constructRelationshipsTable.sessionId, sessionId)),
+    db
+      .select({
+        title: papersTable.title,
+        statedGaps: papersTable.statedGaps,
+        studyContext: papersTable.studyContext,
+      })
+      .from(papersTable)
+      .where(
+        and(
+          eq(papersTable.sessionId, sessionId),
+          sql`${papersTable.externalId} NOT LIKE 'manual:%'`,
+          sql`${papersTable.tangential} IS NOT TRUE`,
+        ),
+      ),
+  ]);
+
+  // Build compact CR block (top 25 by occurrences).
+  const topCR = [...crRows].sort((a, b) => b.totalOccurrences - a.totalOccurrences).slice(0, 25);
+  const crBlock = topCR.length > 0
+    ? topCR.map((r) => {
+        const from = r.contextQualifierFrom ? `${r.canonicalFrom}(${r.contextQualifierFrom})` : r.canonicalFrom;
+        const to = r.contextQualifierTo ? `${r.canonicalTo}(${r.contextQualifierTo})` : r.canonicalTo;
+        const conflict = r.signConflict ? " ⚠️符号冲突" : "";
+        return `  ${from} --(${r.relationshipType},${r.sign})→ ${to} [n=${r.totalOccurrences}${conflict}]`;
+      }).join("\n")
+    : "  （暂无构念关系数据）";
+
+  // Build paper context block.
+  const contextLines: string[] = [];
+  for (const p of paperRows.slice(0, 10)) {
+    const ctx = p.studyContext as { objectType?: unknown; geography?: unknown } | null;
+    if (ctx && typeof ctx === "object") {
+      const parts: string[] = [];
+      if (typeof ctx.objectType === "string" && ctx.objectType.trim()) parts.push(`对象:${ctx.objectType.trim()}`);
+      if (typeof ctx.geography === "string" && ctx.geography.trim()) parts.push(`地区:${ctx.geography.trim()}`);
+      if (parts.length > 0) {
+        const title = typeof p.title === "string" ? p.title.slice(0, 35) : "?";
+        contextLines.push(`  - ${title}: ${parts.join(", ")}`);
+      }
+    }
+  }
+  const contextBlock = contextLines.length > 0 ? contextLines.join("\n") : "  （无 studyContext 数据）";
+
+  // Build stated-gaps block.
+  const gapLines: string[] = [];
+  for (const p of paperRows.slice(0, 10)) {
+    const sg = p.statedGaps as Array<{ text?: unknown; gapType?: unknown }> | null;
+    if (Array.isArray(sg)) {
+      for (const g of sg.slice(0, 3)) {
+        if (g && typeof g.text === "string" && g.text.trim()) {
+          const gtype = typeof g.gapType === "string" ? `[${g.gapType}] ` : "";
+          gapLines.push(`  - ${gtype}${g.text.slice(0, 80)}`);
+        }
+      }
+    }
+  }
+  const statedGapsBlock = gapLines.length > 0 ? gapLines.join("\n") : "  （论文未标注研究空白）";
+
+  // Theory clusters.
+  const clusters = Array.isArray(lm.theoryClusters) ? lm.theoryClusters : [];
+  const clusterBlock = clusters.length > 0
+    ? clusters.map((c: { id?: string; label?: string }) => `  - ${c.id ?? ""}: ${c.label ?? ""}`).join("\n")
+    : "  （无理论集群数据）";
+
+  const topic = typeof session.topic === "string" ? session.topic : "（未设置主题）";
+
+  const systemPrompt = `你是帮助研究者识别文献空白的学术分析助手。基于文献全景数据，识别最显著的研究空白。严格按 JSON 格式回复，不输出任何其他内容。`;
+
+  const userPrompt = `研究主题：${topic}
+
+## 构念关系（按支撑论文数排序，最多 25 条）
+${crBlock}
+
+## 论文研究情境
+${contextBlock}
+
+## 论文已陈述的研究空白
+${statedGapsBlock}
+
+## 理论集群
+${clusterBlock}
+
+任务：识别最多 5 个有数据支撑的研究空白。
+
+空白类型定义：
+- mechanism：X→Y 关系有多篇论文支持，但中介路径尚不清楚
+- boundary：X→Y 关系缺少特定情境的调节变量
+- integration：两个相关理论尚未在同一模型中整合
+- correction：论文间对某条关系符号（正/负）存在冲突
+- construct：重要构念在此文献库中出现频次极低（有延展空间）
+- context：本研究对象/情境与所有论文的 studyContext.objectType 均不同
+
+输出 JSON（中文内容）：
+{
+  "gaps": [
+    {
+      "type": "mechanism|boundary|integration|correction|construct|context",
+      "summary": "一句话说明此研究空白（≤50字）",
+      "evidence": "具体说明哪些关系或论文支持此判断（≤60字）"
+    }
+  ],
+  "topGapTypes": ["最重要的1-3个空白类型（与 gaps 中的 type 对应）"]
+}`;
+
+  const aiResp = await openai.chat.completions.create({
+    model: "gpt-5-mini",
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt },
+    ],
+    response_format: { type: "json_object" },
+    max_tokens: 800,
+    temperature: 0.2,
+  });
+  logAiUsageFromOpenAI(aiResp, { route: "landscape/gap-report", sessionId, userId: null });
+
+  const rawJson = aiResp.choices[0]?.message?.content ?? "{}";
+  let parsed: { gaps?: unknown; topGapTypes?: unknown } = {};
+  try {
+    parsed = JSON.parse(rawJson) as { gaps?: unknown; topGapTypes?: unknown };
+  } catch {
+    req.log.warn({ rawJson }, "gap-report: failed to parse AI JSON response");
+  }
+
+  const gaps = (Array.isArray(parsed.gaps) ? parsed.gaps : [])
+    .filter(
+      (g): g is { type: string; summary: string; evidence: string } =>
+        g !== null &&
+        typeof g === "object" &&
+        typeof (g as Record<string, unknown>).type === "string" &&
+        VALID_GAP_TYPES.has((g as Record<string, unknown>).type as string) &&
+        typeof (g as Record<string, unknown>).summary === "string" &&
+        ((g as Record<string, unknown>).summary as string).trim().length > 0 &&
+        typeof (g as Record<string, unknown>).evidence === "string",
+    )
+    .slice(0, 5);
+
+  const allGapTypes = Array.from(new Set(gaps.map((g) => g.type)));
+  const topGapTypes = (Array.isArray(parsed.topGapTypes) ? parsed.topGapTypes : [])
+    .filter(
+      (t): t is string =>
+        typeof t === "string" && VALID_GAP_TYPES.has(t) && allGapTypes.includes(t),
+    )
+    .slice(0, 3);
+
+  const gapReport = {
+    version: landscapeVersion,
+    generatedAt: new Date().toISOString(),
+    gaps,
+    topGapTypes,
+    allGapTypes,
+  };
+
+  // Persist by merging into landscapeMeta (all existing fields preserved).
+  await db
+    .update(sessionsTable)
+    .set({
+      landscapeMeta: {
+        ...((session.landscapeMeta as object) ?? {}),
+        gapReport,
+      },
+    })
+    .where(eq(sessionsTable.id, sessionId));
+
+  res.json(gapReport);
 });
 
 export default router;

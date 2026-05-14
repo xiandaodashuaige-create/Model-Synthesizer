@@ -128,6 +128,9 @@ export interface InnovationMeta {
   contributionScore: number;
   // Phase 3 AI-emitted 7-field statement. Null until generate-contribution is called.
   contributionStatement: ContributionStatement | null;
+  // AI deep-review Markdown. Null until ai-review is called; persisted so it
+  // survives page reloads without costing another gpt-5-mini call.
+  aiReviewMarkdown?: string | null;
   // Provenance: which landscape this score was computed against, when, and
   // whether the system is currently allowed to reject on it.
   computedAgainst: {
@@ -495,18 +498,39 @@ function detectInnovationTypes(
 // Sub-scores + contributionScore
 // ---------------------------------------------------------------------------
 
+/**
+ * Computes the gapFit sub-score based on whether the model's detected
+ * innovation types intersect the session's gap report.
+ *
+ * 100 — at least one innovationType is in topGapTypes (most-significant gaps)
+ *  60 — at least one innovationType is in allGapTypes (detected, but not top)
+ *  30 — floor: no gap report, or no intersection at all
+ */
+export function computeGapFitScore(
+  innovationTypes: string[],
+  gapReport: GapReportSnapshot | null,
+): number {
+  if (!gapReport || innovationTypes.length === 0) return 30;
+  const top = new Set(gapReport.topGapTypes);
+  const all = new Set(gapReport.allGapTypes);
+  if (innovationTypes.some((t) => top.has(t))) return 100;
+  if (innovationTypes.some((t) => all.has(t))) return 60;
+  return 30;
+}
+
 function computeSubScores(args: {
   edgeTags: EdgeNoveltyTagging[];
   modelBackbone: string | null;
   evidencedBackbones: Set<string>;
-  // Slice 1: gapFit defaults to floor (no claim wired yet).
+  /** Pre-computed gapFit from computeGapFitScore(); defaults to 30 floor. */
+  gapFit?: number;
 }): InnovationSubScores {
   const subscores = args.edgeTags.map((t) => t.subscore);
   const differentiation = subscores.length > 0
     ? Math.round(subscores.reduce((s, v) => s + v, 0) / subscores.length)
     : 30;
 
-  const gapFit = 30; // floor — no `model.gapTypes ∩ topGapTypes` claim wired in slice 1
+  const gapFit = args.gapFit ?? 30;
 
   // theoreticalSoundness: 100 if backbone is in evidencedBackbones, floor 30 otherwise.
   const bbNorm = (args.modelBackbone ?? "").toLowerCase().trim();
@@ -557,6 +581,20 @@ function parseBackbones(rationale: string): { backbone: string | null; secondary
  * eat into the 60s autoscale deadline. The HTTP recompute route still calls
  * `loadLandscapeSnapshot()` lazily for the single-model case.
  */
+export interface GapReportRow {
+  type: string;
+  summary: string;
+  evidence: string;
+}
+
+export interface GapReportSnapshot {
+  version: number;
+  generatedAt: string;
+  gaps: GapReportRow[];
+  topGapTypes: string[];
+  allGapTypes: string[];
+}
+
 export interface LandscapeSnapshot {
   landscapeVersion: number | null;
   coverageRate: number;
@@ -565,6 +603,8 @@ export interface LandscapeSnapshot {
   theoryClusters: Map<string, string>;
   sessionTopicContexts: Set<string>;
   evidencedBackbones: Set<string>;
+  /** Cached gap report from sessions.landscapeMeta.gapReport, or null if not yet generated. */
+  gapReport: GapReportSnapshot | null;
 }
 
 export async function loadLandscapeSnapshot(sessionId: number): Promise<LandscapeSnapshot> {
@@ -602,6 +642,13 @@ export async function loadLandscapeSnapshot(sessionId: number): Promise<Landscap
     landscapeVersion?: number;
     landscapeCoverage?: { coverageRate?: number };
     theoryClusters?: Array<{ id?: string; clusterId?: string; label?: string }>;
+    gapReport?: {
+      version?: number;
+      generatedAt?: string;
+      gaps?: Array<{ type?: string; summary?: string; evidence?: string }>;
+      topGapTypes?: string[];
+      allGapTypes?: string[];
+    } | null;
   };
 
   const crByKey = new Map<string, ConstructRelationship>();
@@ -642,6 +689,28 @@ export async function loadLandscapeSnapshot(sessionId: number): Promise<Landscap
     }
   }
 
+  // Parse cached gap report from landscapeMeta, validating its shape.
+  let gapReport: GapReportSnapshot | null = null;
+  const raw = lm.gapReport;
+  if (
+    raw &&
+    typeof raw.version === "number" &&
+    typeof raw.generatedAt === "string" &&
+    Array.isArray(raw.gaps) &&
+    Array.isArray(raw.topGapTypes) &&
+    Array.isArray(raw.allGapTypes)
+  ) {
+    gapReport = {
+      version: raw.version,
+      generatedAt: raw.generatedAt,
+      gaps: (raw.gaps as Array<{ type?: unknown; summary?: unknown; evidence?: unknown }>)
+        .filter((g) => g && typeof g.type === "string" && typeof g.summary === "string" && typeof g.evidence === "string")
+        .map((g) => ({ type: g.type as string, summary: g.summary as string, evidence: g.evidence as string })),
+      topGapTypes: (raw.topGapTypes as unknown[]).filter((t): t is string => typeof t === "string"),
+      allGapTypes: (raw.allGapTypes as unknown[]).filter((t): t is string => typeof t === "string"),
+    };
+  }
+
   return {
     landscapeVersion: typeof lm.landscapeVersion === "number" ? lm.landscapeVersion : null,
     coverageRate: typeof lm.landscapeCoverage?.coverageRate === "number" ? lm.landscapeCoverage.coverageRate : 0,
@@ -650,6 +719,7 @@ export async function loadLandscapeSnapshot(sessionId: number): Promise<Landscap
     theoryClusters,
     sessionTopicContexts,
     evidencedBackbones,
+    gapReport,
   };
 }
 
@@ -663,6 +733,12 @@ export interface ComputeInnovationMetaArgs {
    * the model-generation fanout to avoid N redundant reads.
    */
   snapshot?: LandscapeSnapshot;
+  /**
+   * When present (non-null) the scorer skips the #20 contribution_statement_missing
+   * warning — used by recompute-innovation so that refreshing scores does not
+   * re-add the warning for models that already have a statement.
+   */
+  existingContributionStatement?: ContributionStatement | null;
 }
 
 export async function computeInnovationMeta({
@@ -670,6 +746,7 @@ export async function computeInnovationMeta({
   model,
   log,
   snapshot,
+  existingContributionStatement,
 }: ComputeInnovationMetaArgs): Promise<InnovationMeta> {
   const computedAt = new Date().toISOString();
   const snap = snapshot ?? (await loadLandscapeSnapshot(sessionId));
@@ -712,21 +789,28 @@ export async function computeInnovationMeta({
   );
 
   // 8. Sub-scores + headline contribution score.
+  // gapFit: wired in Phase 4 — intersect detected innovationTypes with the
+  // session's AI-generated gap report (topGapTypes → 100, allGapTypes → 60, floor → 30).
+  const gapFit = computeGapFitScore(innovationTypes, snap.gapReport);
   const subScores = computeSubScores({
     edgeTags: edgeNoveltyTags,
     modelBackbone: backbone,
     evidencedBackbones,
+    gapFit,
   });
   const noveltyScore = edgeNoveltyTags.length > 0 ? subScores.differentiation : null;
   const contributionScore = computeContributionScore(subScores);
 
   // 9. Hard-rule warnings (Phase 2: WARN ONLY when analysis_only — never reject).
   const warnings: InnovationWarning[] = [];
-  // #20 contributionStatement: always missing in slice 1 (AI doesn't emit it yet).
-  warnings.push({
-    code: "contribution_statement_missing",
-    message: "尚未生成 7 字段贡献声明（Phase 2.x 后续切片接入 AI）。",
-  });
+  // #20 contributionStatement: skip warning when caller passes an existing statement
+  // (e.g. recompute-innovation after the user already generated one).
+  if (!existingContributionStatement) {
+    warnings.push({
+      code: "contribution_statement_missing",
+      message: "尚未生成 7 字段贡献声明（Phase 2.x 后续切片接入 AI）。",
+    });
+  }
   // #21 no auto-detected innovation type.
   if (innovationTypes.length === 0) {
     warnings.push({

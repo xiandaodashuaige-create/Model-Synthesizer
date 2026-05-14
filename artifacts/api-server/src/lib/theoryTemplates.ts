@@ -257,6 +257,16 @@ export function backbonesAsPromptBlock(): string {
   ).join("\n");
 }
 
+/**
+ * Compact reference list: just ID + name, no shape/description.
+ * Used in the fallback parenthetical inside the generation prompt to
+ * reduce token count (the AI already has the key backbones in the
+ * RECOMMENDED section above with full detail).
+ */
+export function backbonesAsCompactPromptBlock(): string {
+  return THEORY_BACKBONES.map((b) => `  - ${b.id} | ${b.name}`).join("\n");
+}
+
 // Pick the top-K backbones whose dvHints intersect with the user's likely DV terms.
 // Falls back to the default 8 (TAM/UTAUT/SOR/ELM/TPB/TRUST_TRANSFER/PARASOCIAL/FLOW)
 // when no hints match (don't bias the AI when we have no signal).
