@@ -2934,13 +2934,22 @@ router.post("/sessions/:id/models/:modelId/recompute-innovation", async (req, re
   try {
     const snapshot = await loadLandscapeSnapshot(sessionId);
     const existingMeta = model.innovationMeta as InnovationMeta | null;
-    const meta = await computeInnovationMeta({
+    const newMeta = await computeInnovationMeta({
       sessionId, model, log: req.log, snapshot,
       existingContributionStatement: existingMeta?.contributionStatement ?? null,
     });
-    await db.update(researchModelsTable).set({ innovationMeta: meta }).where(eq(researchModelsTable.id, modelId));
+    // Preserve user-generated content that recompute should never overwrite.
+    // computeInnovationMeta always returns contributionStatement:null and omits
+    // aiReviewMarkdown — without this merge those two fields would be silently
+    // cleared every time the user clicks "刷新评分".
+    const finalMeta: InnovationMeta = {
+      ...newMeta,
+      contributionStatement: existingMeta?.contributionStatement ?? null,
+      aiReviewMarkdown: existingMeta?.aiReviewMarkdown ?? null,
+    };
+    await db.update(researchModelsTable).set({ innovationMeta: finalMeta }).where(eq(researchModelsTable.id, modelId));
     invalidateModelCaches(modelId);
-    res.json(formatModel({ ...model, innovationMeta: meta }, snapshot.landscapeVersion));
+    res.json(formatModel({ ...model, innovationMeta: finalMeta }, snapshot.landscapeVersion));
   } catch (err) {
     req.log.error({ err, modelId }, "recompute-innovation failed");
     res.status(500).json({ error: "innovation scoring failed" });
