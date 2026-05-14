@@ -12,6 +12,7 @@ import {
 import { requireAuth } from "../middlewares/authMiddleware";
 import { openai } from "@workspace/integrations-openai-ai-server";
 import { logAiUsageFromOpenAI } from "../lib/ai-usage";
+import { rebuildLandscape } from "../lib/literature-landscape.js";
 
 const router: IRouter = Router();
 
@@ -318,6 +319,30 @@ router.get("/sessions/:id/landscape", async (_req, res): Promise<void> => {
 });
 
 // ---------------------------------------------------------------------------
+// POST /sessions/:id/landscape/rebuild
+// Synchronously rebuilds the literature landscape for the session (deletes
+// existing construct_relationships rows and recomputes from paper hypotheses).
+// Returns { landscapeVersion, rebuildMs } on success.
+// Auth-gated by loadAuthorizedSession.  Useful for admin/CI pipelines.
+// ---------------------------------------------------------------------------
+router.post("/sessions/:id/landscape/rebuild", async (_req, res): Promise<void> => {
+  const session = (res.locals["session"] ?? null) as typeof sessionsTable.$inferSelect | null;
+  const sessionId = (res.locals["sessionId"] ?? null) as number | null;
+  if (!session || !sessionId) {
+    res.status(404).json({ error: "session not found" });
+    return;
+  }
+
+  const t0 = Date.now();
+  try {
+    const result = await rebuildLandscape(sessionId);
+    res.json({ landscapeVersion: result.version, rebuildMs: Date.now() - t0 });
+  } catch (err) {
+    res.status(500).json({ error: "rebuild_failed", message: (err as Error)?.message ?? String(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // POST /sessions/:id/landscape/gap-report
 // AI-generated gap analysis. Cached in landscapeMeta.gapReport keyed by
 // landscapeVersion. Re-running after a landscape rebuild produces a fresh
@@ -493,8 +518,7 @@ ${clusterBlock}
       { role: "user", content: userPrompt },
     ],
     response_format: { type: "json_object" },
-    max_tokens: 800,
-    temperature: 0.2,
+    max_completion_tokens: 800,
   });
   logAiUsageFromOpenAI(aiResp, { route: "landscape/gap-report", sessionId, userId: null });
 
