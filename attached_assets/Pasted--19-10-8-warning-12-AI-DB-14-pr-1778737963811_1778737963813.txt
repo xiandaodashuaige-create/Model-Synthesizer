@@ -1,0 +1,195 @@
+总体判断
+功能方向：对
+这轮做的方向包括：
+
+#19 证据匹配积分预估
+#10 评审复制/下载
+#8 贡献陈述 warning 自动消失
+#12 AI 评审存 DB
+#14 生成 prompt 压缩
+#9 Gap 报告自动化
+这些都属于合理任务。
+
+执行方式：有风险
+它一次性做了太多任务：
+
+前端 UI
+后端路由
+OpenAPI
+codegen
+i18n
+prompt 压缩
+Gap Report AI
+评分逻辑
+服务器重启
+截图
+typecheck
+任务状态更新
+这和我们之前说的“分小切片、控制 Agent 成本”是相反的。
+即使它说 typecheck 过了，也建议不要一次性合并。
+
+关键问题 1：#14 提示词压缩可能不够
+它说 #14 做了：
+
+证据截断 160→80
+假设截断 220→120
+推荐骨干去掉 Shape 行
+完整骨干目录仅 ID+名称
+这些是有帮助的，但我怀疑远远不够把 63k token 降到 20k。
+
+因为 models/generate 真正大的部分通常是：
+
+全量变量池
+全量 hypotheses
+每篇论文 research model
+full landscape / relationships
+paper abstracts
+rules / prompts
+chat/personalization context
+只截短 evidence 和 backbone，可能只省几千 token，不一定能省 40k。
+
+验收 #14 必须要数据
+让它给出：
+
+压缩前 prompt tokens:
+压缩后 prompt tokens:
+压缩比例:
+sessionId:
+paperCount:
+variableCount:
+hypothesisCount:
+landscapeRelationshipCount:
+目标是：
+
+平均 prompt tokens ≤ 20k
+如果只是“做了截断”，但没有 token 对比，不能算 #14 完成。
+
+关键问题 2：降本模型替换当前 main 没看到
+它之前说 gpt-5.4 已清除，但我当前 main 仍看到：
+
+models.ts: model: "gpt-5.4"
+variables.ts: model: "gpt-5.4"
+evidence-matching.ts: const MODEL = "gpt-5.4"
+所以合并前必须要求它输出：
+
+rg 'gpt-5\.4' artifacts/api-server/src/routes/models.ts
+rg 'model:\s*"gpt' artifacts/api-server/src/routes/variables.ts
+rg 'const MODEL' artifacts/api-server/src/lib/evidence-matching.ts
+并确认：
+
+models/generate = gpt-5.2
+variables/extract = gpt-5.2 或经过验证的 mini
+evidence-matching = gpt-5-mini
+否则账单大头还没解决。
+
+关键问题 3：#9 Gap Report 方向对，但要防自动烧钱
+Phase 4 Gap 报告如果实现正确，应满足：
+
+默认 gpt-5-mini
+手动点击生成
+按 landscapeVersion 缓存
+coverage < 70% 标记 preliminary
+结果写入 landscapeMeta.gapReport
+页面加载不自动调用 AI
+你描述里说：
+
+gpt-5-mini
+按 landscapeVersion 缓存
+前端全景页新增 Gap 报告区块
+这基本对。
+
+但合并前要确认：
+
+打开 /landscape 不会自动调用 AI；
+点击按钮才生成；
+重复点击命中缓存；
+landscapeVersion 不变不会重复扣费；
+gapReport 不存在时有空态；
+coverage 低时显示“初步分析”。
+关键问题 4：#12 AI评审存 DB 要注意成本和数据膨胀
+AI Review 存 DB 没问题，但要确认：
+
+不自动生成评审；
+不重复存相同 review；
+有 modelId / sessionId / landscapeVersion / innovationMeta version；
+存 markdown 不要无限增长；
+refine 后旧 review 是否保留版本还是覆盖，要明确。
+否则以后评审记录会乱。
+
+我建议现在怎么合并
+不要一口气点“合并全部”。
+
+建议分 4 批合并
+第一批：低风险前端小改
+合并：
+
+#19 证据匹配积分预估
+#10 评审复制/下载
+#8 warning 自动消失
+这些风险小。
+
+第二批：#12 AI评审存 DB
+单独合并，因为涉及 DB/后端状态。
+
+验收：
+
+AI review 不自动运行
+手动生成后可保存
+刷新后仍可见
+重复点击不重复刷爆
+第三批：#14 Prompt 压缩
+单独合并，因为它影响最核心的模型生成质量。
+
+验收必须有：
+
+压缩前后 token 对比
+生成模型质量抽查
+同一个 session 生成 1 个模型成功
+如果压缩后模型变差，要回滚或调优。
+
+第四批：#9 Gap Report
+最后合并，因为它是 Phase 4 核心，并且引入 AI 调用。
+
+验收：
+
+手动触发
+缓存生效
+coverage warning 正常
+gapFit 从固定 30 变真实计算
+不启用 hard reject
+当前是否可以继续往后推进？
+我的建议：先别继续新任务了。
+
+先做三件事：
+
+确认这些改动是否已经合并/推送；
+分批验收；
+重点验证 #14 是否真的把 prompt 压到 20k。
+如果 #14 没有达到 20k，就继续优化 #14，不要急着 Phase 5。
+
+给 Replit 的下一条指令
+你可以这样发：
+
+先暂停新功能，不要继续 Phase 5。
+请输出本轮改动的可验收证据：
+1. 当前 commit hash 和 diff --stat
+2. rg 'gpt-5\.4' artifacts/api-server/src/routes/models.ts
+3. rg 'model:\s*"gpt' artifacts/api-server/src/routes/variables.ts
+4. rg 'const MODEL' artifacts/api-server/src/lib/evidence-matching.ts
+5. #14 压缩前后 prompt token 对比，至少用 session 9 或 11 的同一输入
+6. Gap Report 是否页面加载自动调用 AI？请说明触发条件和缓存 key
+7. AI review 是否自动调用？是否缓存/持久化？
+8. 本轮改动拆成哪几组可以单独合并？
+不要继续写代码，先给验收报告。
+最终判断
+方向
+对。
+
+是否能直接通过
+不能。因为：
+
+当前 main 没看到这些改动；
+一次性改动太多；
+#14 没有 token 对比；
+#9 需要确认不会自动触发 AI；
+降本模型替换当前 main 仍未体现。
