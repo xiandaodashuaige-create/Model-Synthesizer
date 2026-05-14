@@ -16,6 +16,7 @@ const SEVERITY_ORDER: Record<DefenseQuestionSeverity, number> = {
   low: 2,
 };
 
+// 5 fallback items guarantee the ≥5 minimum even when no rules trigger.
 const FALLBACK: DefenseQuestion[] = [
   {
     id: "fb-context",
@@ -35,6 +36,20 @@ const FALLBACK: DefenseQuestion[] = [
     id: "fb-gap-process",
     question:
       "研究缺口的识别过程依赖了哪些判断标准？这些标准是否具有足够的客观依据？",
+    severity: "low",
+    sortScore: 100,
+  },
+  {
+    id: "fb-generalizability",
+    question:
+      "你的研究结论的可推广性如何？在跨行业或跨文化情境下，模型中的关系是否仍然成立？",
+    severity: "low",
+    sortScore: 100,
+  },
+  {
+    id: "fb-measurement",
+    question:
+      "模型中各变量的测量方式是否经过信效度检验？引用的量表是否适合你所研究的情境？",
     severity: "low",
     sortScore: 100,
   },
