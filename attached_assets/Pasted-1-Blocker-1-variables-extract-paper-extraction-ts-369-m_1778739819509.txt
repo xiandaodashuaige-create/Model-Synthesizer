@@ -1,0 +1,164 @@
+1. Blocker 1：variables/extract 主模型
+判断：通过
+你们找到了真正问题：
+
+paper-extraction.ts:369
+model: "gpt-5.4"
+并改为：
+
+model: "gpt-5.2"
+这是关键修复。
+
+这说明之前 variables/extract 的主抽取确实还在用最贵模型。
+这项改动会直接降低第二大成本项。
+
+建议补充
+确认：
+
+logAiUsageFromOpenAI 仍能记录实际模型名
+这样后续账单分析能看到：
+
+variables/extract → gpt-5.2
+2. Blocker 2：#14 Prompt 压缩
+判断：阶段性通过
+你们做了 3 个真正有效的压缩：
+
+2.1 originalGraphsBlock 限 15 篇
+这是最有效的。
+
+之前 originalGraphsBlock 是最大块：
+
+~10,000 tokens / 20 篇 session
+限制到 15 篇后，大 session 会明显省钱。
+
+但要注意：
+
+被裁掉的论文不能完全从模型语境消失
+你们说变量仍在 pool 里，这个是合理的。
+
+2.2 hypothesesBlock 限 60 条
+合理。
+
+优先保留：
+
+有 effectSize
+焦点论文
+焦点变量相关
+这是正确排序策略。
+
+2.3 Hard Rules 精简
+从：
+
+11,637 chars → 7,297 chars
+约省 1k token。
+
+这不算最大，但每次生成都会省，值得做。
+
+3. 是否达成 ≤20k？
+目前不能完全确认
+你们的估算是：
+
+Session 类型	压缩后估计
+小 session 10 篇	~12k ✅
+中 session 20 篇	~14k ✅
+大 session 30+ 篇	~25k ⚠️
+所以：
+
+中小 session 达标
+大 session 还没达标
+这已经比之前好很多，但如果目标是严格 ≤20k，仍要继续优化大 session。
+
+4. 必须做一次实测
+你们加了 DEV 计量日志，这是对的。
+
+下一步必须触发一次真实生成，看日志：
+
+estimatedTokens
+cappedGraphs
+totalGraphs
+验收标准：
+
+session 9 / 大 session：estimatedTokens 是否 ≤20k？
+如果是：
+
+≤20k：#14 通过
+20k-25k：可接受，但标记待优化
+>25k：继续压缩
+5. 如果大 session 还超，下一步怎么压
+如果实测仍然 >20k，我建议压这几块：
+
+5.1 variableList 也要限流
+变量池现在仍可能大。
+
+建议：
+
+focus 相关变量 + 高频变量 + 每类 role top N
+总变量上限 60
+不要把所有变量都塞进 prompt。
+
+5.2 hypothesesBlock 进一步做 relevance filter
+不是固定 60 条，而是：
+
+focus variables 相关
+topic keywords 相关
+highest evidence quality
+recent / core papers
+目标上限：
+
+30-40 条
+5.3 paperRefs + abstracts 限制 top papers
+如果 session 有 40 篇，不必全发摘要。
+
+建议：
+
+top 12 papers with abstracts
+其余只发 title/year/tag
+5.4 full backbone catalog 不要放进每次 prompt
+可以只发：
+
+recommended backbones top 5
+完整 catalog 改成：
+
+Only use full catalog if none recommended fit
+但不用真的把全 catalog 塞进去。
+
+6. 当前能否合并？
+我的建议：
+
+可以合并 blocker 修复和当前压缩
+因为：
+
+variables/extract → gpt-5.2 是明确降本；
+originalGraphsBlock cap 是明确降本；
+hypotheses cap 是明确降本；
+hard rules 精简是明确降本；
+类型检查通过；
+服务器重启正常。
+但合并说明里要写：
+
+#14 phase 1 compression complete; large sessions may still exceed 20k and need follow-up after DEV token logs.
+不要写：
+
+#14 fully achieved 20k target
+7. 是否继续 Phase 4？
+现在可以继续，但建议先做一次 token 实测。
+
+最稳顺序：
+
+1. 触发一次模型生成，读 estimatedTokens 日志
+2. 如果 <=20k，继续 Phase 4
+3. 如果 20-25k，允许继续 Phase 4，但记录 follow-up
+4. 如果 >25k，继续压 prompt
+8. 最终判断
+通过项
+variables/extract 模型降级：通过
+prompt 压缩第二轮：阶段性通过
+类型检查：通过
+API server 启动：通过
+未完全通过项
+#14 “≤20k”目标还需真实日志确认
+大 session 预计仍可能 25k
+建议
+可以合并当前修复，但下一步必须跑一次真实生成日志。
+
+一句话：这轮已经真正开始止血了，但 #14 还差“实测闭环”；先合并降本改动，再用 DEV 日志确认大 session 是否还需要第三轮压缩。
