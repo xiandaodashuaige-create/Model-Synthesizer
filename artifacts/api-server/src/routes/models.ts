@@ -907,15 +907,32 @@ Use these to bias variable selection and structural focus toward what the user h
 
   // Pull formal hypotheses from the database (extracted by /papers/:paperId/extract).
   const allHyps = await db.select().from(paperHypothesesTable).where(eq(paperHypothesesTable.sessionId, sessionId));
-  const hypothesesBlock = allHyps.length > 0
+  // Token-budget guard: cap hypotheses at 60 rows. Prioritise rows with
+  // effectSize (most evidence-rich) and those from focus-variable papers;
+  // plain rows fill the rest. Omitted rows are still recoverable from
+  // the per-paper typed graphs in the originalGraphsBlock above.
+  const HYP_CAP = 60;
+  const cappedHyps = (() => {
+    if (allHyps.length <= HYP_CAP) return allHyps;
+    const focusPaperIds = new Set(
+      variables.filter((v) => focusVariableIds.includes(v.id)).map((v) => v.paperId),
+    );
+    return allHyps
+      .map((h) => ({ h, score: (h.effectSize ? 2 : 0) + (focusPaperIds.has(h.paperId) ? 1 : 0) }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, HYP_CAP)
+      .map((x) => x.h);
+  })();
+  const hypothesesBlock = cappedHyps.length > 0
     ? "\n\n================================================================\nFORMAL HYPOTHESES POOL (each edge in your output models SHOULD reference one of these by hypothesisId when applicable; copy `statement` verbatim into evidenceCitationText, `effectSize` into effectSize, `pageOrSection` into evidenceLocation):\n" +
-      allHyps.map((h) => {
+      cappedHyps.map((h) => {
         const tag = paperTagById.get(h.paperId) ?? "?";
         const via = h.viaVariable ? ` via ${h.viaVariable}` : "";
         const fx = h.effectSize ? ` [${h.effectSize}]` : "";
         const loc = h.pageOrSection ? ` (${h.pageOrSection})` : "";
         return `  - [${tag}] ${h.hypothesisId}: ${h.fromVariable} -(${h.relationship})-> ${h.toVariable}${via}${fx}${loc}\n      "${h.statement.slice(0, 120)}"`;
       }).join("\n")
+      + (allHyps.length > HYP_CAP ? `\n\n(Showing top ${HYP_CAP} of ${allHyps.length} hypotheses by evidence strength; omitted rows available in per-paper typed graphs above.)` : "")
     : "";
 
   // Pick the top backbones based on the DV keywords in the variable pool — prevents
@@ -1134,7 +1151,26 @@ Use these to bias variable selection and structural focus toward what the user h
     return hasGraph || hasVars;
   });
 
-  const originalGraphsBlock = usablePapers.map((p) => {
+  // Token-budget guard: each per-paper graph is ~2 k chars ≈ 500 tokens.
+  // For sessions with many papers the originalGraphsBlock alone exceeds 10 k
+  // tokens. Cap at 15 papers: focus-variable papers first, then sorted by
+  // variable count descending so the richest papers get included.
+  const GRAPH_PAPER_CAP = 15;
+  const cappedUsablePapers = (() => {
+    if (usablePapers.length <= GRAPH_PAPER_CAP) return usablePapers;
+    const focusPaperIds = new Set(
+      variables.filter((v) => focusVariableIds.includes(v.id)).map((v) => v.paperId),
+    );
+    return [
+      ...usablePapers.filter((p) => focusPaperIds.has(p.id)),
+      ...usablePapers
+        .filter((p) => !focusPaperIds.has(p.id))
+        .sort((a, b) => (varsByPaper.get(b.id)?.length ?? 0) - (varsByPaper.get(a.id)?.length ?? 0)),
+    ].slice(0, GRAPH_PAPER_CAP);
+  })();
+  const skippedGraphCount = usablePapers.length - cappedUsablePapers.length;
+
+  const originalGraphsBlock = cappedUsablePapers.map((p) => {
     const tag = paperTagById.get(p.id) ?? "?";
     const m = perPaperModels.find((x) => x.paper.id === p.id)?.model;
     if (m && m.graph.nodes.length >= 2) {
@@ -1145,7 +1181,10 @@ Use these to bias variable selection and structural focus toward what the user h
     const summary = m?.summary ?? "(no explicit causal model extracted; using extracted variables only)";
     const lines = vars.map((v) => `      • [${v.type}] ${v.name} — ${v.definition.slice(0, 120)}`).join("\n");
     return `${tag} ORIGINAL MODEL — ${p.title}\n    Summary: ${summary}\n    Variables (no formal graph available — AI may infer relationships from definitions):\n${lines}`;
-  }).join("\n\n");
+  }).join("\n\n")
+  + (skippedGraphCount > 0
+    ? `\n\n(${skippedGraphCount} additional paper graph${skippedGraphCount > 1 ? "s" : ""} omitted for token budget — their variables are still in the EXTRACTED VARIABLES POOL and FORMAL HYPOTHESES POOL below.)`
+    : "");
 
   // Fail-fast: operator-based recombination needs ≥ 2 papers with usable signal.
   if (usablePapers.length < 2) {
@@ -1409,24 +1448,22 @@ ${learnedBlock}${userPersonalizationBlock}
 HARD RULES (violations = invalid output):
 1. **Operator-driven + alignment header**: each model's \`rationale\` MUST start with "[OPERATOR: <PRIMARY>+<SECONDARY>] [BASE: <Pn>+<Pm>(+<Pk>...)] [BACKBONE: <id or NONE>]" so the recombination logic is auditable. IMMEDIATELY after that prefix, the rationale MUST contain the three alignment lines required by the ALIGNMENT CONTRACT in the UNIFIED USER INTENT block at the top of this prompt: [TOPIC FIT] / [FOCUS FIT] / [USER PROMPT FIT]. ONLY AFTER those four prefix lines may you write the free-form 3-5 sentences explaining the operator application.
 2. **Chained operators (CRITICAL)**: each model MUST apply TWO operators in sequence — a PRIMARY operator that defines the spine of the model, then a SECONDARY operator (must be different from the primary) that enriches it (e.g. INSERT_MODERATOR after EXTEND, PARALLEL_MEDIATORS after THEORY_GRAFT). Single-operator models are too weak and will be rejected.
-3. **Distinct operator pairs**: ${perCallNumModels === 1
-      ? "(this call produces a single model — pick the most defensible operator pair for the user's intent; the server runs other parallel calls with different operator-pair seeds for diversity, so do not artificially diversify within this call)"
-      : `across the ${perCallNumModels} models, no two models may use the same (primary, secondary) operator pair OR the same base paper set.`}
-4. **Cross-paper synthesis**: ${userPrompt ? "The user has provided a custom prompt — honor its scope strictly. Multi-paper synthesis is still preferred when compatible with the user's intent, but a focused single-paper model that faithfully matches the user's request is acceptable." : "each model MUST include nodes from ≥ 3 DIFFERENT source papers (not 2). The whole point is multi-paper recombination — a model that only fuses 2 papers is a weak combination and will be rejected."}
-5. **Respect original directions**: when an edge connects two variables that already appeared together in a paper's hypothesis, use the SAME direction and sign that paper proposed. Do not flip causality unless explicitly justified in the rationale.
-6. **Citation grounding**: every "evidenceCitationText" MUST be a verbatim sentence either from the variable's "Citation" field or from the paper graph's "evidence" field above. If you cannot find such a sentence, omit that edge.
-7. **Layout discipline**: order nodes Independent → Mediator → Moderator → Dependent. Never put a dependent left of an independent.
-8. **Size**: 5–8 nodes and 4–8 edges per model. Smaller is too thin to count as a real recombination.
-9. **Variety**: each model must have a clearly different theoretical focus (different DV, different mediator chain, or different moderator).
-10. **Construct-layer ordering (CRITICAL — anti "logic jump")**: every directed edge MUST go FORWARD in the standard psychology pipeline (stimulus → cognitive → affective → intention → behavior). Backward edges (e.g. behavior → cognition) and 2-step jumps (e.g. stimulus → behavior with no cognitive/affective mediator) are PROHIBITED unless your rationale explicitly invokes a feedback-loop theory. Mediator chains MUST NOT exceed 3 hops between the IV and the DV — chains longer than 3 are diluted and will be rejected.
-11. **One role per canonical construct**: a single canonicalConstruct may NOT appear with two different roles in the same model (e.g. you cannot use "trust" as both a mediator AND a moderator in the same model). This prevents nonsensical self-moderation.
+3. **Distinct operator pairs**: ${perCallNumModels === 1 ? "(single-model call — pick best pair; parallel calls use different seeds)" : `no two models may share the same (primary, secondary) operator pair OR the same base paper set.`}
+4. **Cross-paper synthesis**: ${userPrompt ? "Honor the user's prompt strictly; multi-paper synthesis preferred but a focused single-paper model is acceptable when it better matches intent." : "each model MUST include nodes from ≥ 3 DIFFERENT source papers. Two-paper combinations are too weak and will be rejected."}
+5. **Respect original directions**: reuse the same direction and sign for any edge that already appeared in a source paper's hypothesis; do not flip causality without explicit justification.
+6. **Citation grounding**: every \`evidenceCitationText\` MUST be a verbatim sentence from the variable's Citation field or the paper graph's evidence field. If none found, omit the edge.
+7. **Layout**: order nodes Independent → Mediator → Moderator → Dependent.
+8. **Size**: 5–8 nodes and 4–8 edges per model.
+9. **Variety**: each model must differ in theoretical focus (DV, mediator chain, or moderator).
+10. **Construct-layer ordering**: edges MUST go FORWARD in the psychology pipeline (stimulus → cognitive → affective → intention → behavior). Backward edges and 2-step jumps (stimulus → behavior skipping cognition/affect) are PROHIBITED unless a feedback-loop theory is invoked. Mediator chains ≤ 3 hops.
+11. **One role per construct**: a canonicalConstruct may NOT appear as both mediator and moderator in the same model.
 12. **Moderator targets a PATH, not a node (CRITICAL)**: a moderator does not act on the dependent variable directly — it conditions a CAUSAL PATH between two other variables (e.g. "social overload moderates the engagement → impulse buying link" is correct; "social overload moderates impulse buying" is WRONG and will be rejected). When relationship = "moderates", you MUST: (a) provide a non-empty \`moderatorJustification\` field (≥ 1 sentence) explaining WHY this variable can theoretically condition the path AND WHICH paper grounds this moderating role; (b) provide a \`moderatedEdge\` object \`{ "fromVariableId": <int>, "toVariableId": <int> }\` naming the EXISTING non-moderator edge in this same model whose effect is being conditioned. The two ids in \`moderatedEdge\` MUST exactly match a positive/negative/mediates edge already present in the \`edges\` array; the moderator's own \`from\` is the moderator variable; its own \`to\` SHOULD be \`moderatedEdge.toVariableId\` (the receiving end of the moderated path), NEVER the dependent variable when there's a mediator on the path. Without these fields, or when \`moderatedEdge\` references a path that doesn't exist as a real edge in the model, the moderator edge is rejected.
-13. **Hypothesis-grounded evidence (preferred)**: when an edge corresponds to a row in the FORMAL HYPOTHESES POOL above, set \`evidenceHypothesisId\` to that row's id (e.g. "H2a"), copy \`statement\` verbatim into \`evidenceCitationText\`, copy \`effectSize\` and \`pageOrSection\` if available. Edges grounded in formal hypotheses are stronger than those grounded only in narrative citations.
-14. **Topic alignment (enforced by the UNIFIED USER INTENT block at the top)**: every generated model MUST visibly advance the user's stated research topic and respect the DOMAIN LOCK + OUTCOME LOCK rules. The model's \`description\` MUST open with one sentence in the user's language that explicitly names BOTH the topic's domain (e.g. "AI 客服机器人") AND its outcome family (e.g. "消费者冲动购买"), and states how this model preserves both. Drifting the domain (e.g. swapping "AI chatbot" for "AI streamer") OR the outcome family (e.g. swapping "impulse purchase" for "purchase intention") is INVALID and the model will be REJECTED. If the topic is so narrow that only 2 papers are clearly relevant, override Hard Rule #4's "≥3 papers" requirement and prefer a topically-tight 2-paper combination over a topically-loose 3-paper one — call this out in [TOPIC FIT].
-15. **Enrichment beyond focus picks (CRITICAL — the user explicitly asked for this)**: focus picks are the SPINE of the model, NOT the entire skeleton. Every model MUST add AT LEAST ONE non-pick variable drawn from the EXTRACTED VARIABLES POOL (above) that the literature evidences as theoretically relevant — typically a mediator that explains HOW the picked IV reaches the picked DV, or a moderator that conditions WHEN it does. The added variable MUST come from a different paper than the focus picks when possible (this is what gives the model its cross-paper synthesis value). A model whose nodes consist of focus picks ONLY (no enrichment) is a copy of what the user already chose, not a synthesized model — REJECTED. The added variable MUST appear in the FOCUS FIT line of the rationale labeled as "[ENRICHMENT]" (e.g. "[ENRICHMENT] 在用户选择的『拟人化感知 → 冲动购买』之上，从 P3 引入『心流体验』作为情感中介，因为 P3 显示该构念是冲动行为的重要前置因子").
-16. **Backbone instantiation (must match what the source papers actually use)**: the chosen \`backbone\` value MUST come from the BACKBONES ALREADY EVIDENCED block above whenever that block is non-empty — do not invent a framework the literature here doesn't support. The rationale's [BACKBONE: ...] header must match the \`backbone\` field. If the model's structure visibly violates the backbone's shape (e.g. claims SOR but has no organism/cognitive layer between the stimulus IV and the behavior DV; claims TAM but has no perceived-usefulness/ease-of-use mediator), REJECTED — pick the backbone whose canonical shape your nodes actually instantiate. Different models in the same batch SHOULD prefer different evidenced backbones when more than one is available, so the user sees real theoretical variety (e.g. one SOR model + one TAM model) rather than three slight variations of the same framework.
+13. **Hypothesis-grounded evidence (preferred)**: when an edge matches a FORMAL HYPOTHESES POOL row, set \`evidenceHypothesisId\` to that row's id, copy its \`statement\` verbatim into \`evidenceCitationText\`, and copy \`effectSize\` / \`pageOrSection\` if available.
+14. **Topic alignment**: every model MUST advance the stated topic; the \`description\` MUST name the topic's domain AND outcome family in its opening sentence. Drifting domain or outcome → REJECTED. If only 2 papers clearly fit the topic, override Rule #4's ≥3-paper requirement and call this out in [TOPIC FIT].
+15. **Enrichment beyond focus picks (CRITICAL)**: every model MUST add AT LEAST ONE non-pick variable from the EXTRACTED VARIABLES POOL — typically a mediator or moderator from a different paper. Focus-picks-only models are REJECTED. Label the enrichment in [FOCUS FIT] as "[ENRICHMENT] …".
+16. **Backbone instantiation**: \`backbone\` MUST come from the BACKBONES ALREADY EVIDENCED block when non-empty. The [BACKBONE:] header in the rationale must match the \`backbone\` field. Violating the backbone's canonical shape → REJECTED. Different models in a batch SHOULD use different evidenced backbones.
 17. **NO FLOATING NODES + TITLE-GRAPH CONSISTENCY (CRITICAL — anti "片段化")**: every variable listed in \`nodes[]\` MUST be the \`fromVariableId\` OR \`toVariableId\` of AT LEAST ONE edge in \`edges[]\`. A node that is declared but never participates in any edge renders as a floating box on the canvas — this is the #1 user complaint and will be HARD-REJECTED (no rescue). Before you finalize, walk every node and ask "which edge wires this in?" — if the answer is "none", DELETE the node from \`nodes[]\` (do not silently leave it in). Conversely: every construct you mention by NAME inside the model's \`name\` or \`description\` (e.g. "consumer engagement as mediator", "social overload as moderator") MUST appear as an actual node in \`nodes[]\` AND be wired into the spine via \`edges[]\`. Promising "X mediates Y → Z" in the description and not putting X in the graph is a title-vs-graph LIE and will be REJECTED. If you can't wire a construct in (because the source papers don't support that edge), drop the claim from the description rather than leaving the node floating.
-18. **Tangential-paper exclusion (CRITICAL when DOMAIN LOCK applies)**: the source-paper pool may contain papers whose context is tangential to the user's topic (e.g. a metaverse-tourism paper in an AI-broadcaster project). NEVER use such a tangential paper as the source of a moderator, mediator, or any structural node. Tangential-paper variables drag the model into the wrong domain and create the "我的主题是 AI 主播但模型里出现了 tourist involvement" failure mode. Heuristic for "tangential": the paper's title/abstract names a stimulus context (tourism, gaming, healthcare, education, etc.) that is DIFFERENT from the topic's domain. If a tangential paper's abstract DOES contain a construct that's also independently evidenced in an in-domain paper, prefer to cite the in-domain paper instead. When in doubt, fewer in-domain nodes beat more cross-domain nodes — Hard Rule #4's ≥3-paper minimum is OVERRIDDEN by this rule when honoring it would force a tangential paper in.
+18. **Tangential-paper exclusion**: NEVER use a paper whose stimulus context is clearly different from the topic's domain (e.g. a metaverse-tourism paper in an AI-broadcaster project) as the source for any structural node. Prefer in-domain citations when a construct appears in both; Rule #4's ≥3-paper minimum is OVERRIDDEN by this rule when honoring it would force a tangential paper in.
 19. **CHAIN INTEGRITY — IV must reach DV; every mediator must transmit (CRITICAL — anti "断链中介")**: a research model's whole point is to explain HOW the IV produces the DV. Therefore: (a) EVERY node typed \`independent\` (or \`antecedent\`) MUST have a directed path through non-moderator edges that ENDS at a node typed \`dependent\` (or \`outcome\`). An IV that points to a mediator which then points nowhere is a DEAD-END IV — REJECTED, no rescue. (b) EVERY node typed \`mediator\` MUST have AT LEAST ONE incoming non-moderator edge AND AT LEAST ONE outgoing non-moderator edge. A "mediator" with only incoming edges is not actually mediating — it's a terminal sink that LOOKS like a DV; a "mediator" with only outgoing edges is just an IV in disguise. The exact failure to avoid: IV1 → M, IV2 → M, M → (nothing), DV exists but is only reached by an unrelated parallel path. Before you finalize, walk every mediator and verify "what does this mediator FORWARD to? does the chain ultimately terminate at a DV?" — if not, EITHER add the missing M → DV edge (with a real verbatim citation, not invented), OR change the node's \`type\` to whatever role it actually plays (often \`dependent\` if it's a terminal cognitive outcome), OR remove it from the model entirely. The server will reject any model whose IVs don't reach DVs and any mediator that lacks bidirectional flow. NOTE: this rule subsumes Hard Rule #17 for mediators (#17 only checks "any incident edge"; #19 checks the directional plumbing).
 
 OUTPUT FORMAT — return ONLY a JSON object (NOT a bare array) whose single top-level key is "models" and whose value is an array of model objects. This is REQUIRED by the API's JSON-mode constraint. Do NOT wrap in markdown.
@@ -1579,6 +1616,10 @@ OUTPUT FORMAT — return a JSON object with key "models" containing an array of 
       { signal },
     );
     logAiUsageFromOpenAI(completion, { route: "models/generate", sessionId, userId: req.user?.id ?? null });
+    if (process.env.NODE_ENV !== "production") {
+      const promptChars = buildPrompt(variantSeedFor(variantIdx)).length;
+      req.log.debug({ promptChars, estimatedTokens: Math.round(promptChars / 4), variantIdx, paperCount: papersWithVars.length, variableCount: variables.length, hypothesisCount: allHyps.length, cappedGraphs: cappedUsablePapers.length, totalGraphs: usablePapers.length }, "models/generate prompt size");
+    }
     return completion;
   };
 

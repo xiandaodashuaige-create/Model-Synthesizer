@@ -1,0 +1,192 @@
+总体判断
+可以通过的部分
+可以先通过：
+
+#19 证据匹配积分预估
+#10 评审意见复制/下载
+#8 贡献陈述警告自动消失
+这三项风险低，主要是前端/状态小改。
+
+暂缓的部分
+暂缓：
+
+#12 AI 评审存 DB
+#14 Prompt 压缩
+#9 Gap Report
+其中：
+
+#12 需要手测存储逻辑；
+#14 没达到目标；
+#9 虽然设计上手动触发 + 缓存，但仍要确认 UI 空态和 coverage 低时标记。
+1. 模型替换检查
+models/generate 改成 gpt-5.2：通过
+如果它报告中说：
+
+models/generate 主生成 = gpt-5.2
+那这项是好事，可以降低最大成本项。
+
+但我建议一定要看：
+
+rg 'gpt-5\.4|gpt-5\.2' artifacts/api-server/src/routes/models.ts
+确认没有遗漏的生成路径。
+
+evidence-matching = gpt-5-mini：通过
+这项我认可。证据匹配适合 mini。
+
+variables/extract 主抽取模型不明：必须补查
+这是当前最大疑点之一。
+
+报告说：
+
+variables.ts 只有 preflight 是 gpt-5-mini
+主抽取没有显式 model 字符串
+可能从共享常量或 ai-client 默认值继承
+这个不能放过。
+
+因为如果主抽取仍默认 gpt-5.4，那第二大成本项没有解决。
+
+必须让它输出
+rg 'openai.chat.completions.create|model:' artifacts/api-server/src/routes/variables.ts
+rg 'extractAndStorePaperVariables|modelName|EXTRACTION_MODEL|gpt' artifacts/api-server/src -n
+并明确：
+
+主变量抽取到底用哪个模型？
+我的建议仍然是：
+
+variables/extract 主抽取先用 gpt-5.2，不要直接 mini。
+如果代码里没有显式 model，必须补上显式 model，避免默认回到最贵模型。
+
+2. #14 Prompt 压缩
+当前不能算完成
+报告自己也承认：
+
+只节省 1500-2000 tokens
+目标还差 8000-10000 tokens
+没有实测 token 对比数据
+所以 #14 不能通过。
+
+你之前的目标是：
+
+models/generate prompt ≤ 20k tokens
+现在只是做了小截断：
+
+evidence 160 → 80
+hypothesis 220 → 120
+definition 截断 120
+backbone 简化
+这些是对的，但不是大头。
+
+真正的大头还没动
+大头是：
+
+完整变量池
+全量 paper research model
+landscape relationships
+paper abstracts
+全量 hypotheses
+长 hard rules
+所以 #14 还需要第二轮。
+
+3. #9 Gap Report
+设计上基本安全
+报告显示：
+
+手动触发
+没有 useEffect 自动调用
+按 landscapeVersion 缓存
+这很好。
+
+但要补两项验证：
+
+coverage < 70% 是否显示 preliminary；
+gapReport=null 是否有空态。
+如果这两项 UI 正常，#9 可以单独合并。
+
+不过它是中风险，因为引入了新 AI 调用。
+
+4. #12 AI Review 存 DB
+方向对，但要手测
+报告显示：
+
+不自动调用 AI
+initialMarkdown 只是读取 DB
+这很好。
+
+但还要确认：
+
+生成一次后刷新页面仍可见；
+同一个模型重复点击是否覆盖、追加还是重复存；
+refine 后缓存是否清；
+是否有 updatedAt / landscapeVersion / model version。
+如果只是覆盖最新 markdown，可以接受；但要明确语义。
+
+5. 我建议的合并顺序
+第一批可以合并
+#19
+#10
+#8
+低风险。
+
+第二批：#12
+先手测：
+
+AI Review → 保存 → 刷新 → 仍显示
+通过后合并。
+
+第三批：#9
+先手测：
+
+打开 landscape 不自动调用 AI
+点击生成才调用
+再次点击命中缓存
+coverage<70% 有 preliminary
+空态正常
+通过后合并。
+
+第四批：#14
+暂时不要合并为“完成”。
+
+要继续做：
+
+Prompt 压缩第二轮
+目标：
+
+实测 prompt tokens ≤ 20k
+6. 下一步该让 Replit 做什么
+不要让它继续开发新功能。让它补两个硬证据：
+
+A. 查清 variables/extract 主模型
+发：
+
+先暂停新功能。请只确认 variables/extract 主抽取模型。
+只读：
+- artifacts/api-server/src/routes/variables.ts
+- 如有共享提取文件，则读对应文件
+输出：
+1. openai.chat.completions.create 调用位置
+2. model 参数来源
+3. 实际模型名
+4. 如果没有显式 model，请改为 gpt-5.2
+5. 不要改其他文件
+B. #14 prompt token 实测
+发：
+
+请补 #14 实测，不继续开发新功能。
+用同一个 session/model generation 输入，输出：
+- prompt tokens
+- completion tokens
+- total tokens
+- 与压缩前基线对比
+- 哪些 prompt section 最大
+如果无法拿旧基线，就至少输出当前 prompt section breakdown。
+最终判断
+当前验收报告可信
+它没有强行说全部完成，这点好。
+
+现在不能全合
+只能先合低风险批次。
+
+必须补两个 blocker
+variables/extract 主抽取模型到底是什么；
+#14 是否真的把 prompt 压到目标。
+一句话：先合 #19/#10/#8；#12 和 #9 单独手测后合；#14 不算完成，继续压缩；variables/extract 模型必须显式确认，不要让它偷偷用最贵默认模型。

@@ -366,7 +366,7 @@ export async function extractAndStorePaperVariables(
   try {
     completion = await openai.chat.completions.create(
       {
-        model: "gpt-5.4",
+        model: "gpt-5.2",
         max_completion_tokens: 10000,
         messages: [{ role: "user", content: prompt }],
       },
