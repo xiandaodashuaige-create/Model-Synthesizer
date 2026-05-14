@@ -961,6 +961,9 @@ paths:
                 raw:
                   type: boolean
                   description: When true, skip server-side query augmentation and use the user's text exactly.
+                expand:
+                  type: boolean
+                  description: When true, also run the publisher-restricted lane (site:researchgate.net OR site:sciencedirect.com …) for deeper coverage. Off by default to reduce SerpAPI call count.
       responses:
         "200":
           description: Image search results

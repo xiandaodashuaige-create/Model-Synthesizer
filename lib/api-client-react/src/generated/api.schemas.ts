@@ -1382,6 +1382,8 @@ export type SearchModelImagesBody = {
   page?: number;
   /** When true, skip server-side query augmentation and use the user's text exactly. */
   raw?: boolean;
+  /** When true, also run the publisher-restricted lane (site:researchgate.net OR site:sciencedirect.com …) for deeper coverage. Off by default to reduce SerpAPI call count. */
+  expand?: boolean;
 };
 
 /**

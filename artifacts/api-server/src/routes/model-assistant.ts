@@ -613,6 +613,34 @@ type ImageSearchHit = {
 // on actually-ambiguous candidates. Patterns are anchored on common stock /
 // off-topic phrasing seen in real result sets.
 const HARD_NEGATIVE_TITLE_RE = /(stock photo|shutterstock|gettyimages|getty images|istockphoto|alamy|clipart|powerpoint template|ppt template|wallpaper hd|coloring page|cartoon vector|cad drawing|circuit diagram|wiring diagram|p&id|piping diagram|er diagram example|class diagram example|gene expression heatmap|protein structure|molecular structure|crystal structure|swimlane|gantt chart|mind map template)/i;
+
+// ---------------------------------------------------------------------------
+// In-memory cache for image search results. Keyed by a stable string derived
+// from (rawQuery, rawMode, page, expand). 24-hour TTL — academic model-figure
+// pages don't change often, and SerpAPI charges per call.
+// ---------------------------------------------------------------------------
+const IMAGE_SEARCH_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const IMAGE_SEARCH_CACHE_MAX_SIZE = 500; // entries; evict oldest-first above this
+type ImageSearchCacheEntry = { data: object; expiresAt: number };
+const imageSearchCache = new Map<string, ImageSearchCacheEntry>();
+
+// Evict all cache entries belonging to a session. Called when the user modifies
+// their image blocklist so cached results are re-fetched with the new blocklist.
+function evictImageSearchCacheForSession(sessionId: number): void {
+  const prefix = `sid=${sessionId}|`;
+  for (const key of imageSearchCache.keys()) {
+    if (key.startsWith(prefix)) imageSearchCache.delete(key);
+  }
+}
+
+// Insert a new entry, evicting the oldest entry when the cache is at capacity.
+function imageSearchCacheSet(key: string, entry: ImageSearchCacheEntry): void {
+  if (imageSearchCache.size >= IMAGE_SEARCH_CACHE_MAX_SIZE && !imageSearchCache.has(key)) {
+    const oldest = imageSearchCache.keys().next().value;
+    if (oldest !== undefined) imageSearchCache.delete(oldest);
+  }
+  imageSearchCache.set(key, entry);
+}
 const HARD_NEGATIVE_DOMAIN_RE = /(shutterstock\.com|gettyimages\.com|istockphoto\.com|alamy\.com|dreamstime\.com|123rf\.com|pinterest\.|wallpaper|clipart-library|vecteezy\.com|freepik\.com|canva\.com\/templates|slidesgo\.com|slidemodel\.com|smartdraw\.com)/i;
 
 // Pre-built `site:a OR site:b OR …` clause for the publisher-restricted lane.
@@ -805,14 +833,14 @@ async function expandQueriesWithAI(
       messages: [
         {
           role: "system",
-          content: `You convert a user's rough research topic into 3-5 PRECISE English academic search queries that will find conceptual model / theoretical framework / SEM-path FIGURES inside published research papers.
+          content: `You convert a user's rough research topic into 2-3 PRECISE English academic search queries that will find conceptual model / theoretical framework / SEM-path FIGURES inside published research papers.
 
 Rules:
-- Output ONLY a JSON object: {"queries": ["query 1", "query 2", "query 3", ...]}
+- Output ONLY a JSON object: {"queries": ["query 1", "query 2", "query 3"]}
 - Each query: 4-9 words, all lowercase English, NO quotes, NO site: filters
 - Use canonical academic terminology (e.g. "parasocial interaction", "purchase intention", "perceived anthropomorphism", "live streaming commerce", "technology acceptance", "perceived usefulness", "psychological safety")
 - If the input mentions Chinese constructs (e.g. 直播/主播/冲动消费/信任/心流/远程办公), translate to standard academic English equivalents
-- When SESSION CONTEXT is provided, AT LEAST 2 of the queries must combine the user's topic with SPECIFIC constructs from their session variables (e.g. if user says "AI 主播" and session has variables "perceived trust" + "purchase intention", produce "AI streamer perceived trust purchase intention")
+- When SESSION CONTEXT is provided, AT LEAST 1 of the queries must combine the user's topic with SPECIFIC constructs from their session variables (e.g. if user says "AI 主播" and session has variables "perceived trust" + "purchase intention", produce "AI streamer perceived trust purchase intention")
 - Each query should target a DIFFERENT variant of the topic — vary the construct combinations, do not paraphrase
 - Do NOT include words like "research", "model", "framework", "figure", "diagram" — they're added separately`,
         },
@@ -830,7 +858,7 @@ Rules:
       .filter((q): q is string => typeof q === "string")
       .map((q) => q.trim())
       .filter((q) => q.length >= 3)
-      .slice(0, 5);
+      .slice(0, 3);
   } catch (err) {
     return [];
   }
@@ -994,6 +1022,17 @@ router.post("/sessions/:id/model-assistant/search-model-images", async (req, res
   const count = Math.min(20, Math.max(1, Number(req.body?.count) || 12));
   const page = Math.min(10, Math.max(1, Number(req.body?.page) || 1));
   const rawMode = req.body?.raw === true;
+  const expandMode = req.body?.expand === true;
+
+  // ---- Cache check (keyed on session + query + mode + page + expand + count) -----
+  // sessionId is required: response depends on per-session blocklist and context.
+  const cacheKey = `sid=${params.data.id}|q=${rawQuery}|raw=${rawMode}|page=${page}|expand=${expandMode}|n=${count}`;
+  const cachedEntry = imageSearchCache.get(cacheKey);
+  if (cachedEntry && cachedEntry.expiresAt > Date.now()) {
+    req.log.debug({ cacheKey }, "image search cache hit");
+    res.json(cachedEntry.data);
+    return;
+  }
 
   const serpKey = process.env.SERPAPI_API_KEY;
   const braveKey = process.env.BRAVE_API_KEY;
@@ -1035,7 +1074,7 @@ router.post("/sessions/:id/model-assistant/search-model-images", async (req, res
         seen.add(k);
         return true;
       });
-      if (expandedQueries.length === 0) expandedQueries = [quoted];
+      if (expandedQueries.length === 0) expandedQueries = [literalFallback];
     }
 
     // ---- Stage 2: run image search across PARALLEL LANES ----------------
@@ -1056,14 +1095,18 @@ router.post("/sessions/:id/model-assistant/search-model-images", async (req, res
           items.map((it) => ({ ...it, _query: q, _lane: "general" as const })),
         ),
       );
-      const laneB = expandedQueries.slice(0, 3).map((q) =>
-        // Parenthesize the OR-clause so Google parses it as one disjunction —
-        // without parens, "topic site:a OR site:b" is read as "(topic site:a) OR site:b"
-        // which leaks unrestricted hits from site:b through.
-        serpApiImageSearch(`${q} conceptual model figure (${PUBLISHER_SITE_FILTER})`, serpKey, perQueryFetch, req.log, page).then((items) =>
-          items.map((it) => ({ ...it, _query: q, _lane: "publisher" as const })),
-        ),
-      );
+      // Lane B (publisher-restricted) is expensive: each query = 1 extra SerpAPI
+      // call. Only fire it when the user explicitly requests "扩展搜索" (expand mode).
+      const laneB = expandMode
+        ? expandedQueries.slice(0, 3).map((q) =>
+            // Parenthesize the OR-clause so Google parses it as one disjunction —
+            // without parens, "topic site:a OR site:b" is read as "(topic site:a) OR site:b"
+            // which leaks unrestricted hits from site:b through.
+            serpApiImageSearch(`${q} conceptual model figure (${PUBLISHER_SITE_FILTER})`, serpKey, perQueryFetch, req.log, page).then((items) =>
+              items.map((it) => ({ ...it, _query: q, _lane: "publisher" as const })),
+            ),
+          )
+        : [];
       const settled = await Promise.allSettled<LaneItem[]>([...laneA, ...laneB]);
       const items: LaneItem[] = settled.flatMap((s) => (s.status === "fulfilled" ? s.value : []));
       const ok = settled.some((s) => s.status === "fulfilled" && s.value.length > 0);
@@ -1282,9 +1325,10 @@ router.post("/sessions/:id/model-assistant/search-model-images", async (req, res
       rawQuery, expanded: expandedQueries.length, raw: allItems.length,
       droppedHard, deduped: deduped.length, kept: results.length,
       categories: results.map((r) => (r as any).category).filter(Boolean),
+      expandMode,
     }, "image search complete");
 
-    res.json({
+    const responseBody = {
       query: expandedQueries.join(" | "),
       rawQuery,
       expandedQueries,
@@ -1292,7 +1336,15 @@ router.post("/sessions/:id/model-assistant/search-model-images", async (req, res
       page,
       hasMore,
       results,
-    });
+    };
+
+    // Store in cache only when we got results — don't cache empty-result pages
+    // so a transient failure doesn't poison the 24-hour window.
+    if (results.length > 0) {
+      imageSearchCacheSet(cacheKey, { data: responseBody, expiresAt: Date.now() + IMAGE_SEARCH_CACHE_TTL_MS });
+    }
+
+    res.json(responseBody);
   } catch (err) {
     req.log.error({ err }, "Image search threw");
     res.status(502).json({ error: "Image search failed" });
@@ -1680,6 +1732,9 @@ router.delete("/sessions/:id/image-blocklist/:entryId", async (req, res): Promis
     res.status(404).json({ error: "Blocklist entry not found" });
     return;
   }
+  // Invalidate cached image-search results for this session so they are
+  // re-fetched without the removed blocklist entry.
+  evictImageSearchCacheForSession(params.data.id);
   res.json({ ok: true });
 });
 
@@ -1718,6 +1773,10 @@ router.post("/sessions/:id/image-blocklist", async (req, res) => {
     }
     row = existing;
   }
+  // Invalidate cached image-search results for this session so the dismissed
+  // image does not appear again on the next search (which re-reads the blocklist
+  // from DB to filter results).
+  evictImageSearchCacheForSession(params.data.id);
   res.status(created ? 201 : 200).json({
     id: row.id, sessionId: row.sessionId, sourceUrl: row.sourceUrl,
     sourceDomain: row.sourceDomain, title: row.title, reason: row.reason,

@@ -42,6 +42,7 @@ export function ReferenceFigureDialog({
 
   const [query, setQuery] = useState("");
   const [rawMode, setRawMode] = useState(false);
+  const [expandMode, setExpandMode] = useState(false);
   const [results, setResults] = useState<ImageHit[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [actualQuery, setActualQuery] = useState<string | null>(null);
@@ -50,7 +51,7 @@ export function ReferenceFigureDialog({
   const reqRef = useRef(0);
   const lastEdgeKeyRef = useRef<string | null>(null);
 
-  const run = (q: string, opts?: { raw?: boolean }) => {
+  const run = (q: string, opts?: { raw?: boolean; expand?: boolean }) => {
     const trimmed = q.trim();
     if (!trimmed) return;
     setQuery(trimmed);
@@ -59,9 +60,10 @@ export function ReferenceFigureDialog({
     setActualQuery(null);
     setExpanded([]);
     const useRaw = opts?.raw ?? rawMode;
+    const useExpand = opts?.expand ?? expandMode;
     const reqId = ++reqRef.current;
     imageSearch.mutate(
-      { id: sessionId, data: { query: trimmed, count: 12, raw: useRaw, page: 1 } },
+      { id: sessionId, data: { query: trimmed, count: 12, raw: useRaw, expand: useExpand, page: 1 } },
       {
         onSuccess: (resp) => {
           if (reqId !== reqRef.current) return;
@@ -169,16 +171,31 @@ export function ReferenceFigureDialog({
               {t("live.figureDialog.searchBtn" as any)}
             </button>
           </div>
-          <label className="inline-flex items-center gap-1.5 text-[11px] text-sky-800 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={rawMode}
-              onChange={(e) => setRawMode(e.target.checked)}
-              data-testid="checkbox-figure-raw-mode"
-              className="rounded"
-            />
-            {t("live.figureDialog.rawMode" as any)}
-          </label>
+          <div className="flex items-center gap-4">
+            <label className="inline-flex items-center gap-1.5 text-[11px] text-sky-800 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={rawMode}
+                onChange={(e) => setRawMode(e.target.checked)}
+                data-testid="checkbox-figure-raw-mode"
+                className="rounded"
+              />
+              {t("live.figureDialog.rawMode" as any)}
+            </label>
+            <label className="inline-flex items-center gap-1.5 text-[11px] text-sky-800 cursor-pointer" title="同时搜索学术出版商网站（ResearchGate、ScienceDirect 等），覆盖更广但会增加一次额外搜索调用">
+              <input
+                type="checkbox"
+                checked={expandMode}
+                onChange={(e) => {
+                  setExpandMode(e.target.checked);
+                  if (query.trim()) run(query, { expand: e.target.checked });
+                }}
+                data-testid="checkbox-figure-expand-mode"
+                className="rounded"
+              />
+              {t("live.figureDialog.expandSearch" as any)}
+            </label>
+          </div>
           {expanded.length > 0 && !rawMode && (
             <div className="rounded-md border border-sky-200 bg-white p-2 space-y-1">
               <div className="text-[10px] font-medium text-sky-800">{t("live.figureDialog.expandedTitle" as any)}</div>

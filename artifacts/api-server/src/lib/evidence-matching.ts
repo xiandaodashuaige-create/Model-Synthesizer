@@ -72,7 +72,7 @@ const WEB_PER_EDGE = 5;
 const TOP_HITS_PER_EDGE = 3;
 const TOP_OVERALL = 8;
 
-const EVIDENCE_CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
+const EVIDENCE_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 type CacheEntry<T> = { data: T; expiresAt: number };
 const scholarCache = new Map<string, CacheEntry<ScholarCandidate[]>>();

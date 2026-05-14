@@ -864,6 +864,12 @@ export const SearchModelImagesBody = zod.object({
     .describe(
       "When true, skip server-side query augmentation and use the user's text exactly.",
     ),
+  expand: zod
+    .boolean()
+    .optional()
+    .describe(
+      "When true, also run the publisher-restricted lane (site:researchgate.net OR site:sciencedirect.com …) for deeper coverage. Off by default to reduce SerpAPI call count.",
+    ),
 });
 
 export const SearchModelImagesResponse = zod.object({
