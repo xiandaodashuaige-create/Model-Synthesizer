@@ -749,7 +749,7 @@ router.post("/sessions/:id/models/generate", async (req, res): Promise<void> => 
   // ignore what the user actually wants to research. Pre-fix this was
   // serialized, paying ~3× DB round-trip latency on every generation.
   const [sessionRows, variables, papers] = await Promise.all([
-    db.select({ topic: sessionsTable.topic, name: sessionsTable.name })
+    db.select({ topic: sessionsTable.topic, name: sessionsTable.name, landscapeMeta: sessionsTable.landscapeMeta })
       .from(sessionsTable).where(eq(sessionsTable.id, sessionId)).limit(1),
     db.select().from(variablesTable).where(eq(variablesTable.sessionId, sessionId)),
     // Exclude the per-session "manual:" sentinel paper that backs custom /
@@ -760,6 +760,36 @@ router.post("/sessions/:id/models/generate", async (req, res): Promise<void> => 
   ]);
   const sessionTopic = (sessionRows[0]?.topic ?? "").trim();
   const sessionName = (sessionRows[0]?.name ?? "").trim();
+
+  // Phase 4 — gap hint block for the generation prompt.
+  // Reads the top-3 gaps from this session's gap report (if generated on the
+  // landscape page) and injects them as SOFT inspiration hints. Falls back to
+  // empty string when no gap report exists — never blocks generation.
+  // Budget target: ≤200 chars (≈50 tokens) per hint × 3 = ≤600 chars total.
+  const gapHintBlock = (() => {
+    const lm = (sessionRows[0]?.landscapeMeta ?? {}) as {
+      gapReport?: { topGapTypes?: unknown; gaps?: unknown[] } | null;
+    };
+    const gr = lm.gapReport;
+    if (!gr || !Array.isArray(gr.gaps) || gr.gaps.length === 0) return "";
+    const topSet = new Set(Array.isArray(gr.topGapTypes) ? gr.topGapTypes as string[] : []);
+    // Prioritise topGapTypes rows, then fill up to 3 from remaining gaps.
+    const sorted = [...gr.gaps].sort((a, b) => {
+      const aT = typeof (a as {type?: unknown}).type === "string" ? topSet.has((a as {type: string}).type) : false;
+      const bT = typeof (b as {type?: unknown}).type === "string" ? topSet.has((b as {type: string}).type) : false;
+      return (bT ? 1 : 0) - (aT ? 1 : 0);
+    });
+    const top3 = sorted
+      .filter((g): g is { type: string; summary: string } =>
+        g !== null && typeof g === "object" &&
+        typeof (g as {type?: unknown}).type === "string" &&
+        typeof (g as {summary?: unknown}).summary === "string",
+      )
+      .slice(0, 3);
+    if (top3.length === 0) return "";
+    const lines = top3.map((g) => `- [${g.type}] ${g.summary.slice(0, 60)}`).join("\n");
+    return `\n\n================================================================\nRESEARCH GAP HINTS (soft inspiration — do NOT force every model to cover all gaps; UNIFIED USER INTENT above takes precedence):\n${lines}`;
+  })();
 
   // ── RECENT CHAT INTENT (this session) ───────────────────────────────
   // Pull the user's last few user-role chat turns from the AI assistant in
@@ -1411,7 +1441,7 @@ Sanity-check each model against this directive. If a model doesn't visibly honor
   // parallel variant gets a different operator-pair seed for diversity.
   const buildPrompt = (variantSeed: string): string => `You are a senior researcher in academic methodology and structural equation modeling.${directiveBlock}${recentChatIntentBlock}
 
-Your task: produce ${perCallNumModels} *novel* and theoretically coherent research model proposal${perCallNumModels > 1 ? "s" : ""} by RECOMBINING the source papers' own research models below using EXPLICIT STRUCTURAL OPERATORS. Each output model MUST be the result of applying TWO chained operators (a primary then a different secondary) to AT LEAST ${userPrompt ? "TWO" : "THREE"} of the original models, AND must satisfy the UNIFIED USER INTENT below in full.${unifiedIntent}${variantSeed}
+Your task: produce ${perCallNumModels} *novel* and theoretically coherent research model proposal${perCallNumModels > 1 ? "s" : ""} by RECOMBINING the source papers' own research models below using EXPLICIT STRUCTURAL OPERATORS. Each output model MUST be the result of applying TWO chained operators (a primary then a different secondary) to AT LEAST ${userPrompt ? "TWO" : "THREE"} of the original models, AND must satisfy the UNIFIED USER INTENT below in full.${unifiedIntent}${variantSeed}${gapHintBlock}
 
 ================================================================
 PAPER REFERENCES (use exact tags when citing — abstracts included so you can judge topical fit):

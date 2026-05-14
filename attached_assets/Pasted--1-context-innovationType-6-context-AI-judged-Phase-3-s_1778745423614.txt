@@ -1,0 +1,114 @@
+当前真正剩下的内容
+1. context innovationType 还没传播
+你指出这行：
+
+// 6. context — AI-judged (Phase 3); slice 1 leaves it for the AI to add.
+说明现在：
+
+gap report 里有 context gap
+但模型 innovationTypes 不会自动标记 context
+这确实是 Phase 4 的尾巴。
+
+应该做的是：
+
+如果模型与 gapReport 中 context 类型 gap 匹配
+→ innovationTypes 加 context
+但要注意：不要只要有 context gap 就给所有模型打 context。
+必须有匹配条件。
+
+建议条件：
+
+model nodes / edge variables / contributionStatement / topic
+与 context gap 的 constructs 或 recommendation 匹配
+简单版可以先做：
+
+如果 gap.type === "context"
+且模型包含 gap.evidence.constructs 中任意构念
+或模型使用的 papers/variables 与 gap evidence 有交集
+则加 context
+2. gap 提示注入生成 prompt
+这也是必要的。
+
+但要做成 soft hint，不能硬约束。
+
+建议 prompt 里加：
+
+RESEARCH GAP HINTS FROM LANDSCAPE:
+- [context] ...
+- [mechanism] ...
+- [boundary] ...
+Use these as inspiration when coherent with the user's topic.
+Do not force every model to cover all gaps.
+并且只注入 top 3。
+
+不要把完整 gapReport 全塞进去，避免 prompt 又变大。
+
+是否可以开这个任务？
+可以
+这个任务现在很明确、很小，不需要再 Plan 很久。
+
+建议直接执行，但要限制范围：
+
+只改：
+- innovation-scoring.ts
+- models.ts
+- maybe replit.md
+- maybe selftest
+不要再全仓库探索。
+
+验收标准
+这个 #9 收尾任务完成后，验收应看：
+
+1. context tag 传播
+构造一个含 context gap 的 session：
+
+gapReport.gaps includes type=context
+model contains related construct/context
+然后 recompute：
+
+innovationTypes includes "context"
+2. 无匹配不乱打
+如果模型完全不相关：
+
+innovationTypes 不应因为 session 有 context gap 就自动加 context
+3. prompt 注入不膨胀
+日志或估算确认：
+
+gap hints <= 1000 tokens
+最好更小：
+
+top 3 gaps，每条 1-2 行
+4. coverage 低仍 analysis_only
+即使 context 被打上：
+
+mode 仍 analysis_only if coverage < 70%
+不要因为有 gapReport 就启用硬拒。
+
+我建议给 Replit 的指令
+可以这样发：
+
+直接做 #9 Phase 4 收尾，不要重新规划。
+限制：
+- 不要全仓库探索。
+- 只读/改：
+  1. artifacts/api-server/src/lib/innovation-scoring.ts
+  2. artifacts/api-server/src/routes/models.ts
+  3. replit.md
+  4. 如有必要 selftest 脚本
+- 不要改前端 UI，除非类型报错。
+- 不要运行全量 typecheck。
+- 不要调用真实 AI。
+- 不要重抽论文。
+任务：
+1. 将 gapReport 中匹配到的 context gap 传播为 innovationTypes: ["context"]。
+2. models/generate prompt 注入 top 3 gap hints，作为 soft hints。
+3. gap hints 必须短，目标 <1000 tokens。
+4. coverage <70% 时仍 analysis_only，不启用 hard reject。
+验收：
+- selftest 或 mock 数据证明 context gap 匹配时会加 context。
+- 无匹配时不加 context。
+- prompt size 不明显增加。
+最终判断
+可以继续做 #9，但现在它只是 Phase 4 收尾，不是大工程。
+
+一句话：Gap Report 主体已经完成；现在补 context innovationType 传播和 top 3 gap hints 注入即可。

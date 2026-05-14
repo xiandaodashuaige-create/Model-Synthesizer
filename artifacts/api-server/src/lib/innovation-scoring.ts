@@ -489,7 +489,9 @@ function detectInnovationTypes(
     }
   }
 
-  // 6. context — AI-judged (Phase 3); slice 1 leaves it for the AI to add.
+  // 6. context — promoted from gapReport in Phase 4 (handled by caller after
+  //    detectInnovationTypes returns, because gapReport lives on the snapshot
+  //    which is not passed into this pure-lookup function).
 
   return Array.from(types);
 }
@@ -787,6 +789,24 @@ export async function computeInnovationMeta({
     backbone,
     secondaryBackbone,
   );
+
+  // Phase 4 — context innovationType propagation.
+  // "context" (情境迁移) is the only AI-judged gap type. We promote it to a
+  // model-level innovationType only when BOTH conditions hold:
+  //   (a) the session's gap report explicitly identifies a "context" gap
+  //       (AI confirmed the session topic's study context is novel vs. all source papers)
+  //   (b) the model itself has ≥1 edge tagged context_transferred
+  //       (meaning: the construct pair is in the literature but was studied in
+  //        a different study context — exact per-edge structural evidence)
+  // Requiring (b) prevents false positives: a session gap report mentioning
+  // "context" will NOT label all models context — only those whose edge data
+  // independently confirms the context-transfer signal.
+  if (
+    snap.gapReport?.allGapTypes.includes("context") &&
+    edgeNoveltyTags.some((t) => t.tag === "context_transferred")
+  ) {
+    if (!innovationTypes.includes("context")) innovationTypes.push("context");
+  }
 
   // 8. Sub-scores + headline contribution score.
   // gapFit: wired in Phase 4 — intersect detected innovationTypes with the
