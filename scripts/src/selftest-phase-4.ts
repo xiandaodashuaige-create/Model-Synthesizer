@@ -254,14 +254,19 @@ async function runTests(authHeaders: Record<string, string>, tStart: number): Pr
     // Structural assertions: arrays must be present regardless of coverage.
     assert(Array.isArray(gapReport.gaps), "gapReport.gaps must be an array");
     assert(Array.isArray(gapReport.allGapTypes), "gapReport.allGapTypes must be an array");
-    // Non-empty assertions: only enforceable when coverage is sufficient for
-    // gap detection.  Below 30% coverage the AI sees too few relationships to
-    // identify any gaps, so 0-length results are correct and expected.
+    // Non-empty content assertions apply only when innovation-field coverage
+    // is sufficient for gap detection (≥30%).  Below this threshold the
+    // landscape contains too few cross-paper relationships for the gap-report
+    // AI to identify distinct gap categories, so returning [] is correct and
+    // expected behavior — not a bug.  Sessions that have had papers
+    // re-extracted with innovation fields (studyContext, researchGap, etc.)
+    // will have coverage ≥30% and should produce non-empty gaps/allGapTypes.
     if (coverage.coverageRate >= 0.3) {
       assert(gapReport.gaps.length > 0, `gap report has 0 gaps despite coverage=${(coverage.coverageRate * 100).toFixed(1)}% ≥30%`);
       assert(gapReport.allGapTypes.length > 0, `gap report allGapTypes is empty despite coverage=${(coverage.coverageRate * 100).toFixed(1)}% ≥30%`);
     } else {
-      console.log(`  WARN: gap report has ${gapReport.gaps.length} gap(s) (coverage=${(coverage.coverageRate * 100).toFixed(1)}% < 30% — insufficient for gap detection)`);
+      // Coverage below threshold — non-empty gaps are not required.
+      console.log(`  WARN: gap report has ${gapReport.gaps.length} gap(s) (coverage=${(coverage.coverageRate * 100).toFixed(1)}% < 30% — non-empty gaps not enforced below coverage threshold)`);
     }
   } else {
     skipGapChecks = true;
