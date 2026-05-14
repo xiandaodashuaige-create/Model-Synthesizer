@@ -5,7 +5,6 @@ import {
   useLookupPaper,
   useBulkImportPapers,
   useListSessionPapers,
-  useListSessionVariables,
   useAddPaperToSession,
   useRemovePaperFromSession,
   useExtractVariables,
@@ -101,17 +100,6 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
   const { data: sessionPapers, isLoading: papersLoading } = useListSessionPapers(sessionId, {
     query: { enabled: !!sessionId, queryKey: getListSessionPapersQueryKey(sessionId) },
   });
-
-  const { data: sessionVariables, isSuccess: varsLoaded } = useListSessionVariables(sessionId, {
-    query: { enabled: !!sessionId, queryKey: getListSessionVariablesQueryKey(sessionId) },
-  });
-  // Paper IDs that have ≥1 extracted variable — used to infer skipped papers
-  // (extracted=true but no variables means the AI relevance gate returned out_of_scope).
-  // Only populated after vars are confirmed loaded to avoid false "skipped" labels
-  // while the query is still in-flight.
-  const paperIdsWithVars = varsLoaded
-    ? new Set((sessionVariables ?? []).map((v) => v.paperId))
-    : null;
 
   const addedIds = new Set((sessionPapers ?? []).map((p) => p.externalId));
   // "allExtracted" treats relevance-skipped papers as "processed" so the
@@ -1018,11 +1006,7 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
                   )}
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
-                  {paper.extracted && paperIdsWithVars !== null && !paperIdsWithVars.has(paper.id) ? (
-                    <Badge variant="outline" className="text-amber-600 border-amber-300 text-xs">
-                      已跳过 · 主题不相关
-                    </Badge>
-                  ) : paper.extracted ? (
+                  {paper.extracted ? (
                     <span className="inline-flex items-center gap-1.5 text-xs font-medium text-green-700 dark:text-green-400 bg-green-50 dark:bg-green-950/40 border border-green-200 dark:border-green-900 rounded-md px-2.5 py-1">
                       <CheckCircle className="w-3.5 h-3.5" /> {t("papers.extract.done" as any)}
                     </span>
