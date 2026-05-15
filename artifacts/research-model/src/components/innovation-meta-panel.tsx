@@ -539,9 +539,14 @@ export function InnovationMetaPanel({
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div className="flex items-center gap-2">
           <Sparkles className="w-4 h-4 text-primary" />
-          <h3 className="text-sm font-semibold text-foreground">
-            {t("innovation.title" as any)}
-          </h3>
+          <div>
+            <h3 className="text-sm font-semibold text-foreground leading-tight">
+              {t("innovation.title" as any)}
+            </h3>
+            <div className="text-[10px] text-muted-foreground leading-tight">
+              {t("innovation.title.scope" as any)}
+            </div>
+          </div>
           {stale && (
             <span
               data-testid="badge-innovation-stale"
@@ -618,6 +623,11 @@ export function InnovationMetaPanel({
           value={meta.subScores.evidenceSupport}
           testId="score-evidence"
         />
+      </div>
+      {/* Corpus scope note — reminds users that scores are relative to uploaded corpus */}
+      <div className="flex items-start gap-1 text-[10px] text-muted-foreground">
+        <Info className="w-3 h-3 mt-0.5 shrink-0" />
+        <span>{t("innovation.score.corpus.tip" as any)}</span>
       </div>
 
       {noScoredEdges && (
