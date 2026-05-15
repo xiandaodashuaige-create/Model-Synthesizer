@@ -1,0 +1,151 @@
+1. 当前创新性判断的明显问题
+问题一：小文献池会高估创新性
+如果你只上传 10 篇文献，那么：
+某条关系没出现
+系统可能判断：
+novel
+但真实世界里，可能已有 200 篇论文研究过。
+所以现在的结论更准确应该叫：
+Local Novelty within Uploaded Corpus
+而不是：
+Global Academic Novelty
+中文就是：
+基于当前文献池的相对新颖性，而不是全领域绝对创新性。
+这个必须在 UI 和报告里说明。
+问题二：用户上传文献有选择偏差
+用户上传什么，系统就看到什么。
+如果用户只上传 AI 主播论文，系统就不知道：
+虚拟人研究；
+机器人服务研究；
+chatbot 研究；
+直播电商研究；
+influencer marketing 研究；
+人机交互研究；
+算法透明研究。
+于是它会误以为某些关系是新的。
+问题三：coverage 不只是数量问题
+即使 50 篇文献，也不一定够。
+要看覆盖范围：
+是否覆盖核心理论？
+是否覆盖相邻领域？
+是否覆盖近 3 年前沿？
+是否覆盖经典高被引论文？
+是否覆盖政策/行业趋势？
+所以 coverage 应该不只是：
+8/49 = 16%
+还应该有：
+领域覆盖度
+理论覆盖度
+时间覆盖度
+相邻领域覆盖度
+2. 现在应该怎么改系统表述
+不要让系统说：
+这是创新关系
+而要说：
+在当前文献池中表现为新颖/未充分探索
+例如：
+现在说法	建议说法
+novel	当前文献池未发现直接先例
+underexplored	当前文献池中仅少量文献涉及
+saturated	当前文献池中反复出现
+contributionScore	初步贡献潜力评分
+innovationTypes	潜在创新类型
+gap report	基于当前文献池的研究缺口分析
+这会让系统更严谨。
+3. 下一步最应该做什么
+我建议下一步做：
+“创新性置信度 / 文献充分性”模块
+不是新模型生成，而是告诉用户：
+当前文献池是否足够支持创新性判断？
+具体功能：Literature Sufficiency Check
+给每个 session 一个判断：
+当前文献池是否足够评估创新性？
+维度可以是：
+文献数量；
+近 5 年文献比例；
+核心理论覆盖；
+相邻领域覆盖；
+高被引/经典文献覆盖；
+政策/行业报告覆盖；
+变量/关系 saturation 稳定性；
+gap report coverage。
+输出：
+当前创新性结论可信度：低 / 中 / 高
+原因：文献池主要集中在 AI 主播，缺少 chatbot / virtual influencer / service robot / algorithm transparency 相邻文献。
+建议补充搜索：
+- virtual influencer trust purchase intention
+- algorithmic transparency consumer trust AI agent
+- parasocial interaction virtual streamer
+4. 系统里的创新性应该分三层
+建议把 innovation 分成三层：
+1. Local Novelty
+基于用户上传文献池：
+当前文献池没有出现
+这是你现在系统已经能做的。
+2. Expanded Literature Novelty
+基于系统主动搜索补充文献：
+在 OpenAlex / Google Scholar 扩展检索后仍很少出现
+这是下一步应该做的。
+3. Trend/Policy Novelty
+基于行业/政府报告：
+现实趋势很强，但学术文献还没跟上
+这是你导师建议那块。
+5. 针对“数据少”的解决办法
+方案 A：创新判断加置信度
+每个 novelty tag 增加：
+confidence: "low" | "medium" | "high"
+basis: "uploaded_corpus" | "expanded_search" | "trend_report"
+例如：
+Novel: 当前上传文献池未发现直接先例。
+置信度：低。
+建议：扩展检索后再确认。
+方案 B：自动补充文献建议
+当 coverage 低时，不要直接给高创新结论，而是输出：
+为了验证该创新性，请补充以下文献方向：
+1. AI streamer trust purchase intention
+2. virtual influencer parasocial interaction
+3. algorithm transparency consumer trust
+方案 C：一键“验证创新性”
+给模型卡加一个按钮：
+验证这条创新性
+系统用 OpenAlex / Google Scholar 搜：
+from construct + to construct + mediator/moderator + context
+如果搜到大量相似研究，就降低 novelty。
+如果搜不到，才提高置信度。
+6. 如何加入行业/政府报告
+你导师说的行业/政府报告，正好可以作为第三层：
+Trend / Policy Evidence
+不要把它和学术论文混在一起算 citation evidence，而是单独标：
+现实趋势依据
+政策导向依据
+产业实践依据
+模型贡献可以显示：
+学术文献缺口：当前文献池较少研究 AI 主播算法透明度对信任的影响。
+行业趋势依据：行业报告显示 AI 主播正在被直播电商平台规模化采用。
+政策依据：可信 AI 与算法透明是监管关注方向。
+这样创新性就更强，因为它不是只靠“文献少”，而是：
+现实重要 + 学术不足
+7. 下一步推荐优先级
+既然手测没问题，我建议顺序是：
+第一：修正创新性表述
+把 UI 文案从：
+创新性
+改成：
+基于当前文献池的创新性分析
+把 novel 改成：
+当前文献池未发现直接先例
+这是低成本高价值。
+第二：加 Literature Sufficiency Check
+告诉用户当前文献池够不够。
+第三：加“扩展验证创新性”
+对重要模型/边，自动搜索更多文献验证 novelty。
+第四：加行业/政府报告模块
+先从上传 PDF 报告开始，不要一开始做全网抓取。
+8. 我的最终判断
+你现在系统的创新性模块已经有价值，但要承认它目前是：
+基于上传文献池的相对创新性
+不是：
+全领域绝对创新性
+这不是缺陷，而是需要表达清楚，并通过扩展检索和趋势报告逐步增强。
+推荐下一步一句话
+先加“创新性置信度/文献充分性检查”，把当前结论标为“基于当前文献池”，再提供一键扩展检索来验证真正的学术创新性。
