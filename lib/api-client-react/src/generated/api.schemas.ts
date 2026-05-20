@@ -819,6 +819,97 @@ export interface TheoryClusterRow {
 }
 
 /**
+ * Overall rating — minimum across all four dimensions.
+ */
+export type SufficiencyCheckRating =
+  (typeof SufficiencyCheckRating)[keyof typeof SufficiencyCheckRating];
+
+export const SufficiencyCheckRating = {
+  minimal: "minimal",
+  fair: "fair",
+  sufficient: "sufficient",
+} as const;
+
+export type SufficiencyCheckDimensionRatingsPaperCount =
+  (typeof SufficiencyCheckDimensionRatingsPaperCount)[keyof typeof SufficiencyCheckDimensionRatingsPaperCount];
+
+export const SufficiencyCheckDimensionRatingsPaperCount = {
+  minimal: "minimal",
+  fair: "fair",
+  sufficient: "sufficient",
+} as const;
+
+export type SufficiencyCheckDimensionRatingsRecentRatio =
+  (typeof SufficiencyCheckDimensionRatingsRecentRatio)[keyof typeof SufficiencyCheckDimensionRatingsRecentRatio];
+
+export const SufficiencyCheckDimensionRatingsRecentRatio = {
+  minimal: "minimal",
+  fair: "fair",
+  sufficient: "sufficient",
+} as const;
+
+export type SufficiencyCheckDimensionRatingsTheoryCount =
+  (typeof SufficiencyCheckDimensionRatingsTheoryCount)[keyof typeof SufficiencyCheckDimensionRatingsTheoryCount];
+
+export const SufficiencyCheckDimensionRatingsTheoryCount = {
+  minimal: "minimal",
+  fair: "fair",
+  sufficient: "sufficient",
+} as const;
+
+export type SufficiencyCheckDimensionRatingsCoverageRate =
+  (typeof SufficiencyCheckDimensionRatingsCoverageRate)[keyof typeof SufficiencyCheckDimensionRatingsCoverageRate];
+
+export const SufficiencyCheckDimensionRatingsCoverageRate = {
+  minimal: "minimal",
+  fair: "fair",
+  sufficient: "sufficient",
+} as const;
+
+/**
+ * Per-dimension ratings used to derive the overall rating.
+ */
+export type SufficiencyCheckDimensionRatings = {
+  paperCount: SufficiencyCheckDimensionRatingsPaperCount;
+  recentRatio: SufficiencyCheckDimensionRatingsRecentRatio;
+  theoryCount: SufficiencyCheckDimensionRatingsTheoryCount;
+  coverageRate: SufficiencyCheckDimensionRatingsCoverageRate;
+};
+
+/**
+ * Pure-algorithm literature sufficiency rating computed inside
+`GET /sessions/{id}/landscape`. No AI is called — all dimensions are
+derived from data already in the DB. Uses the weakest-link (木桶)
+principle: overall `rating` is the minimum of all four dimension ratings.
+
+ */
+export interface SufficiencyCheck {
+  /** Overall rating — minimum across all four dimensions. */
+  rating: SufficiencyCheckRating;
+  /** Number of in-scope (non-manual, non-tangential) papers. */
+  paperCount: number;
+  /** Fraction of papers (with known year) published in the last 5 years.
+Range 0–1. Rounded to 2 decimal places.
+ */
+  recentRatio: number;
+  /** Count of papers that have a known publication year (denominator for
+`recentRatio`). If this is much less than `paperCount`, interpret
+`recentRatio` cautiously.
+ */
+  recentRatioKnownBase: number;
+  /** Number of distinct theory backbone names cited across all in-scope papers. */
+  theoryCount: number;
+  /** Same as `coverage.coverageRate` — fraction of eligible papers that contributed innovation fields. */
+  coverageRate: number;
+  /** True when fewer than 50% of in-scope papers have a known publication year. */
+  hasYearDataGap: boolean;
+  /** 3–5 rule-generated English search terms for supplementing the corpus. */
+  suggestedSearchTerms: string[];
+  /** Per-dimension ratings used to derive the overall rating. */
+  dimensionRatings: SufficiencyCheckDimensionRatings;
+}
+
+/**
  * Gap category per docs/innovation-taxonomy.md.
  */
 export type GapReportGapType =
@@ -881,6 +972,8 @@ export interface SessionLandscape {
 `theoryBackbone`. Lower-cased, de-duplicated, sorted.
  */
   evidencedBackbones: string[];
+  /** Pure-algorithm literature sufficiency rating. Always present. */
+  sufficiency: SufficiencyCheck;
   /** Cached AI-generated gap report for this session. Null until
 `POST /sessions/{id}/landscape/gap-report` is called.
  */

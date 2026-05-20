@@ -227,7 +227,7 @@ router.get("/sessions/:id/landscape", async (_req, res): Promise<void> => {
   const [crRows, tbRows] = await Promise.all([
     db.select().from(constructRelationshipsTable).where(eq(constructRelationshipsTable.sessionId, sessionId)),
     db
-      .select({ theoryBackbone: papersTable.theoryBackbone })
+      .select({ theoryBackbone: papersTable.theoryBackbone, year: papersTable.year })
       .from(papersTable)
       .where(
         and(
@@ -296,6 +296,96 @@ router.get("/sessions/:id/landscape", async (_req, res): Promise<void> => {
       typeof cov.extractedWithInnovationFieldsCount === "number" ? cov.extractedWithInnovationFieldsCount : 0,
   };
 
+  // -------------------------------------------------------------------------
+  // Sufficiency check — pure algorithm, no AI.
+  // Computes 4 dimension ratings and takes the minimum (木桶 principle).
+  // -------------------------------------------------------------------------
+  const CURRENT_YEAR = new Date().getFullYear();
+  const RECENT_CUTOFF = CURRENT_YEAR - 5;
+
+  const suffPaperCount = tbRows.length;
+  let knownYearCount = 0;
+  let recentPaperCount = 0;
+  for (const row of tbRows) {
+    if (row.year != null) {
+      knownYearCount++;
+      if (row.year >= RECENT_CUTOFF) recentPaperCount++;
+    }
+  }
+  const suffRecentRatio = knownYearCount > 0 ? Math.round((recentPaperCount / knownYearCount) * 100) / 100 : 0;
+  const suffHasYearDataGap = suffPaperCount > 0 && knownYearCount < suffPaperCount * 0.5;
+  const suffTheoryCount = evidencedSet.size;
+  const suffCoverageRate = coverage.coverageRate;
+
+  type SufficiencyRating = "minimal" | "fair" | "sufficient";
+  const rateDim = (val: number, fairThreshold: number, sufficientThreshold: number): SufficiencyRating =>
+    val >= sufficientThreshold ? "sufficient" : val >= fairThreshold ? "fair" : "minimal";
+
+  const dimensionRatings = {
+    paperCount: rateDim(suffPaperCount, 8, 16),
+    recentRatio: rateDim(suffRecentRatio, 0.3, 0.6),
+    theoryCount: rateDim(suffTheoryCount, 1, 3),
+    coverageRate: rateDim(suffCoverageRate, 0.5, 0.7),
+  };
+
+  const allRatings = Object.values(dimensionRatings) as SufficiencyRating[];
+  const overallSufficiency: SufficiencyRating = allRatings.includes("minimal")
+    ? "minimal"
+    : allRatings.includes("fair")
+      ? "fair"
+      : "sufficient";
+
+  // Rule-based search term suggestions — no AI, derived from constructs + theories.
+  const constructFreq = new Map<string, number>();
+  for (const r of crRows) {
+    constructFreq.set(r.canonicalFrom, (constructFreq.get(r.canonicalFrom) ?? 0) + r.totalOccurrences);
+    constructFreq.set(r.canonicalTo, (constructFreq.get(r.canonicalTo) ?? 0) + r.totalOccurrences);
+  }
+  const topConstructs = Array.from(constructFreq.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 6)
+    .map(([name]) => name);
+
+  const rawTopic = typeof session.topic === "string" ? session.topic : "";
+  const topicEnWords = rawTopic
+    .replace(/[\u3000-\u9fff\uf900-\ufaff]/g, " ")
+    .split(/\s+/)
+    .filter((w) => w.length > 2)
+    .slice(0, 4)
+    .join(" ")
+    .trim();
+
+  const rawTerms: string[] = [];
+  if (topicEnWords.length > 2) rawTerms.push(`${topicEnWords} meta-analysis`);
+  if (topConstructs.length >= 2) rawTerms.push(`${topConstructs[0]} ${topConstructs[1]} empirical`);
+  if (topConstructs.length >= 1) rawTerms.push(`${topConstructs[0]} moderator boundary condition`);
+  if (evidencedBackbones.length > 0 && topConstructs.length > 0) rawTerms.push(`${evidencedBackbones[0]} ${topConstructs[0]}`);
+  if (topConstructs.length >= 3) rawTerms.push(`${topConstructs[2]} meta-analysis`);
+  else if (topicEnWords.length > 2) rawTerms.push(`${topicEnWords} systematic review`);
+
+  const seenTerms = new Set<string>();
+  const suggestedSearchTerms: string[] = [];
+  for (const term of rawTerms) {
+    const norm = term.trim();
+    if (norm && !seenTerms.has(norm)) {
+      seenTerms.add(norm);
+      suggestedSearchTerms.push(norm);
+    }
+    if (suggestedSearchTerms.length >= 5) break;
+  }
+
+  const sufficiency = {
+    rating: overallSufficiency,
+    paperCount: suffPaperCount,
+    recentRatio: suffRecentRatio,
+    recentRatioKnownBase: knownYearCount,
+    theoryCount: suffTheoryCount,
+    coverageRate: suffCoverageRate,
+    hasYearDataGap: suffHasYearDataGap,
+    suggestedSearchTerms,
+    dimensionRatings,
+  };
+
   // Include cached gap report in the response if present.
   const gr = (lm as { gapReport?: unknown }).gapReport;
   const gapReport =
@@ -313,6 +403,7 @@ router.get("/sessions/:id/landscape", async (_req, res): Promise<void> => {
     relationships,
     theoryClusters,
     evidencedBackbones,
+    sufficiency,
     gapReport,
   });
 });

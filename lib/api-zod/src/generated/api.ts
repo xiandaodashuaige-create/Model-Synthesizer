@@ -3202,6 +3202,56 @@ export const GetSessionLandscapeResponse = zod
       .describe(
         "Distinct theory names mentioned by at least one in-scope paper's\n`theoryBackbone`. Lower-cased, de-duplicated, sorted.\n",
       ),
+    sufficiency: zod
+      .object({
+        rating: zod
+          .enum(["minimal", "fair", "sufficient"])
+          .describe("Overall rating — minimum across all four dimensions."),
+        paperCount: zod
+          .number()
+          .describe("Number of in-scope (non-manual, non-tangential) papers."),
+        recentRatio: zod
+          .number()
+          .describe(
+            "Fraction of papers (with known year) published in the last 5 years.\nRange 0–1. Rounded to 2 decimal places.\n",
+          ),
+        recentRatioKnownBase: zod
+          .number()
+          .describe(
+            "Count of papers that have a known publication year (denominator for\n`recentRatio`). If this is much less than `paperCount`, interpret\n`recentRatio` cautiously.\n",
+          ),
+        theoryCount: zod
+          .number()
+          .describe(
+            "Number of distinct theory backbone names cited across all in-scope papers.",
+          ),
+        coverageRate: zod
+          .number()
+          .describe(
+            "Same as `coverage.coverageRate` — fraction of eligible papers that contributed innovation fields.",
+          ),
+        hasYearDataGap: zod
+          .boolean()
+          .describe(
+            "True when fewer than 50% of in-scope papers have a known publication year.",
+          ),
+        suggestedSearchTerms: zod
+          .array(zod.string())
+          .describe(
+            "3–5 rule-generated English search terms for supplementing the corpus.",
+          ),
+        dimensionRatings: zod
+          .object({
+            paperCount: zod.enum(["minimal", "fair", "sufficient"]),
+            recentRatio: zod.enum(["minimal", "fair", "sufficient"]),
+            theoryCount: zod.enum(["minimal", "fair", "sufficient"]),
+            coverageRate: zod.enum(["minimal", "fair", "sufficient"]),
+          })
+          .describe("Per-dimension ratings used to derive the overall rating."),
+      })
+      .describe(
+        "Pure-algorithm literature sufficiency rating. Always present.",
+      ),
     gapReport: zod
       .object({
         version: zod

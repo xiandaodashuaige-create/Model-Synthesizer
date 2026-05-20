@@ -1,11 +1,12 @@
 import React from "react";
 import { Link } from "wouter";
-import { Loader2, AlertCircle, Layers, Network, BookOpen, Lightbulb, RotateCw } from "lucide-react";
+import { Loader2, AlertCircle, Layers, Network, BookOpen, Lightbulb, RotateCw, Search, CheckCircle2, AlertTriangle, Circle } from "lucide-react";
 import {
   useGetSessionLandscape,
   getGetSessionLandscapeQueryKey,
   useGenerateSessionGapReport,
   type GapReport,
+  type SufficiencyCheck,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useT } from "@/lib/i18n";
@@ -63,6 +64,132 @@ function formatDateTime(iso: string | null, lang: string): string {
   } catch {
     return "—";
   }
+}
+
+// ---------------------------------------------------------------------------
+// SufficiencyCard — pure-algorithm literature sufficiency check (no AI).
+// ---------------------------------------------------------------------------
+type SuffRating = "minimal" | "fair" | "sufficient";
+
+function ratingStyles(r: SuffRating) {
+  switch (r) {
+    case "sufficient":
+      return {
+        badge: "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800",
+        icon: <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />,
+      };
+    case "fair":
+      return {
+        badge: "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800",
+        icon: <AlertTriangle className="w-4 h-4 text-amber-500 dark:text-amber-400 shrink-0" />,
+      };
+    case "minimal":
+      return {
+        badge: "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-800",
+        icon: <Circle className="w-4 h-4 text-rose-500 dark:text-rose-400 shrink-0" />,
+      };
+  }
+}
+
+function dimStatusDot(r: SuffRating) {
+  switch (r) {
+    case "sufficient": return <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />;
+    case "fair":       return <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />;
+    case "minimal":    return <span className="w-2 h-2 rounded-full bg-rose-500 shrink-0" />;
+  }
+}
+
+interface SufficiencyCardProps {
+  suff: SufficiencyCheck;
+}
+
+function SufficiencyCard({ suff }: SufficiencyCardProps) {
+  const { t } = useT();
+  const rStyle = ratingStyles(suff.rating as SuffRating);
+  const dr = suff.dimensionRatings;
+
+  const dims: Array<{ labelKey: string; value: string; status: SuffRating }> = [
+    {
+      labelKey: "sufficiency.dim.paperCount",
+      value: String(t("sufficiency.dim.paperCount.value" as any)).replace("{n}", String(suff.paperCount)),
+      status: dr.paperCount as SuffRating,
+    },
+    {
+      labelKey: "sufficiency.dim.recentRatio",
+      value: String(t("sufficiency.dim.recentRatio.value" as any)).replace("{pct}", String(Math.round(suff.recentRatio * 100))),
+      status: dr.recentRatio as SuffRating,
+    },
+    {
+      labelKey: "sufficiency.dim.theoryCount",
+      value: String(t("sufficiency.dim.theoryCount.value" as any)).replace("{n}", String(suff.theoryCount)),
+      status: dr.theoryCount as SuffRating,
+    },
+    {
+      labelKey: "sufficiency.dim.coverageRate",
+      value: String(t("sufficiency.dim.coverageRate.value" as any)).replace("{pct}", String(Math.round(suff.coverageRate * 100))),
+      status: dr.coverageRate as SuffRating,
+    },
+  ];
+
+  return (
+    <section className="bg-card border border-border rounded-lg shadow-sm">
+      <header className="px-4 py-3 border-b border-border flex items-center gap-2">
+        <Search className="w-4 h-4 text-muted-foreground" />
+        <div className="min-w-0 flex-1">
+          <div className="font-semibold text-sm">{t("sufficiency.title" as any)}</div>
+          <div className="text-xs text-muted-foreground mt-0.5">{t("sufficiency.subtitle" as any)}</div>
+        </div>
+        {/* Overall rating badge */}
+        <div className={cn("inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1 rounded-full border shrink-0", rStyle.badge)}>
+          {rStyle.icon}
+          {t(`sufficiency.rating.${suff.rating}` as any)}
+        </div>
+      </header>
+
+      <div className="px-4 py-3 space-y-2">
+        {/* Dimension rows */}
+        {dims.map((d) => (
+          <div key={d.labelKey} className="flex items-center gap-2 text-sm">
+            {dimStatusDot(d.status)}
+            <span className="text-muted-foreground flex-1">{t(d.labelKey as any)}</span>
+            <span className="font-medium tabular-nums text-foreground">{d.value}</span>
+          </div>
+        ))}
+
+        {/* Year data gap warning */}
+        {suff.hasYearDataGap && (
+          <div className="mt-2 flex items-start gap-1.5 text-xs text-amber-700 dark:text-amber-300">
+            <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+            <span>
+              {String(t("sufficiency.dim.recentRatio.unknownBase" as any))
+                .replace("{known}", String(suff.recentRatioKnownBase))
+                .replace("{total}", String(suff.paperCount))}
+              {" "}
+              {t("sufficiency.dim.recentRatio.yearGap" as any)}
+            </span>
+          </div>
+        )}
+      </div>
+
+      {/* Suggested search terms */}
+      {suff.suggestedSearchTerms.length > 0 && (
+        <div className="px-4 py-3 border-t border-border">
+          <div className="text-xs font-medium text-muted-foreground mb-2">{t("sufficiency.searchTerms.title" as any)}</div>
+          <div className="flex flex-wrap gap-2">
+            {suff.suggestedSearchTerms.map((term, i) => (
+              <span
+                key={i}
+                className="inline-flex items-center text-xs px-2.5 py-1 rounded-md bg-muted text-foreground border border-border font-mono"
+              >
+                {term}
+              </span>
+            ))}
+          </div>
+          <div className="mt-2 text-xs text-muted-foreground">{t("sufficiency.footer" as any)}</div>
+        </div>
+      )}
+    </section>
+  );
 }
 
 const GAP_TYPE_COLORS: Record<string, string> = {
@@ -191,6 +318,9 @@ export default function SessionLandscape({ params }: { params: { id: string } })
               : t("landscape.coverage.zero" as any)}
         </div>
       </div>
+
+      {/* Literature sufficiency check */}
+      {data.sufficiency && <SufficiencyCard suff={data.sufficiency} />}
 
       {/* Construct relationships */}
       <section className="bg-card border border-border rounded-lg shadow-sm">

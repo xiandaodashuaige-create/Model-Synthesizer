@@ -2922,6 +2922,74 @@ components:
           minimum: 0
       required: [id, label, theoryIds, paperCount]
 
+    SufficiencyCheck:
+      type: object
+      description: |
+        Pure-algorithm literature sufficiency rating computed inside
+        `GET /sessions/{id}/landscape`. No AI is called — all dimensions are
+        derived from data already in the DB. Uses the weakest-link (木桶)
+        principle: overall `rating` is the minimum of all four dimension ratings.
+      properties:
+        rating:
+          type: string
+          enum: [minimal, fair, sufficient]
+          description: Overall rating — minimum across all four dimensions.
+        paperCount:
+          type: integer
+          description: Number of in-scope (non-manual, non-tangential) papers.
+        recentRatio:
+          type: number
+          description: |
+            Fraction of papers (with known year) published in the last 5 years.
+            Range 0–1. Rounded to 2 decimal places.
+        recentRatioKnownBase:
+          type: integer
+          description: |
+            Count of papers that have a known publication year (denominator for
+            `recentRatio`). If this is much less than `paperCount`, interpret
+            `recentRatio` cautiously.
+        theoryCount:
+          type: integer
+          description: Number of distinct theory backbone names cited across all in-scope papers.
+        coverageRate:
+          type: number
+          description: Same as `coverage.coverageRate` — fraction of eligible papers that contributed innovation fields.
+        hasYearDataGap:
+          type: boolean
+          description: True when fewer than 50% of in-scope papers have a known publication year.
+        suggestedSearchTerms:
+          type: array
+          description: 3–5 rule-generated English search terms for supplementing the corpus.
+          items:
+            type: string
+        dimensionRatings:
+          type: object
+          description: Per-dimension ratings used to derive the overall rating.
+          properties:
+            paperCount:
+              type: string
+              enum: [minimal, fair, sufficient]
+            recentRatio:
+              type: string
+              enum: [minimal, fair, sufficient]
+            theoryCount:
+              type: string
+              enum: [minimal, fair, sufficient]
+            coverageRate:
+              type: string
+              enum: [minimal, fair, sufficient]
+          required: [paperCount, recentRatio, theoryCount, coverageRate]
+      required:
+        - rating
+        - paperCount
+        - recentRatio
+        - recentRatioKnownBase
+        - theoryCount
+        - coverageRate
+        - hasYearDataGap
+        - suggestedSearchTerms
+        - dimensionRatings
+
     SessionLandscape:
       type: object
       description: |
@@ -2954,6 +3022,9 @@ components:
             `theoryBackbone`. Lower-cased, de-duplicated, sorted.
           items:
             type: string
+        sufficiency:
+          $ref: "#/components/schemas/SufficiencyCheck"
+          description: Pure-algorithm literature sufficiency rating. Always present.
         gapReport:
           nullable: true
           description: |
@@ -2968,6 +3039,7 @@ components:
         - relationships
         - theoryClusters
         - evidencedBackbones
+        - sufficiency
 
     GapReportGap:
       type: object
