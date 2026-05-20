@@ -16,12 +16,13 @@ import {
 } from "@workspace/api-client-react";
 import type { PaperFullTextHit } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Search, Plus, Trash2, Loader2, BookOpen, ExternalLink, CheckCircle, Clock, Info, Link2, Upload, FileText, AlertCircle, SkipForward } from "lucide-react";
+import { Search, Plus, Trash2, Loader2, BookOpen, ExternalLink, CheckCircle, Clock, Info, Link2, Upload, FileText, AlertCircle, SkipForward, Building2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { useT } from "@/lib/i18n";
 import { NextStepHint, BigNextStep } from "@/components/onboarding-stepper";
 import { beginExtraction, updateExtraction, endExtraction, useExtractionProgress } from "@/lib/extraction-progress";
+import { AddExternalPaperDialog } from "@/components/add-external-paper-dialog";
 
 export default function SessionPapers({ params: routeParams }: { params?: { id?: string } }) {
   const { t } = useT();
@@ -83,6 +84,7 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
   const [extractingPaperId, setExtractingPaperId] = useState<number | null>(null);
   const [pdfQueueProgress, setPdfQueueProgress] = useState<{ done: number; total: number } | null>(null);
   const [pdfDragOver, setPdfDragOver] = useState(false);
+  const [externalDialogOpen, setExternalDialogOpen] = useState(false);
   // Per-paper "expand abstract" toggle. We render abstracts collapsed (~2
   // lines) by default to keep the saved-papers list scannable. Pre-fix the
   // tailwind `line-clamp-2` utility was getting overridden somewhere in the
@@ -920,13 +922,23 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
 
       {/* Session Papers */}
       <div id="session-papers">
-        <h2 className="text-lg font-semibold text-foreground mb-4 flex items-center gap-2">
-          <BookOpen className="w-5 h-5 text-primary" />
-          {t("papers.session.title" as any)}
-          {sessionPapers && (
-            <span className="text-sm font-normal text-muted-foreground">({sessionPapers.length})</span>
-          )}
-        </h2>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold text-foreground flex items-center gap-2">
+            <BookOpen className="w-5 h-5 text-primary" />
+            {t("papers.session.title" as any)}
+            {sessionPapers && (
+              <span className="text-sm font-normal text-muted-foreground">({sessionPapers.length})</span>
+            )}
+          </h2>
+          <button
+            type="button"
+            onClick={() => setExternalDialogOpen(true)}
+            className="inline-flex items-center gap-1.5 rounded-md text-sm font-medium border border-input bg-background text-foreground hover:bg-muted h-8 px-3 transition-colors"
+          >
+            <Building2 className="w-3.5 h-3.5" />
+            {t("externalPaper.btn" as any)}
+          </button>
+        </div>
 
         {papersLoading ? (
           <div className="flex justify-center py-12">
@@ -969,14 +981,24 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
                           <FileText className="w-3 h-3" /> {t("papers.oa.badge" as any)}
                         </a>
                       )}
-                      <a
-                        href={paper.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-muted-foreground hover:text-primary transition-colors"
-                      >
-                        <ExternalLink className="w-4 h-4" />
-                      </a>
+                      {paper.externalId.startsWith("report:") ? (
+                        <span
+                          className="inline-flex items-center gap-1 text-[11px] font-medium text-violet-700 dark:text-violet-400 bg-violet-50 dark:bg-violet-950/40 border border-violet-200 dark:border-violet-900 rounded px-1.5 py-0.5"
+                          title={t("externalPaper.dialog.subtitle" as any) as string}
+                        >
+                          <Building2 className="w-3 h-3" />
+                          {t(`externalPaper.badge.${(paper as any).sourceType ?? "other"}` as any)}
+                        </span>
+                      ) : (
+                        <a
+                          href={paper.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-muted-foreground hover:text-primary transition-colors"
+                        >
+                          <ExternalLink className="w-4 h-4" />
+                        </a>
+                      )}
                     </div>
                   </div>
                   {paper.abstract && (
@@ -1071,6 +1093,12 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
           the /models page has its own partial-generation confirm dialog as
           the safety net. Previously this hard-blocked navigation, leaving
           users stuck whenever a single paper failed extraction. */}
+      <AddExternalPaperDialog
+        sessionId={sessionId}
+        open={externalDialogOpen}
+        onClose={() => setExternalDialogOpen(false)}
+      />
+
       {someExtracted && (() => {
         // Skipped papers are intentionally excluded from the pending count —
         // they were pre-screened as off-topic; only truly un-processed papers count.

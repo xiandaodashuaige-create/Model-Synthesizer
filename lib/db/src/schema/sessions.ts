@@ -42,6 +42,10 @@ export const papersTable = pgTable("papers", {
   openAccessUrl: text("open_access_url"),
   url: text("url").notNull(),
   fullText: text("full_text"),
+  // "academic" for OpenAlex / PDF papers; "industry_report" / "gov_report" /
+  // "whitepaper" / "other" for externally-added documents (Task #37).
+  // NULL on pre-existing rows — treat as "academic" everywhere.
+  sourceType: text("source_type").default("academic"),
   extracted: text("extracted").notNull().default("false"),
   researchModel: jsonb("research_model"),
   figureResults: jsonb("figure_results"),

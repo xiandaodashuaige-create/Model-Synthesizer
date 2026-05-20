@@ -303,6 +303,22 @@ export interface PaperSearchResult {
   url: string;
 }
 
+/**
+ * Document source type. 'academic' (default) = OpenAlex / PDF paper. Others: 'industry_report', 'gov_report', 'whitepaper', 'other' = manually-added external documents.
+ * @nullable
+ */
+export type PaperSourceType =
+  | (typeof PaperSourceType)[keyof typeof PaperSourceType]
+  | null;
+
+export const PaperSourceType = {
+  academic: "academic",
+  industry_report: "industry_report",
+  gov_report: "gov_report",
+  whitepaper: "whitepaper",
+  other: "other",
+} as const;
+
 export interface Paper {
   id: number;
   sessionId: number;
@@ -320,10 +336,55 @@ export interface Paper {
   /** @nullable */
   openAccessUrl?: string | null;
   url: string;
+  /**
+   * Document source type. 'academic' (default) = OpenAlex / PDF paper. Others: 'industry_report', 'gov_report', 'whitepaper', 'other' = manually-added external documents.
+   * @nullable
+   */
+  sourceType?: PaperSourceType;
   extracted: boolean;
   /** True when the paper was skipped by the mini relevance preflight (out_of_scope verdict). extracted will be false for these papers. The user can force re-extraction by calling the extract endpoint with bypassPreflight=true. */
   relevanceSkipped: boolean;
   createdAt: string;
+}
+
+/**
+ * Document type — one of industry_report / gov_report / whitepaper / other.
+ */
+export type AddExternalPaperBodySourceType =
+  (typeof AddExternalPaperBodySourceType)[keyof typeof AddExternalPaperBodySourceType];
+
+export const AddExternalPaperBodySourceType = {
+  industry_report: "industry_report",
+  gov_report: "gov_report",
+  whitepaper: "whitepaper",
+  other: "other",
+} as const;
+
+export interface AddExternalPaperBody {
+  /** Document title (required). */
+  title: string;
+  /**
+   * Issuing organization (e.g. "McKinsey", "国家统计局").
+   * @nullable
+   */
+  sourceOrg?: string | null;
+  /**
+   * Publication year.
+   * @nullable
+   */
+  year?: number | null;
+  /** Document type — one of industry_report / gov_report / whitepaper / other. */
+  sourceType: AddExternalPaperBodySourceType;
+  /**
+   * Short summary or executive summary of the document.
+   * @nullable
+   */
+  abstract?: string | null;
+  /**
+   * Key text content pasted by the user. Used by variable extraction instead of abstract when present. Stored as-is (no parsing).
+   * @nullable
+   */
+  fullText?: string | null;
 }
 
 export interface AddPaperBody {

@@ -547,6 +547,43 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /sessions/{id}/papers/external:
+    post:
+      operationId: addExternalPaper
+      tags: [papers]
+      summary: Add an external document (industry report, government file, whitepaper, etc.) to the session. The user supplies all metadata and content directly — no OpenAlex lookup.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddExternalPaperBody"
+      responses:
+        "201":
+          description: External document added to the session.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Paper"
+        "400":
+          description: Validation error (e.g. missing title).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Session not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /sessions/{id}/image-blocklist:
     get:
       operationId: listImageBlocklist
@@ -2663,6 +2700,10 @@ components:
           type: ["string", "null"]
         url:
           type: string
+        sourceType:
+          type: ["string", "null"]
+          description: "Document source type. 'academic' (default) = OpenAlex / PDF paper. Others: 'industry_report', 'gov_report', 'whitepaper', 'other' = manually-added external documents."
+          enum: [academic, industry_report, gov_report, whitepaper, other, null]
         extracted:
           type: boolean
         relevanceSkipped:
@@ -2680,6 +2721,30 @@ components:
         - extracted
         - relevanceSkipped
         - createdAt
+
+    AddExternalPaperBody:
+      type: object
+      required: [title, sourceType]
+      properties:
+        title:
+          type: string
+          description: Document title (required).
+        sourceOrg:
+          type: ["string", "null"]
+          description: Issuing organization (e.g. "McKinsey", "国家统计局").
+        year:
+          type: ["integer", "null"]
+          description: Publication year.
+        sourceType:
+          type: string
+          enum: [industry_report, gov_report, whitepaper, other]
+          description: Document type — one of industry_report / gov_report / whitepaper / other.
+        abstract:
+          type: ["string", "null"]
+          description: Short summary or executive summary of the document.
+        fullText:
+          type: ["string", "null"]
+          description: Key text content pasted by the user. Used by variable extraction instead of abstract when present. Stored as-is (no parsing).
 
     AddPaperBody:
       type: object

@@ -378,6 +378,19 @@ export const ListSessionPapersResponseItem = zod.object({
   citationCount: zod.number().nullish(),
   openAccessUrl: zod.string().nullish(),
   url: zod.string(),
+  sourceType: zod
+    .union([
+      zod.literal("academic"),
+      zod.literal("industry_report"),
+      zod.literal("gov_report"),
+      zod.literal("whitepaper"),
+      zod.literal("other"),
+      zod.literal(null),
+    ])
+    .nullish()
+    .describe(
+      "Document source type. 'academic' (default) = OpenAlex \/ PDF paper. Others: 'industry_report', 'gov_report', 'whitepaper', 'other' = manually-added external documents.",
+    ),
   extracted: zod.boolean(),
   relevanceSkipped: zod
     .boolean()
@@ -565,6 +578,19 @@ export const UploadSessionPaperPdfResponse = zod.object({
   citationCount: zod.number().nullish(),
   openAccessUrl: zod.string().nullish(),
   url: zod.string(),
+  sourceType: zod
+    .union([
+      zod.literal("academic"),
+      zod.literal("industry_report"),
+      zod.literal("gov_report"),
+      zod.literal("whitepaper"),
+      zod.literal("other"),
+      zod.literal(null),
+    ])
+    .nullish()
+    .describe(
+      "Document source type. 'academic' (default) = OpenAlex \/ PDF paper. Others: 'industry_report', 'gov_report', 'whitepaper', 'other' = manually-added external documents.",
+    ),
   extracted: zod.boolean(),
   relevanceSkipped: zod
     .boolean()
@@ -572,6 +598,37 @@ export const UploadSessionPaperPdfResponse = zod.object({
       "True when the paper was skipped by the mini relevance preflight (out_of_scope verdict). extracted will be false for these papers. The user can force re-extraction by calling the extract endpoint with bypassPreflight=true.",
     ),
   createdAt: zod.string(),
+});
+
+/**
+ * @summary Add an external document (industry report, government file, whitepaper, etc.) to the session. The user supplies all metadata and content directly — no OpenAlex lookup.
+ */
+export const AddExternalPaperParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const AddExternalPaperBody = zod.object({
+  title: zod.string().describe("Document title (required)."),
+  sourceOrg: zod
+    .string()
+    .nullish()
+    .describe('Issuing organization (e.g. \"McKinsey\", \"国家统计局\").'),
+  year: zod.number().nullish().describe("Publication year."),
+  sourceType: zod
+    .enum(["industry_report", "gov_report", "whitepaper", "other"])
+    .describe(
+      "Document type — one of industry_report \/ gov_report \/ whitepaper \/ other.",
+    ),
+  abstract: zod
+    .string()
+    .nullish()
+    .describe("Short summary or executive summary of the document."),
+  fullText: zod
+    .string()
+    .nullish()
+    .describe(
+      "Key text content pasted by the user. Used by variable extraction instead of abstract when present. Stored as-is (no parsing).",
+    ),
 });
 
 /**

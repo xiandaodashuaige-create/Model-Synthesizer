@@ -34,6 +34,8 @@ import {
   AddPaperToSessionParams,
   AddPaperToSessionBody,
   RemovePaperFromSessionParams,
+  AddExternalPaperParams,
+  AddExternalPaperBody,
 } from "@workspace/api-zod";
 
 const router: IRouter = Router();
@@ -648,6 +650,65 @@ router.post("/sessions/:id/papers", async (req, res): Promise<void> => {
       citationCount: parsed.data.citationCount ?? null,
       openAccessUrl: parsed.data.openAccessUrl ?? null,
       url: parsed.data.url,
+      extracted: "false",
+    })
+    .returning();
+
+  res.status(201).json(formatPaper(paper));
+});
+
+/**
+ * Add an external document (industry report, government file, whitepaper, etc.)
+ * supplied entirely by the user — no OpenAlex lookup.
+ * externalId uses the "report:" prefix so it is clearly distinguishable from
+ * OpenAlex IDs (openalex:W…) and sentinel papers (manual:…).
+ */
+router.post("/sessions/:id/papers/external", async (req, res): Promise<void> => {
+  const params = AddExternalPaperParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: params.error.message });
+    return;
+  }
+
+  const parsed = AddExternalPaperBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.message });
+    return;
+  }
+
+  const sessionId = params.data.id;
+  const [session] = await db.select().from(sessionsTable).where(eq(sessionsTable.id, sessionId));
+  if (!session) {
+    res.status(404).json({ error: "Session not found" });
+    return;
+  }
+
+  const { title, sourceOrg, year, sourceType, abstract, fullText } = parsed.data;
+
+  // Build a stable URL for external documents — a no-op placeholder that is
+  // still a valid non-empty string (the url column is NOT NULL).
+  const externalId = `report:${crypto.randomUUID()}`;
+  const url = `report:${externalId}`;
+
+  // authors field = [sourceOrg] when provided, else empty — keeps the
+  // existing paper card rendering working without any special-casing.
+  const authors: string[] = sourceOrg ? [sourceOrg] : [];
+
+  const [paper] = await db
+    .insert(papersTable)
+    .values({
+      sessionId,
+      externalId,
+      title,
+      abstract: abstract ?? null,
+      authors,
+      year: year ?? null,
+      venue: sourceOrg ?? null,
+      citationCount: null,
+      openAccessUrl: null,
+      url,
+      fullText: fullText ?? null,
+      sourceType,
       extracted: "false",
     })
     .returning();

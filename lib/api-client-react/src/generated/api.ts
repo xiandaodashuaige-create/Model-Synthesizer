@@ -17,6 +17,7 @@ import type {
 } from "@tanstack/react-query";
 
 import type {
+  AddExternalPaperBody,
   AddImageBlocklistEntryBody,
   AddLiveModelEdgeBody,
   AddLiveModelNodeBody,
@@ -2081,6 +2082,93 @@ export const useUploadSessionPaperPdf = <
   TContext
 > => {
   return useMutation(getUploadSessionPaperPdfMutationOptions(options));
+};
+
+/**
+ * @summary Add an external document (industry report, government file, whitepaper, etc.) to the session. The user supplies all metadata and content directly — no OpenAlex lookup.
+ */
+export const getAddExternalPaperUrl = (id: number) => {
+  return `/api/sessions/${id}/papers/external`;
+};
+
+export const addExternalPaper = async (
+  id: number,
+  addExternalPaperBody: AddExternalPaperBody,
+  options?: RequestInit,
+): Promise<Paper> => {
+  return customFetch<Paper>(getAddExternalPaperUrl(id), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(addExternalPaperBody),
+  });
+};
+
+export const getAddExternalPaperMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof addExternalPaper>>,
+    TError,
+    { id: number; data: BodyType<AddExternalPaperBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof addExternalPaper>>,
+  TError,
+  { id: number; data: BodyType<AddExternalPaperBody> },
+  TContext
+> => {
+  const mutationKey = ["addExternalPaper"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof addExternalPaper>>,
+    { id: number; data: BodyType<AddExternalPaperBody> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return addExternalPaper(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AddExternalPaperMutationResult = NonNullable<
+  Awaited<ReturnType<typeof addExternalPaper>>
+>;
+export type AddExternalPaperMutationBody = BodyType<AddExternalPaperBody>;
+export type AddExternalPaperMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Add an external document (industry report, government file, whitepaper, etc.) to the session. The user supplies all metadata and content directly — no OpenAlex lookup.
+ */
+export const useAddExternalPaper = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof addExternalPaper>>,
+    TError,
+    { id: number; data: BodyType<AddExternalPaperBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof addExternalPaper>>,
+  TError,
+  { id: number; data: BodyType<AddExternalPaperBody> },
+  TContext
+> => {
+  return useMutation(getAddExternalPaperMutationOptions(options));
 };
 
 /**
