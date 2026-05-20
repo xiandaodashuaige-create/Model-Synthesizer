@@ -24,7 +24,13 @@ const router: IRouter = Router();
 // are also excluded from the public corpus count: they remain visible in the
 // papers list but produce no variables / hypotheses, so counting them would
 // inflate "X 篇论文" with off-topic papers the AI explicitly rejected.
-const NOT_MANUAL_PAPER = sql`${papersTable.externalId} NOT LIKE 'manual:%' AND ${papersTable.tangential} IS NOT TRUE`;
+//
+// External industry / government documents (externalId starting with "report:")
+// are also excluded from the OpenAlex paper count. They are user-supplied
+// sources that are NOT from OpenAlex; counting them would misrepresent the
+// academic literature size. They still participate in variable extraction and
+// the literature landscape — only the numeric stat is affected.
+const NOT_MANUAL_PAPER = sql`${papersTable.externalId} NOT LIKE 'manual:%' AND ${papersTable.externalId} NOT LIKE 'report:%' AND ${papersTable.tangential} IS NOT TRUE`;
 
 function buildSessionWithCounts(session: typeof sessionsTable.$inferSelect, paperCount: number, variableCount: number, modelCount: number) {
   return {
