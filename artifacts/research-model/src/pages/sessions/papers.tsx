@@ -23,6 +23,7 @@ import { useT } from "@/lib/i18n";
 import { NextStepHint, BigNextStep } from "@/components/onboarding-stepper";
 import { beginExtraction, updateExtraction, endExtraction, useExtractionProgress } from "@/lib/extraction-progress";
 import { AddExternalPaperDialog } from "@/components/add-external-paper-dialog";
+import { IndustrySearchPanel } from "@/components/industry-search-panel";
 
 export default function SessionPapers({ params: routeParams }: { params?: { id?: string } }) {
   const { t } = useT();
@@ -85,6 +86,7 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
   const [pdfQueueProgress, setPdfQueueProgress] = useState<{ done: number; total: number } | null>(null);
   const [pdfDragOver, setPdfDragOver] = useState(false);
   const [externalDialogOpen, setExternalDialogOpen] = useState(false);
+  const [industrySearchOpen, setIndustrySearchOpen] = useState(false);
   // Per-paper "expand abstract" toggle. We render abstracts collapsed (~2
   // lines) by default to keep the saved-papers list scannable. Pre-fix the
   // tailwind `line-clamp-2` utility was getting overridden somewhere in the
@@ -930,14 +932,24 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
               <span className="text-sm font-normal text-muted-foreground">({sessionPapers.length})</span>
             )}
           </h2>
-          <button
-            type="button"
-            onClick={() => setExternalDialogOpen(true)}
-            className="inline-flex items-center gap-1.5 rounded-md text-sm font-medium border border-input bg-background text-foreground hover:bg-muted h-8 px-3 transition-colors"
-          >
-            <Building2 className="w-3.5 h-3.5" />
-            {t("externalPaper.btn" as any)}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setIndustrySearchOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-md text-sm font-medium border border-violet-200 dark:border-violet-900 bg-violet-50 dark:bg-violet-950/40 text-violet-700 dark:text-violet-400 hover:bg-violet-100 dark:hover:bg-violet-900/40 h-8 px-3 transition-colors"
+            >
+              <Search className="w-3.5 h-3.5" />
+              {t("industrySearch.btn" as any)}
+            </button>
+            <button
+              type="button"
+              onClick={() => setExternalDialogOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-md text-sm font-medium border border-input bg-background text-foreground hover:bg-muted h-8 px-3 transition-colors"
+            >
+              <Building2 className="w-3.5 h-3.5" />
+              {t("externalPaper.btn" as any)}
+            </button>
+          </div>
         </div>
 
         {papersLoading ? (
@@ -1097,6 +1109,11 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
         sessionId={sessionId}
         open={externalDialogOpen}
         onClose={() => setExternalDialogOpen(false)}
+      />
+      <IndustrySearchPanel
+        sessionId={sessionId}
+        open={industrySearchOpen}
+        onClose={() => setIndustrySearchOpen(false)}
       />
 
       {someExtracted && (() => {

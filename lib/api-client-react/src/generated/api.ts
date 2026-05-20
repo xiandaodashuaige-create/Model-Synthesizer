@@ -53,6 +53,8 @@ import type {
   HealthStatus,
   ImageBlocklistEntry,
   ImportLiveModelFromModelBody,
+  IndustrySearchBody,
+  IndustrySearchPapers200,
   LiveModelDetail,
   LookupPaper404,
   LookupPaperBody,
@@ -2169,6 +2171,93 @@ export const useAddExternalPaper = <
   TContext
 > => {
   return useMutation(getAddExternalPaperMutationOptions(options));
+};
+
+/**
+ * @summary Search public industry sources (government, associations, think tanks) for documents relevant to the session topic. Returns AI-scored results with key variable previews. Results are cached per session for 30 minutes.
+ */
+export const getIndustrySearchPapersUrl = (id: number) => {
+  return `/api/sessions/${id}/papers/industry-search`;
+};
+
+export const industrySearchPapers = async (
+  id: number,
+  industrySearchBody: IndustrySearchBody,
+  options?: RequestInit,
+): Promise<IndustrySearchPapers200> => {
+  return customFetch<IndustrySearchPapers200>(getIndustrySearchPapersUrl(id), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(industrySearchBody),
+  });
+};
+
+export const getIndustrySearchPapersMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof industrySearchPapers>>,
+    TError,
+    { id: number; data: BodyType<IndustrySearchBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof industrySearchPapers>>,
+  TError,
+  { id: number; data: BodyType<IndustrySearchBody> },
+  TContext
+> => {
+  const mutationKey = ["industrySearchPapers"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof industrySearchPapers>>,
+    { id: number; data: BodyType<IndustrySearchBody> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return industrySearchPapers(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type IndustrySearchPapersMutationResult = NonNullable<
+  Awaited<ReturnType<typeof industrySearchPapers>>
+>;
+export type IndustrySearchPapersMutationBody = BodyType<IndustrySearchBody>;
+export type IndustrySearchPapersMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Search public industry sources (government, associations, think tanks) for documents relevant to the session topic. Returns AI-scored results with key variable previews. Results are cached per session for 30 minutes.
+ */
+export const useIndustrySearchPapers = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof industrySearchPapers>>,
+    TError,
+    { id: number; data: BodyType<IndustrySearchBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof industrySearchPapers>>,
+  TError,
+  { id: number; data: BodyType<IndustrySearchBody> },
+  TContext
+> => {
+  return useMutation(getIndustrySearchPapersMutationOptions(options));
 };
 
 /**

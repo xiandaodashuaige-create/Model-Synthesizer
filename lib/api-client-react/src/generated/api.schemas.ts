@@ -348,6 +348,56 @@ export interface Paper {
 }
 
 /**
+ * Filter by source type: 'gov' = government domains, 'org' = associations/standards bodies, 'think_tank' = research institutes. Default: all.
+ */
+export type IndustrySearchBodySourceFilter =
+  (typeof IndustrySearchBodySourceFilter)[keyof typeof IndustrySearchBodySourceFilter];
+
+export const IndustrySearchBodySourceFilter = {
+  all: "all",
+  gov: "gov",
+  org: "org",
+  think_tank: "think_tank",
+} as const;
+
+export interface IndustrySearchBody {
+  /** Search keywords, e.g. "新能源汽车行业 消费者行为" */
+  query: string;
+  /** Filter by source type: 'gov' = government domains, 'org' = associations/standards bodies, 'think_tank' = research institutes. Default: all. */
+  sourceFilter?: IndustrySearchBodySourceFilter;
+}
+
+export interface IndustrySearchResult {
+  /** Stable identifier derived from the URL (used as dedup key when importing). */
+  id: string;
+  title: string;
+  url: string;
+  domain: string;
+  /**
+   * Publication date string extracted from the search result metadata, if available.
+   * @nullable
+   */
+  publishDate?: string | null;
+  /**
+   * Raw search engine snippet.
+   * @nullable
+   */
+  snippet?: string | null;
+  /**
+   * AI-assigned relevance score (0–100) relative to the session research topic.
+   * @minimum 0
+   * @maximum 100
+   */
+  relevanceScore: number;
+  /** 2–3 key construct names extracted by the AI from the document body. */
+  keyVariables: string[];
+  /** AI-generated 1–2 sentence summary of how this document relates to the research topic. */
+  summary: string;
+  /** True when the page body could not be fetched or parsed; scoring was done from snippet only. */
+  bodyFetchFailed: boolean;
+}
+
+/**
  * Document type — one of industry_report / gov_report / whitepaper / other.
  */
 export type AddExternalPaperBodySourceType =
@@ -1416,6 +1466,11 @@ export type CreateSessionVariableBody = {
 export type UploadSessionPaperPdfBody = {
   /** The PDF file (max ~25 MB; must be text-extractable, not a scan). */
   file: Blob;
+};
+
+export type IndustrySearchPapers200 = {
+  results: IndustrySearchResult[];
+  cached: boolean;
 };
 
 export type AddImageBlocklistEntryBody = {

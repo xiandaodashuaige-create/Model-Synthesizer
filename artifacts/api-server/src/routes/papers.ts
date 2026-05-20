@@ -36,6 +36,8 @@ import {
   RemovePaperFromSessionParams,
   AddExternalPaperParams,
   AddExternalPaperBody,
+  IndustrySearchPapersParams,
+  IndustrySearchPapersBody,
 } from "@workspace/api-zod";
 
 const router: IRouter = Router();
@@ -1113,6 +1115,218 @@ router.get("/sessions/:sessionId/papers/:paperId/model-figures", async (req, res
     fetchedAt: now.toISOString(),
     results,
   });
+});
+
+// ---------------------------------------------------------------------------
+// Industry-source search (Task #38 — 行业资料搜索三层漏斗)
+// ---------------------------------------------------------------------------
+
+type IndustrySearchResultItem = {
+  id: string;
+  title: string;
+  url: string;
+  domain: string;
+  publishDate: string | null;
+  snippet: string | null;
+  relevanceScore: number;
+  keyVariables: string[];
+  summary: string;
+  bodyFetchFailed: boolean;
+};
+
+const industrySearchCache = new Map<string, { results: IndustrySearchResultItem[]; expiresAt: number }>();
+const INDUSTRY_SEARCH_TTL_MS = 30 * 60 * 1000;
+
+const SITE_RESTRICTIONS: Record<string, string> = {
+  gov: "site:gov.cn OR site:mofcom.gov.cn OR site:stats.gov.cn OR site:miit.gov.cn OR site:ndrc.gov.cn OR site:nea.gov.cn",
+  org: "site:*.org.cn OR site:cnnic.org.cn OR site:caict.ac.cn OR site:ccidnet.com",
+  think_tank: "site:*.edu.cn OR site:drcnet.com.cn OR site:casted.org.cn OR site:amr.gov.cn",
+  all: "site:gov.cn OR site:*.gov OR site:*.org.cn OR site:*.edu.cn",
+};
+
+async function fetchBodyText(url: string): Promise<string | null> {
+  try {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 8_000);
+    const r = await fetch(url, {
+      signal: ctl.signal,
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; ResearchBot/1.0)" },
+    });
+    clearTimeout(timer);
+    if (!r.ok) return null;
+    const html = await r.text();
+    // Strip HTML tags and collapse whitespace; limit to ~6000 chars (~1500 tokens)
+    const text = html
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/&nbsp;/g, " ")
+      .replace(/&amp;/g, "&")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"')
+      .replace(/\s+/g, " ")
+      .trim();
+    return text.slice(0, 6000) || null;
+  } catch {
+    return null;
+  }
+}
+
+async function scoreWithAI(
+  topic: string,
+  title: string,
+  bodyText: string | null,
+  snippet: string | null,
+  log: { warn: (obj: object, msg: string) => void },
+): Promise<{ relevanceScore: number; keyVariables: string[]; summary: string }> {
+  const content = bodyText || snippet || "";
+  if (!content.trim()) return { relevanceScore: 0, keyVariables: [], summary: "" };
+
+  const prompt = `You are a research assistant. Given a research topic and a document excerpt, return a JSON object with:
+- "relevanceScore": integer 0-100 indicating how relevant this document is to the research topic (100 = directly relevant, 0 = irrelevant)
+- "keyVariables": array of 2-3 key construct/variable names found in the document (e.g. ["用户满意度", "技术接受度"])
+- "summary": 1-2 sentence summary in Chinese of how this document relates to the research topic
+
+RESEARCH TOPIC: ${topic}
+
+DOCUMENT TITLE: ${title}
+
+DOCUMENT CONTENT (excerpt):
+${content.slice(0, 5000)}
+
+Return only valid JSON, no markdown.`;
+
+  try {
+    const resp = await openai.chat.completions.create(
+      {
+        model: "gpt-5-mini",
+        max_completion_tokens: 300,
+        response_format: { type: "json_object" },
+        messages: [{ role: "user", content: prompt }],
+      },
+      { signal: AbortSignal.timeout(15_000) },
+    );
+    logAiUsageFromOpenAI(resp, { route: "papers/industry-search-score", sessionId: null, userId: null });
+    const raw = resp.choices[0]?.message?.content ?? "{}";
+    const parsed = JSON.parse(raw) as { relevanceScore?: unknown; keyVariables?: unknown; summary?: unknown };
+    return {
+      relevanceScore: typeof parsed.relevanceScore === "number" ? Math.min(100, Math.max(0, Math.round(parsed.relevanceScore))) : 0,
+      keyVariables: Array.isArray(parsed.keyVariables) ? (parsed.keyVariables as unknown[]).filter((v): v is string => typeof v === "string").slice(0, 3) : [],
+      summary: typeof parsed.summary === "string" ? parsed.summary : "",
+    };
+  } catch (err) {
+    log.warn({ err, title }, "industry-search: AI scoring failed, returning defaults");
+    return { relevanceScore: 0, keyVariables: [], summary: "" };
+  }
+}
+
+router.post("/sessions/:id/papers/industry-search", async (req, res): Promise<void> => {
+  const params = IndustrySearchPapersParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: params.error.message });
+    return;
+  }
+
+  const parsed = IndustrySearchPapersBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.message });
+    return;
+  }
+
+  const sessionId = params.data.id;
+  const [session] = await db.select({ topic: sessionsTable.topic }).from(sessionsTable).where(eq(sessionsTable.id, sessionId));
+  if (!session) {
+    res.status(404).json({ error: "Session not found" });
+    return;
+  }
+
+  const serpKey = process.env.SERPAPI_API_KEY;
+  if (!serpKey) {
+    res.status(503).json({ error: "行业搜索未配置（缺少 SERPAPI_API_KEY）" });
+    return;
+  }
+
+  const { query, sourceFilter = "all" } = parsed.data;
+  const cacheKey = `industrySearch:${sessionId}:${query.trim().toLowerCase()}:${sourceFilter}`;
+  const cached = industrySearchCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    res.json({ results: cached.results, cached: true });
+    return;
+  }
+
+  // Call SerpAPI (google engine) with site restrictions
+  const siteRestriction = SITE_RESTRICTIONS[sourceFilter] ?? SITE_RESTRICTIONS.all;
+  const serpQuery = `${query.trim()} (${siteRestriction})`;
+  const serpUrl = new URL("https://serpapi.com/search.json");
+  serpUrl.searchParams.set("engine", "google");
+  serpUrl.searchParams.set("q", serpQuery);
+  serpUrl.searchParams.set("num", "8");
+  serpUrl.searchParams.set("hl", "zh-cn");
+  serpUrl.searchParams.set("gl", "cn");
+  serpUrl.searchParams.set("api_key", serpKey);
+
+  let organicResults: Array<{
+    title?: string;
+    link?: string;
+    snippet?: string;
+    date?: string;
+    displayed_link?: string;
+  }> = [];
+
+  try {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 15_000);
+    const r = await fetch(serpUrl.toString(), { headers: { Accept: "application/json" }, signal: ctl.signal });
+    clearTimeout(timer);
+    if (r.ok) {
+      const data = await r.json() as { organic_results?: typeof organicResults; error?: string };
+      if (!data.error) organicResults = data.organic_results ?? [];
+    }
+  } catch (err) {
+    req.log.warn({ err }, "industry-search: SerpAPI call failed");
+  }
+
+  // Fetch body text and score in parallel (max 4 concurrent)
+  const CONCURRENCY = 4;
+  const results: IndustrySearchResultItem[] = [];
+  const topic = session.topic ?? query;
+
+  for (let i = 0; i < organicResults.length; i += CONCURRENCY) {
+    const batch = organicResults.slice(i, i + CONCURRENCY);
+    const batchResults = await Promise.all(
+      batch.map(async (hit) => {
+        if (!hit.title || !hit.link) return null;
+        const url = hit.link;
+        let domain = "";
+        try { domain = new URL(url).hostname; } catch { domain = url.slice(0, 50); }
+
+        const bodyText = await fetchBodyText(url);
+        const scored = await scoreWithAI(topic, hit.title, bodyText, hit.snippet ?? null, req.log);
+
+        const id = Buffer.from(url).toString("base64url").slice(0, 32);
+        return {
+          id,
+          title: hit.title,
+          url,
+          domain,
+          publishDate: hit.date ?? null,
+          snippet: hit.snippet ?? null,
+          relevanceScore: scored.relevanceScore,
+          keyVariables: scored.keyVariables,
+          summary: scored.summary,
+          bodyFetchFailed: bodyText === null,
+        } satisfies IndustrySearchResultItem;
+      }),
+    );
+    for (const r of batchResults) if (r) results.push(r);
+  }
+
+  // Sort by relevance descending
+  results.sort((a, b) => b.relevanceScore - a.relevanceScore);
+
+  industrySearchCache.set(cacheKey, { results, expiresAt: Date.now() + INDUSTRY_SEARCH_TTL_MS });
+  res.json({ results, cached: false });
 });
 
 export default router;

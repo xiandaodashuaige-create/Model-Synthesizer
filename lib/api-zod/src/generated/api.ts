@@ -632,6 +632,75 @@ export const AddExternalPaperBody = zod.object({
 });
 
 /**
+ * @summary Search public industry sources (government, associations, think tanks) for documents relevant to the session topic. Returns AI-scored results with key variable previews. Results are cached per session for 30 minutes.
+ */
+export const IndustrySearchPapersParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const industrySearchPapersBodySourceFilterDefault = `all`;
+
+export const IndustrySearchPapersBody = zod.object({
+  query: zod
+    .string()
+    .describe('Search keywords, e.g. \"新能源汽车行业 消费者行为\"'),
+  sourceFilter: zod
+    .enum(["all", "gov", "org", "think_tank"])
+    .default(industrySearchPapersBodySourceFilterDefault)
+    .describe(
+      "Filter by source type: 'gov' = government domains, 'org' = associations\/standards bodies, 'think_tank' = research institutes. Default: all.",
+    ),
+});
+
+export const industrySearchPapersResponseResultsItemRelevanceScoreMin = 0;
+export const industrySearchPapersResponseResultsItemRelevanceScoreMax = 100;
+
+export const IndustrySearchPapersResponse = zod.object({
+  results: zod.array(
+    zod.object({
+      id: zod
+        .string()
+        .describe(
+          "Stable identifier derived from the URL (used as dedup key when importing).",
+        ),
+      title: zod.string(),
+      url: zod.string(),
+      domain: zod.string(),
+      publishDate: zod
+        .string()
+        .nullish()
+        .describe(
+          "Publication date string extracted from the search result metadata, if available.",
+        ),
+      snippet: zod.string().nullish().describe("Raw search engine snippet."),
+      relevanceScore: zod
+        .number()
+        .min(industrySearchPapersResponseResultsItemRelevanceScoreMin)
+        .max(industrySearchPapersResponseResultsItemRelevanceScoreMax)
+        .describe(
+          "AI-assigned relevance score (0–100) relative to the session research topic.",
+        ),
+      keyVariables: zod
+        .array(zod.string())
+        .describe(
+          "2–3 key construct names extracted by the AI from the document body.",
+        ),
+      summary: zod
+        .string()
+        .describe(
+          "AI-generated 1–2 sentence summary of how this document relates to the research topic.",
+        ),
+      bodyFetchFailed: zod
+        .boolean()
+        .describe(
+          "True when the page body could not be fetched or parsed; scoring was done from snippet only.",
+        ),
+    }),
+  ),
+  cached: zod.boolean(),
+});
+
+/**
  * @summary List all blocked image source URLs for this session.
  */
 export const ListImageBlocklistParams = zod.object({

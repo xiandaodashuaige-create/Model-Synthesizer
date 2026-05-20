@@ -584,6 +584,57 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /sessions/{id}/papers/industry-search:
+    post:
+      operationId: industrySearchPapers
+      tags: [papers]
+      summary: Search public industry sources (government, associations, think tanks) for documents relevant to the session topic. Returns AI-scored results with key variable previews. Results are cached per session for 30 minutes.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IndustrySearchBody"
+      responses:
+        "200":
+          description: Scored search results (may be from cache).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [results, cached]
+                properties:
+                  results:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/IndustrySearchResult"
+                  cached:
+                    type: boolean
+        "400":
+          description: Validation error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Session not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: SerpAPI key not configured.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /sessions/{id}/image-blocklist:
     get:
       operationId: listImageBlocklist
@@ -2721,6 +2772,55 @@ components:
         - extracted
         - relevanceSkipped
         - createdAt
+
+    IndustrySearchBody:
+      type: object
+      required: [query]
+      properties:
+        query:
+          type: string
+          description: Search keywords, e.g. "新能源汽车行业 消费者行为"
+        sourceFilter:
+          type: string
+          enum: [all, gov, org, think_tank]
+          default: all
+          description: "Filter by source type: 'gov' = government domains, 'org' = associations/standards bodies, 'think_tank' = research institutes. Default: all."
+
+    IndustrySearchResult:
+      type: object
+      required: [id, title, url, domain, relevanceScore, keyVariables, summary, bodyFetchFailed]
+      properties:
+        id:
+          type: string
+          description: Stable identifier derived from the URL (used as dedup key when importing).
+        title:
+          type: string
+        url:
+          type: string
+        domain:
+          type: string
+        publishDate:
+          type: ["string", "null"]
+          description: Publication date string extracted from the search result metadata, if available.
+        snippet:
+          type: ["string", "null"]
+          description: Raw search engine snippet.
+        relevanceScore:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: AI-assigned relevance score (0–100) relative to the session research topic.
+        keyVariables:
+          type: array
+          items:
+            type: string
+          description: 2–3 key construct names extracted by the AI from the document body.
+        summary:
+          type: string
+          description: AI-generated 1–2 sentence summary of how this document relates to the research topic.
+        bodyFetchFailed:
+          type: boolean
+          description: True when the page body could not be fetched or parsed; scoring was done from snippet only.
 
     AddExternalPaperBody:
       type: object
