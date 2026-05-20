@@ -848,6 +848,8 @@ Use these to bias variable selection and structural focus toward what the user h
     variables,
     focusVariableIds,
     crCount,
+    userPrompt,
+    sessionId,
   });
 
   if (readiness.status === "blocked") {

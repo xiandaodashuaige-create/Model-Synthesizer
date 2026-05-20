@@ -8,6 +8,7 @@ export type ReadinessIssueType =
   | "too_many_dvs"
   | "low_paper_count"
   | "all_single_paper_variables"
+  | "no_cross_paper_overlap"
   | "no_construct_relationships"
   | "domain_mismatch_suspected";
 
@@ -42,6 +43,8 @@ interface ReadinessInput {
   variables: ReadinessInputVariable[];
   focusVariableIds: number[];
   crCount: number;
+  userPrompt?: string;
+  sessionId?: number;
 }
 
 // Bio/engineering keyword list for R8. Checked against lowercased variable names.
@@ -52,7 +55,7 @@ const DOMAIN_MISMATCH_KEYWORDS = [
 ];
 
 export function checkModelGenerationReadiness(input: ReadinessInput): ReadinessResult {
-  const { variables, focusVariableIds, crCount } = input;
+  const { variables, focusVariableIds, crCount, userPrompt } = input;
 
   const issues: ReadinessIssue[] = [];
   let candidateDvs: CandidateDv[] = [];
@@ -165,6 +168,38 @@ export function checkModelGenerationReadiness(input: ReadinessInput): ReadinessR
     }
   }
 
+  // R9 — no cross-paper construct overlap (fires only when uniquePaperCount >= 3;
+  // R6 covers the < 3 case already)
+  if (uniquePaperCount >= 3) {
+    const constructPaperMap = new Map<string, Set<number>>();
+    for (const v of variables) {
+      if (v.paperId === null) continue;
+      const key = v.canonicalConstructId !== null
+        ? `cid:${v.canonicalConstructId}`
+        : `name:${v.name.toLowerCase().trim()}`;
+      if (!constructPaperMap.has(key)) constructPaperMap.set(key, new Set());
+      constructPaperMap.get(key)!.add(v.paperId);
+    }
+
+    const crossPaperCount = Array.from(constructPaperMap.values())
+      .filter((paperIds) => paperIds.size >= 2).length;
+
+    if (crossPaperCount === 0 && constructPaperMap.size > 0) {
+      const hasExplicitIntent =
+        focusVariableIds.length > 0 ||
+        (userPrompt !== undefined && userPrompt.trim().length > 0);
+
+      issues.push({
+        type: "no_cross_paper_overlap",
+        severity: hasExplicitIntent ? "warning" : "blocking",
+        message: hasExplicitIntent
+          ? `${uniquePaperCount} 篇论文中没有共同构念——模型证据将完全分散，但系统将尊重你的指定方向继续尝试`
+          : `${uniquePaperCount} 篇论文中没有任何共同构念，AI 无法构建跨论文组合模型。建议：搜索与现有变量同类的文献，或减少切换主题的论文`,
+        detail: `crossPaperConstructs:0,totalConstructs:${constructPaperMap.size}`,
+      });
+    }
+  }
+
   // R7 — no construct relationships (warning only)
   if (crCount === 0) {
     issues.push({
@@ -209,6 +244,9 @@ export function deriveRecommendedActions(issues: ReadinessIssue[]): string[] {
   }
   if (types.has("all_single_paper_variables")) {
     actions.push("补充同一研究主题的相关论文（5–10 篇）");
+  }
+  if (types.has("no_cross_paper_overlap")) {
+    actions.push("搜索与现有变量同类的文献，使各论文之间有共同的研究构念");
   }
   if (types.has("no_construct_relationships")) {
     actions.push("先在「文献全景」页面生成全景分析");

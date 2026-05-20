@@ -27,6 +27,7 @@ export const ReadinessIssueType = {
   too_many_dvs: "too_many_dvs",
   low_paper_count: "low_paper_count",
   all_single_paper_variables: "all_single_paper_variables",
+  no_cross_paper_overlap: "no_cross_paper_overlap",
   no_construct_relationships: "no_construct_relationships",
   domain_mismatch_suspected: "domain_mismatch_suspected",
 } as const;

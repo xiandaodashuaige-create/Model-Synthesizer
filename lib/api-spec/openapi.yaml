@@ -2263,6 +2263,7 @@ components:
             - too_many_dvs
             - low_paper_count
             - all_single_paper_variables
+            - no_cross_paper_overlap
             - no_construct_relationships
             - domain_mismatch_suspected
         severity:
