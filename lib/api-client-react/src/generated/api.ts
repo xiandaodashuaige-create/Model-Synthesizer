@@ -43,6 +43,7 @@ import type {
   GenerateModelLiteratureReview200,
   GenerateModelLiteratureReviewBody,
   GenerateModelsBody,
+  GenerationReadinessError,
   GetModelAssistantMessages200,
   GetModelQualityReport200,
   GetPaperModelFigures200,
@@ -3295,7 +3296,7 @@ export const generateModels = async (
 };
 
 export const getGenerateModelsMutationOptions = <
-  TError = ErrorType<unknown>,
+  TError = ErrorType<GenerationReadinessError>,
   TContext = unknown,
 >(options?: {
   mutation?: UseMutationOptions<
@@ -3336,13 +3337,13 @@ export type GenerateModelsMutationResult = NonNullable<
   Awaited<ReturnType<typeof generateModels>>
 >;
 export type GenerateModelsMutationBody = BodyType<GenerateModelsBody>;
-export type GenerateModelsMutationError = ErrorType<unknown>;
+export type GenerateModelsMutationError = ErrorType<GenerationReadinessError>;
 
 /**
  * @summary Generate new research model combinations using AI
  */
 export const useGenerateModels = <
-  TError = ErrorType<unknown>,
+  TError = ErrorType<GenerationReadinessError>,
   TContext = unknown,
 >(options?: {
   mutation?: UseMutationOptions<

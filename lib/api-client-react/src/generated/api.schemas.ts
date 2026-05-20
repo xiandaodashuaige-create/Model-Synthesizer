@@ -5,6 +5,55 @@
  * Research Model Builder API
  * OpenAPI spec version: 0.1.0
  */
+export type GenerationReadinessErrorCode =
+  (typeof GenerationReadinessErrorCode)[keyof typeof GenerationReadinessErrorCode];
+
+export const GenerationReadinessErrorCode = {
+  generation_material_insufficient: "generation_material_insufficient",
+} as const;
+
+export type GenerationReadinessErrorCandidateDvsItem = {
+  id: number;
+  name: string;
+  paperCount: number;
+};
+
+export type ReadinessIssueType =
+  (typeof ReadinessIssueType)[keyof typeof ReadinessIssueType];
+
+export const ReadinessIssueType = {
+  no_iv: "no_iv",
+  no_dv: "no_dv",
+  too_many_dvs: "too_many_dvs",
+  low_paper_count: "low_paper_count",
+  all_single_paper_variables: "all_single_paper_variables",
+  no_construct_relationships: "no_construct_relationships",
+  domain_mismatch_suspected: "domain_mismatch_suspected",
+} as const;
+
+export type ReadinessIssueSeverity =
+  (typeof ReadinessIssueSeverity)[keyof typeof ReadinessIssueSeverity];
+
+export const ReadinessIssueSeverity = {
+  blocking: "blocking",
+  warning: "warning",
+} as const;
+
+export interface ReadinessIssue {
+  type: ReadinessIssueType;
+  severity: ReadinessIssueSeverity;
+  message: string;
+  detail?: string;
+}
+
+export interface GenerationReadinessError {
+  code: GenerationReadinessErrorCode;
+  message: string;
+  issues: ReadinessIssue[];
+  candidateDvs?: GenerationReadinessErrorCandidateDvsItem[];
+  recommendedActions?: string[];
+}
+
 export interface AuthUser {
   id: string;
   /** @nullable */

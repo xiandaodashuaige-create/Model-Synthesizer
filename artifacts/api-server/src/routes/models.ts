@@ -10,8 +10,10 @@ import {
   modelVersionsTable,
   sessionsTable,
   modelAssistantMessagesTable,
+  constructRelationshipsTable,
 } from "@workspace/db";
 import { findEvidenceForModel, importWebPaper, makeEdgeKey, type EdgeInput } from "../lib/evidence-matching.js";
+import { checkModelGenerationReadiness, deriveRecommendedActions } from "../lib/model-readiness.js";
 import { computeInnovationMeta, isInnovationMetaStale, loadLandscapeSnapshot, type InnovationMeta, type ContributionStatement } from "../lib/innovation-scoring.js";
 import {
   GenerateModelsParams,
@@ -831,6 +833,36 @@ Use these to bias variable selection and structural focus toward what the user h
   if (variables.length < 2) {
     res.status(400).json({ error: "Need at least 2 extracted variables to generate models. Please extract variables from papers first." });
     return;
+  }
+
+  // ── MODEL GENERATION READINESS CHECK ─────────────────────────────────
+  // Pure-algorithm pre-flight: returns 422 with actionable issues instead
+  // of burning a gpt-5.2 call only to get {"models":[]}.
+  const crCount = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(constructRelationshipsTable)
+    .where(eq(constructRelationshipsTable.sessionId, sessionId))
+    .then((r) => r[0]?.count ?? 0);
+
+  const readiness = checkModelGenerationReadiness({
+    variables,
+    focusVariableIds,
+    crCount,
+  });
+
+  if (readiness.status === "blocked") {
+    req.log.warn({ sessionId, issues: readiness.issues }, "Model generation blocked by readiness check");
+    res.status(422).json({
+      code: "generation_material_insufficient",
+      message: "当前文献池不适合生成有证据支撑的研究模型",
+      issues: readiness.issues,
+      candidateDvs: readiness.candidateDvs,
+      recommendedActions: deriveRecommendedActions(readiness.issues),
+    });
+    return;
+  }
+  if (readiness.status === "warning") {
+    req.log.warn({ sessionId, issues: readiness.issues }, "Model readiness: warning — proceeding anyway");
   }
 
   const paperMap = new Map(papers.map((p) => [p.id, p]));

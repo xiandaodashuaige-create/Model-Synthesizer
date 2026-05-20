@@ -1,0 +1,261 @@
+一、建议给 AI 的任务目标
+你可以这样定义：
+
+目标：从行业报告、政府政策、白皮书、咨询报告中提取趋势信号、政策导向、产业痛点和未来机会，并与当前学术文献池进行对照，识别“现实趋势强但学术研究不足”的研究空白。
+不要让 AI 从报告里抽：
+
+自变量 / 中介 / 调节 / 因变量
+报告不是学术论文，不能按论文 hypothesis 抽。
+
+应该抽：
+
+趋势信号
+政策方向
+产业痛点
+未来机会
+监管关注
+新兴技术
+用户行为变化
+二、建议新增模块名称
+可以叫：
+
+Trend & Policy Gap Layer
+趋势与政策空白层
+或者：
+
+Practice-Literature Gap Analyzer
+实践-文献缺口分析器
+中文产品名：
+
+趋势与政策洞察
+三、给 AI 的 Prompt 模板
+下面这个可以直接给实现 AI 的人用。
+
+1. 报告抽取 Prompt
+你是一个博士论文选题与研究模型设计助手。你的任务不是从报告中抽取论文变量，而是从行业报告、政府政策或白皮书中提取“现实趋势信号”。
+请阅读以下报告文本，输出严格 JSON。
+报告信息：
+标题：{reportTitle}
+来源：{publisher}
+年份：{year}
+报告类型：{sourceType} // government | industry | consulting | company | international_org
+研究主题：{sessionTopic}
+请提取以下内容：
+1. policyDirections：政策或监管导向
+2. industryTrends：行业趋势
+3. marketPainPoints：产业痛点或用户痛点
+4. emergingTechnologies：新兴技术或新应用场景
+5. futureOpportunities：未来机会
+6. riskSignals：风险、伦理、治理或监管信号
+7. relatedConstructs：可能转化为学术研究构念的关键词
+严格规则：
+- 只提取报告中明确出现或直接支持的内容。
+- 每条 signal 必须包含 evidenceText，必须是报告原文或接近原文摘录。
+- 不要把报告内容伪装成学术假设。
+- 不要输出 IV / mediator / moderator / DV 类型。
+- 如果报告没有明确政策或趋势，就返回空数组。
+- 输出 JSON，不要 Markdown。
+输出格式：
+{
+  "summary": "报告核心摘要，100字以内",
+  "signals": [
+    {
+      "type": "policy_direction | industry_trend | market_pain | emerging_technology | future_opportunity | risk_signal",
+      "statement": "趋势/政策/痛点的简洁表述",
+      "evidenceText": "报告中的原文依据",
+      "relatedConstructs": ["trust", "algorithm transparency", "AI streamer"],
+      "relatedIndustry": ["live commerce"],
+      "timeHorizon": "current | near_future | long_term",
+      "importance": "high | medium | low"
+    }
+  ]
+}
+四、与论文文献做对照的 Prompt
+当报告抽取完后，再让 AI 做：
+
+Trend-Literature Gap 分析
+Prompt：
+
+你是一个博士论文研究空白分析助手。请比较“行业/政策趋势信号”和“当前学术文献池”，找出现实趋势与学术研究之间的缺口。
+输入：
+1. 用户研究主题：
+{sessionTopic}
+2. 行业/政策趋势信号：
+{trendSignals}
+3. 当前学术文献全景：
+- 高频关系：{topConstructRelationships}
+- 高频变量：{topConstructs}
+- 已覆盖理论：{theoryBackbones}
+- 已有 gap report：{academicGapReport}
+任务：
+识别哪些趋势/政策方向在现实中重要，但当前学术文献池中研究不足。
+输出严格 JSON：
+{
+  "trendLiteratureGaps": [
+    {
+      "gapType": "context | construct | mechanism | boundary | theory | outcome | policy_relevance",
+      "trendSignal": "对应的趋势信号",
+      "academicCoverage": "当前文献池覆盖情况",
+      "gapStatement": "可以写进论文的研究空白表述",
+      "researchOpportunity": "建议研究的问题",
+      "suggestedModelImplication": "对研究模型的启发，例如新增变量/中介/调节/情境",
+      "evidence": {
+        "reportSignalIds": [],
+        "paperRelationshipIds": []
+      },
+      "priority": "high | medium | low"
+    }
+  ]
+}
+五、系统里怎么落地
+最小可行版本 MVP
+先不要做全网搜索。
+先做：
+
+用户上传报告 PDF / 粘贴报告 URL / 粘贴报告文本
+然后系统：
+
+提取报告 fullText；
+AI 抽取 trend signals；
+和当前 literature landscape 对比；
+输出 trend-literature gaps；
+生成模型时把这些 gaps 作为 soft hints。
+六、数据库建议
+MVP 可以新增两张表。
+
+reports
+reports {
+  id
+  sessionId
+  title
+  sourceType
+  publisher
+  year
+  url
+  fullText
+  summary
+  extractedSignals jsonb
+  createdAt
+}
+trend_gaps
+trend_gaps {
+  id
+  sessionId
+  reportIds
+  gapType
+  gapStatement
+  trendEvidence
+  academicCoverage
+  suggestedModelImplication
+  priority
+  createdAt
+}
+如果想更简单，也可以先只加 reports，把 trendGaps 存 JSONB。
+
+七、模型生成时怎么用
+在 models/generate prompt 里加一个短块：
+
+TREND / POLICY GAP HINTS:
+以下不是学术假设，而是现实趋势和政策导向。请只把它们作为研究价值和模型创新方向的启发，不要当成论文证据。
+1. [industry_trend] AI 主播在直播电商中快速应用，但当前文献较少解释用户信任形成机制。
+2. [policy_direction] 可信 AI 和算法透明是政策关注点，可考虑 algorithmic transparency 作为边界条件。
+3. [market_pain] 用户对 AI 推荐和虚拟主播真实性存在担忧，可考虑 perceived authenticity / trust。
+注意：
+
+不要超过 top 3
+不要把报告趋势当 edge evidence
+不要替代学术文献证据
+八、前端页面建议
+在文献全景页新增一个 Tab 或区块：
+
+趋势/政策洞察
+显示：
+
+1. 报告列表
+已上传报告
+- 2025 中国直播电商发展报告
+- 生成式 AI 治理政策白皮书
+2. 趋势信号
+AI 主播规模化应用
+算法透明与可信 AI
+直播电商内容生产自动化
+消费者信任风险
+3. 趋势-文献缺口
+现实趋势：AI 主播正在被平台快速采用
+学术覆盖：当前文献多研究真人主播
+研究机会：研究 AI 主播拟人化如何影响消费者信任和购买意愿
+九、和创新性评分的关系
+不要一开始把行业报告直接算进 noveltyScore。
+它应该影响：
+
+gapFit
+whyItMatters
+policyOrIndustryRelevance
+researchOpportunity
+也就是贡献陈述中的“现实意义”。
+
+可以新增一个分数：
+
+trendRelevanceScore
+但不要混到文献 evidenceScore 里。
+
+十、成本控制
+报告 PDF 可能很长，必须控制成本：
+
+默认只读：
+摘要
+执行摘要
+目录
+结论
+政策建议章节
+最多截取前 20k tokens；
+默认用 gpt-5-mini；
+抽取结果缓存；
+只有用户点“深度分析”才用高阶模型。
+十一、给 Replit / Agent 的任务指令
+你可以这样下任务：
+
+新增功能：趋势与政策报告输入，用于发现 practice-literature gap。
+目标：
+让用户上传或添加行业报告/政府政策/白皮书，系统从报告中抽取趋势信号，并与当前学术文献 landscape 对比，生成“趋势-文献缺口”。这些缺口用于帮助用户发现更有现实意义的研究方向，但不作为论文关系的直接证据。
+限制：
+- 第一版只支持上传 PDF 或粘贴文本，不做全网爬取。
+- 默认使用 gpt-5-mini。
+- 不把报告当作 academic paper，不抽 IV/Mediator/Moderator/DV。
+- 不把报告趋势当作 edge evidence。
+- 模型生成时只注入 top 3 trend gap hints，作为 soft inspiration。
+- 不启用 hard reject。
+- 控制 prompt，报告文本最多 20k tokens。
+- 抽取结果缓存，不重复分析同一报告。
+后端：
+1. 新增 reports 表或 JSONB 存储。
+2. 新增 POST /sessions/:id/reports/upload 或 /reports
+3. 新增 POST /sessions/:id/reports/:reportId/analyze
+4. 新增 GET /sessions/:id/trend-gaps
+5. 在 models/generate prompt 中加入 top 3 trend gap hints。
+前端：
+1. 文献全景页新增“趋势/政策洞察”区块。
+2. 支持上传报告 / 粘贴文本。
+3. 展示 trend signals 和 trend-literature gaps。
+4. 模型生成页显示这些 gap 可作为选题创新依据。
+验收：
+- 上传一份行业报告后，能看到趋势信号。
+- 能生成至少 1 条 trend-literature gap。
+- 生成模型时 prompt 中出现 top trend gap hint。
+- 不产生 academic edge evidence。
+- AI usage 被记录。
+十二、我建议的实施顺序
+不要一次性做很大。分三步：
+
+Step 1：Report Upload + Trend Signal Extraction
+先只做报告上传和趋势信号抽取。
+
+Step 2：Trend-Literature Gap
+再和 academic landscape 对比。
+
+Step 3：Model Generation Integration
+最后把 top 3 trend gaps 注入模型生成。
+
+最终一句话
+把行业/政府报告作为“现实趋势信号源”，与学术文献 landscape 对比，找出“现实已经重要但学术还没解释充分”的 gap。
+这样你的系统就不只是找学术空白，还能找“值得研究的现实问题”。

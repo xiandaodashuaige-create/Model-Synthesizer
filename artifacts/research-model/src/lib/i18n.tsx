@@ -715,6 +715,11 @@ const dict = {
     "models.toast.failedDesc": "请确认已经提取过变量。",
     "models.toast.timeoutHint": "AI 生成耗时过长。会话较大时可以试试：减少论文数（例如先聚焦 10–15 篇核心文献）、缩小钉选的重点变量数量，或稍后重试。",
     "models.toast.selected": "已选用此模型",
+    "readiness.title": "暂不建议生成模型",
+    "readiness.blocking": "发现以下阻断性问题：",
+    "readiness.warnings": "注意事项：",
+    "readiness.candidateDvs": "候选目标因变量（按论文覆盖排序）：",
+    "readiness.actions": "建议操作：",
     "models.toast.selectedDesc": "「{name}」已设为当前研究模型。",
 
     "md.back": "返回",
@@ -1559,6 +1564,11 @@ const dict = {
     "models.toast.failedDesc": "Make sure you've extracted variables first.",
     "models.toast.timeoutHint": "AI generation took too long. For larger sessions, try narrowing to 10–15 core papers, fewer pinned focus variables, or retry shortly.",
     "models.toast.selected": "Model selected",
+    "readiness.title": "Model generation not recommended yet",
+    "readiness.blocking": "Blocking issues found:",
+    "readiness.warnings": "Notices:",
+    "readiness.candidateDvs": "Candidate dependent variables (sorted by paper coverage):",
+    "readiness.actions": "Recommended actions:",
     "models.toast.selectedDesc": "\"{name}\" is now your selected research model.",
 
     "md.back": "Back",

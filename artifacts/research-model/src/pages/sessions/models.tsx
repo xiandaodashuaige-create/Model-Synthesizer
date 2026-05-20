@@ -38,6 +38,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useT } from "@/lib/i18n";
 import { loadFocusedClusterKeys, saveFocusedClusterKeys, expandToVariableIds } from "@/lib/focus-selection";
 import { InnovationMetaPanel } from "@/components/innovation-meta-panel";
+import { ReadinessErrorCard, type GenerationReadinessError } from "@/components/readiness-error-card";
 
 // Surface the *real* server error in the toast. Previously we only checked
 // `err.data.error`, which is empty when:
@@ -168,6 +169,7 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
   // some papers haven't been extracted yet. We surface a confirm dialog with
   // the missing-paper titles before sending allowPartial=true to the server.
   const [confirmPartialOpen, setConfirmPartialOpen] = useState(false);
+  const [readinessError, setReadinessError] = useState<GenerationReadinessError | null>(null);
   // A/B compare mode: when on, each card gets a checkbox; the user picks
   // exactly two and clicks the sticky CTA to navigate to the compare page.
   const [compareMode, setCompareMode] = useState(false);
@@ -203,6 +205,7 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
       return;
     }
     // Trigger generation immediately with the suggested params.
+    setReadinessError(null);
     generateModels.mutate({
       id: sessionId,
       data: { userPrompt: s.userPrompt || undefined, numModels, focusVariableIds: s.focusVariableIds.length ? s.focusVariableIds : undefined },
@@ -217,6 +220,10 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
         });
       },
       onError: (err: any) => {
+        if (err?.status === 422 && err?.data?.code === "generation_material_insufficient") {
+          setReadinessError(err.data as GenerationReadinessError);
+          return;
+        }
         toast({
           title: t("models.toast.failed" as any),
           description: extractGenerationErrorMessage(err, t),
@@ -234,6 +241,7 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
     // `allowPartial` is true (the user has just confirmed the warning dialog).
     if (guardLoading || isExtracting) return;
     if (!allowPartial && hasPendingPapers) return;
+    setReadinessError(null);
     generateModels.mutate({
       id: sessionId,
       data: {
@@ -256,6 +264,10 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
         });
       },
       onError: (err: any) => {
+        if (err?.status === 422 && err?.data?.code === "generation_material_insufficient") {
+          setReadinessError(err.data as GenerationReadinessError);
+          return;
+        }
         toast({
           title: t("models.toast.failed" as any),
           description: extractGenerationErrorMessage(err, t),
@@ -624,6 +636,14 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
             </p>
           </div>
         </div>
+      )}
+
+      {readinessError && (
+        <ReadinessErrorCard
+          error={readinessError}
+          sessionId={sessionId}
+          onDismiss={() => setReadinessError(null)}
+        />
       )}
 
       <ModelAssistantChat

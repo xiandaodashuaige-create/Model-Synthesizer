@@ -1280,6 +1280,12 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/ResearchModel"
+        "422":
+          description: Material insufficient for model generation — pre-flight check blocked the request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GenerationReadinessError"
 
   /sessions/{id}/models:
     get:
@@ -2216,6 +2222,56 @@ paths:
 
 components:
   schemas:
+    GenerationReadinessError:
+      type: object
+      required: [code, message, issues]
+      properties:
+        code:
+          type: string
+          enum: [generation_material_insufficient]
+        message:
+          type: string
+        issues:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReadinessIssue"
+        candidateDvs:
+          type: array
+          items:
+            type: object
+            required: [id, name, paperCount]
+            properties:
+              id:
+                type: integer
+              name:
+                type: string
+              paperCount:
+                type: integer
+        recommendedActions:
+          type: array
+          items:
+            type: string
+    ReadinessIssue:
+      type: object
+      required: [type, severity, message]
+      properties:
+        type:
+          type: string
+          enum:
+            - no_iv
+            - no_dv
+            - too_many_dvs
+            - low_paper_count
+            - all_single_paper_variables
+            - no_construct_relationships
+            - domain_mismatch_suspected
+        severity:
+          type: string
+          enum: [blocking, warning]
+        message:
+          type: string
+        detail:
+          type: string
     AuthUser:
       type: object
       required: [id, email, firstName, lastName, profileImageUrl]
