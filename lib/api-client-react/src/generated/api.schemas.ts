@@ -1631,7 +1631,7 @@ export type GenerateModelsBody = {
   /** Optional user-supplied direction/constraints/research focus to steer the AI */
   userPrompt?: string;
   /**
-   * Number of model proposals to generate (default 3)
+   * Number of model proposals to generate (default 1)
    * @minimum 1
    * @maximum 5
    */

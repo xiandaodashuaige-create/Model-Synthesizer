@@ -489,10 +489,15 @@ export default function SessionLandscape({ params }: { params: { id: string } })
                 <Loader2 className="w-3 h-3 animate-spin" />
                 {t("landscape.gaps.generating" as any)}
               </>
-            ) : gapReport ? (
+            ) : gapReport && gapReportStale ? (
               <>
                 <RotateCw className="w-3 h-3" />
                 {t("landscape.gaps.regenerate" as any)}
+              </>
+            ) : gapReport ? (
+              <>
+                <RotateCw className="w-3 h-3" />
+                {t("landscape.gaps.refresh" as any)}
               </>
             ) : (
               t("landscape.gaps.generate" as any)

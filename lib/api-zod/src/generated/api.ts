@@ -1065,7 +1065,7 @@ export const GenerateModelsBody = zod.object({
     .min(1)
     .max(generateModelsBodyNumModelsMax)
     .optional()
-    .describe("Number of model proposals to generate (default 3)"),
+    .describe("Number of model proposals to generate (default 1)"),
   focusVariableIds: zod
     .array(zod.number())
     .optional()
