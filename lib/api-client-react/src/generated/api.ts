@@ -44,6 +44,7 @@ import type {
   GenerateModelLiteratureReview200,
   GenerateModelLiteratureReviewBody,
   GenerateModelsBody,
+  GenerateSessionGapReportParams,
   GenerationReadinessError,
   GetModelAssistantMessages200,
   GetModelQualityReport200,
@@ -64,6 +65,8 @@ import type {
   PaperRelevanceScore,
   PaperSearchResult,
   ResearchModel,
+  ReviewerChatRequest,
+  ReviewerChatResponse,
   ReviewerReport,
   SearchModelImages200,
   SearchModelImagesBody,
@@ -4100,6 +4103,103 @@ export function useGetModelReview<
 }
 
 /**
+ * Interactive conversation with a virtual peer-reviewer persona. Feeds the
+current `innovationMeta` (subScores, innovationTypes, edgeNoveltyTags) as
+system context and calls gpt-5-mini. Up to 10 user+assistant pairs are
+persisted in `innovationMeta.reviewerChat` so conversations survive page
+reloads. Auth-gated by `loadAuthorizedModel`.
+
+ * @summary Send a message to the AI reviewer and get improvement suggestions
+ */
+export const getSendReviewerChatMessageUrl = (id: number, modelId: number) => {
+  return `/api/sessions/${id}/models/${modelId}/reviewer-chat`;
+};
+
+export const sendReviewerChatMessage = async (
+  id: number,
+  modelId: number,
+  reviewerChatRequest: ReviewerChatRequest,
+  options?: RequestInit,
+): Promise<ReviewerChatResponse> => {
+  return customFetch<ReviewerChatResponse>(
+    getSendReviewerChatMessageUrl(id, modelId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(reviewerChatRequest),
+    },
+  );
+};
+
+export const getSendReviewerChatMessageMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof sendReviewerChatMessage>>,
+    TError,
+    { id: number; modelId: number; data: BodyType<ReviewerChatRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof sendReviewerChatMessage>>,
+  TError,
+  { id: number; modelId: number; data: BodyType<ReviewerChatRequest> },
+  TContext
+> => {
+  const mutationKey = ["sendReviewerChatMessage"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof sendReviewerChatMessage>>,
+    { id: number; modelId: number; data: BodyType<ReviewerChatRequest> }
+  > = (props) => {
+    const { id, modelId, data } = props ?? {};
+
+    return sendReviewerChatMessage(id, modelId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type SendReviewerChatMessageMutationResult = NonNullable<
+  Awaited<ReturnType<typeof sendReviewerChatMessage>>
+>;
+export type SendReviewerChatMessageMutationBody = BodyType<ReviewerChatRequest>;
+export type SendReviewerChatMessageMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Send a message to the AI reviewer and get improvement suggestions
+ */
+export const useSendReviewerChatMessage = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof sendReviewerChatMessage>>,
+    TError,
+    { id: number; modelId: number; data: BodyType<ReviewerChatRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof sendReviewerChatMessage>>,
+  TError,
+  { id: number; modelId: number; data: BodyType<ReviewerChatRequest> },
+  TContext
+> => {
+  return useMutation(getSendReviewerChatMessageMutationOptions(options));
+};
+
+/**
  * Feeds the rule-based reviewer report + a summary of `innovationMeta`
 to gpt-5-mini and returns a Markdown narrative with reviewer-persona
 commentary (max 1 200 completion tokens). Auth-gated by
@@ -4287,19 +4387,36 @@ export function useGetSessionLandscape<
 Result is cached in `sessions.landscapeMeta.gapReport` keyed by
 `landscapeVersion`. Re-calling after a landscape rebuild regenerates
 automatically (old version != new landscapeVersion → cache miss).
+Pass `force=true` to bypass the cache and always re-run AI.
 Auth-gated by `loadAuthorizedSession`.
 
  * @summary Generate (or return cached) AI gap report for this session's landscape
  */
-export const getGenerateSessionGapReportUrl = (id: number) => {
-  return `/api/sessions/${id}/landscape/gap-report`;
+export const getGenerateSessionGapReportUrl = (
+  id: number,
+  params?: GenerateSessionGapReportParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/sessions/${id}/landscape/gap-report?${stringifiedParams}`
+    : `/api/sessions/${id}/landscape/gap-report`;
 };
 
 export const generateSessionGapReport = async (
   id: number,
+  params?: GenerateSessionGapReportParams,
   options?: RequestInit,
 ): Promise<GapReport> => {
-  return customFetch<GapReport>(getGenerateSessionGapReportUrl(id), {
+  return customFetch<GapReport>(getGenerateSessionGapReportUrl(id, params), {
     ...options,
     method: "POST",
   });
@@ -4312,14 +4429,14 @@ export const getGenerateSessionGapReportMutationOptions = <
   mutation?: UseMutationOptions<
     Awaited<ReturnType<typeof generateSessionGapReport>>,
     TError,
-    { id: number },
+    { id: number; params?: GenerateSessionGapReportParams },
     TContext
   >;
   request?: SecondParameter<typeof customFetch>;
 }): UseMutationOptions<
   Awaited<ReturnType<typeof generateSessionGapReport>>,
   TError,
-  { id: number },
+  { id: number; params?: GenerateSessionGapReportParams },
   TContext
 > => {
   const mutationKey = ["generateSessionGapReport"];
@@ -4333,11 +4450,11 @@ export const getGenerateSessionGapReportMutationOptions = <
 
   const mutationFn: MutationFunction<
     Awaited<ReturnType<typeof generateSessionGapReport>>,
-    { id: number }
+    { id: number; params?: GenerateSessionGapReportParams }
   > = (props) => {
-    const { id } = props ?? {};
+    const { id, params } = props ?? {};
 
-    return generateSessionGapReport(id, requestOptions);
+    return generateSessionGapReport(id, params, requestOptions);
   };
 
   return { mutationFn, ...mutationOptions };
@@ -4359,14 +4476,14 @@ export const useGenerateSessionGapReport = <
   mutation?: UseMutationOptions<
     Awaited<ReturnType<typeof generateSessionGapReport>>,
     TError,
-    { id: number },
+    { id: number; params?: GenerateSessionGapReportParams },
     TContext
   >;
   request?: SecondParameter<typeof customFetch>;
 }): UseMutationResult<
   Awaited<ReturnType<typeof generateSessionGapReport>>,
   TError,
-  { id: number },
+  { id: number; params?: GenerateSessionGapReportParams },
   TContext
 > => {
   return useMutation(getGenerateSessionGapReportMutationOptions(options));

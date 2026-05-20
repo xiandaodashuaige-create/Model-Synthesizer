@@ -7,6 +7,9 @@ import { openai } from "@workspace/integrations-openai-ai-server";
 import { logAiUsageFromOpenAI } from "../lib/ai-usage";
 import { backbonesAsPromptBlock, operatorsAsPromptBlock } from "../lib/theoryTemplates.js";
 import { buildUserPersonalizationContext, scheduleProfileRefresh } from "../lib/personalization";
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 // Allowed relationship values mirror live-model.ts. Kept inline here so this
 // route doesn't need to import from another route module.
@@ -615,14 +618,43 @@ type ImageSearchHit = {
 const HARD_NEGATIVE_TITLE_RE = /(stock photo|shutterstock|gettyimages|getty images|istockphoto|alamy|clipart|powerpoint template|ppt template|wallpaper hd|coloring page|cartoon vector|cad drawing|circuit diagram|wiring diagram|p&id|piping diagram|er diagram example|class diagram example|gene expression heatmap|protein structure|molecular structure|crystal structure|swimlane|gantt chart|mind map template)/i;
 
 // ---------------------------------------------------------------------------
-// In-memory cache for image search results. Keyed by a stable string derived
-// from (rawQuery, rawMode, page, expand). 24-hour TTL — academic model-figure
-// pages don't change often, and SerpAPI charges per call.
+// File-backed cache for image search results. Survives server restarts.
+// Keyed by a stable string derived from (rawQuery, rawMode, page, expand).
+// 24-hour TTL — academic model-figure pages don't change often, and SerpAPI
+// charges per call.
 // ---------------------------------------------------------------------------
 const IMAGE_SEARCH_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const IMAGE_SEARCH_CACHE_MAX_SIZE = 500; // entries; evict oldest-first above this
 type ImageSearchCacheEntry = { data: object; expiresAt: number };
-const imageSearchCache = new Map<string, ImageSearchCacheEntry>();
+
+const _maDir = dirname(fileURLToPath(import.meta.url));
+const IMAGE_SEARCH_CACHE_FILE = join(_maDir, "../../../../../.local/image-search-cache.json");
+
+function _loadImageSearchCache(): Map<string, ImageSearchCacheEntry> {
+  try {
+    const raw = readFileSync(IMAGE_SEARCH_CACHE_FILE, "utf8");
+    const parsed = JSON.parse(raw) as Record<string, ImageSearchCacheEntry>;
+    const now = Date.now();
+    // Only restore non-expired entries
+    return new Map(Object.entries(parsed).filter(([, v]) => v.expiresAt > now));
+  } catch {
+    return new Map();
+  }
+}
+
+function _saveImageSearchCache(cache: Map<string, ImageSearchCacheEntry>): void {
+  try {
+    mkdirSync(dirname(IMAGE_SEARCH_CACHE_FILE), { recursive: true });
+    const now = Date.now();
+    const obj: Record<string, ImageSearchCacheEntry> = {};
+    for (const [k, v] of cache) if (v.expiresAt > now) obj[k] = v;
+    writeFileSync(IMAGE_SEARCH_CACHE_FILE, JSON.stringify(obj), "utf8");
+  } catch {
+    // Non-fatal — in-memory cache still works if disk write fails
+  }
+}
+
+const imageSearchCache = _loadImageSearchCache();
 
 // Evict all cache entries belonging to a session. Called when the user modifies
 // their image blocklist so cached results are re-fetched with the new blocklist.
@@ -631,15 +663,18 @@ function evictImageSearchCacheForSession(sessionId: number): void {
   for (const key of imageSearchCache.keys()) {
     if (key.startsWith(prefix)) imageSearchCache.delete(key);
   }
+  _saveImageSearchCache(imageSearchCache);
 }
 
 // Insert a new entry, evicting the oldest entry when the cache is at capacity.
+// Persists the updated cache to disk immediately so restarts get a warm cache.
 function imageSearchCacheSet(key: string, entry: ImageSearchCacheEntry): void {
   if (imageSearchCache.size >= IMAGE_SEARCH_CACHE_MAX_SIZE && !imageSearchCache.has(key)) {
     const oldest = imageSearchCache.keys().next().value;
     if (oldest !== undefined) imageSearchCache.delete(oldest);
   }
   imageSearchCache.set(key, entry);
+  _saveImageSearchCache(imageSearchCache);
 }
 const HARD_NEGATIVE_DOMAIN_RE = /(shutterstock\.com|gettyimages\.com|istockphoto\.com|alamy\.com|dreamstime\.com|123rf\.com|pinterest\.|wallpaper|clipart-library|vecteezy\.com|freepik\.com|canva\.com\/templates|slidesgo\.com|slidemodel\.com|smartdraw\.com)/i;
 

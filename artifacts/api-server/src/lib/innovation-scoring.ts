@@ -131,6 +131,9 @@ export interface InnovationMeta {
   // AI deep-review Markdown. Null until ai-review is called; persisted so it
   // survives page reloads without costing another gpt-5-mini call.
   aiReviewMarkdown?: string | null;
+  // Persisted reviewer chat history. Capped at 20 messages (10 user+assistant
+  // pairs). Null/absent until the user initiates the first conversation.
+  reviewerChat?: Array<{ role: "user" | "assistant"; content: string; ts: string }> | null;
   // Provenance: which landscape this score was computed against, when, and
   // whether the system is currently allowed to reject on it.
   computedAgainst: {

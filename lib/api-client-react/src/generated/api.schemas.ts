@@ -1225,6 +1225,44 @@ export interface AiReviewResult {
   markdown: string;
 }
 
+export type ReviewerChatMessageRole =
+  (typeof ReviewerChatMessageRole)[keyof typeof ReviewerChatMessageRole];
+
+export const ReviewerChatMessageRole = {
+  user: "user",
+  assistant: "assistant",
+} as const;
+
+/**
+ * A single turn in the reviewer chat history.
+ */
+export interface ReviewerChatMessage {
+  role: ReviewerChatMessageRole;
+  content: string;
+  /** ISO timestamp of when the message was created. */
+  ts: string;
+}
+
+/**
+ * Body for sending a message to the AI reviewer.
+ */
+export interface ReviewerChatRequest {
+  /** The user's question or request for improvement advice. */
+  message: string;
+  /** Optional — focus on a specific sub-score dimension (e.g. "gapFit", "evidenceSupport"). */
+  dimension?: string;
+}
+
+/**
+ * Reviewer reply and updated chat history.
+ */
+export interface ReviewerChatResponse {
+  /** The reviewer's response (max ~300 Chinese words). */
+  reply: string;
+  /** Full updated conversation history (max 20 messages). */
+  history: ReviewerChatMessage[];
+}
+
 export interface LiveModelNodeOut {
   id: number;
   variableId: number;
@@ -1837,6 +1875,13 @@ generation. Papers not in this list are excluded from the variable pool.
 Obtain AI recommendations by calling score-papers first.
  */
   includedPaperIds?: number[];
+};
+
+export type GenerateSessionGapReportParams = {
+  /**
+   * If true, bypass the gapReport cache and re-run AI even when the version matches.
+   */
+  force?: boolean;
 };
 
 export type GetSessionLearningStats200 = {

@@ -447,7 +447,10 @@ router.post("/sessions/:id/landscape/gap-report", async (req, res): Promise<void
   const landscapeVersion = typeof lm.landscapeVersion === "number" ? lm.landscapeVersion : null;
 
   // Cache hit: gap report already computed for this landscapeVersion.
+  // Bypass with ?force=true to always re-run AI (e.g., user wants a fresh perspective).
+  const force = req.query["force"] === "true";
   if (
+    !force &&
     landscapeVersion !== null &&
     lm.gapReport &&
     typeof lm.gapReport.version === "number" &&

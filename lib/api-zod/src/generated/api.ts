@@ -3233,6 +3233,55 @@ export const GetModelReviewResponse = zod
   );
 
 /**
+ * Interactive conversation with a virtual peer-reviewer persona. Feeds the
+current `innovationMeta` (subScores, innovationTypes, edgeNoveltyTags) as
+system context and calls gpt-5-mini. Up to 10 user+assistant pairs are
+persisted in `innovationMeta.reviewerChat` so conversations survive page
+reloads. Auth-gated by `loadAuthorizedModel`.
+
+ * @summary Send a message to the AI reviewer and get improvement suggestions
+ */
+export const SendReviewerChatMessageParams = zod.object({
+  id: zod.coerce.number().describe("Session id (must own the model)."),
+  modelId: zod.coerce.number(),
+});
+
+export const SendReviewerChatMessageBody = zod
+  .object({
+    message: zod
+      .string()
+      .describe("The user's question or request for improvement advice."),
+    dimension: zod
+      .string()
+      .optional()
+      .describe(
+        'Optional — focus on a specific sub-score dimension (e.g. \"gapFit\", \"evidenceSupport\").',
+      ),
+  })
+  .describe("Body for sending a message to the AI reviewer.");
+
+export const SendReviewerChatMessageResponse = zod
+  .object({
+    reply: zod
+      .string()
+      .describe("The reviewer's response (max ~300 Chinese words)."),
+    history: zod
+      .array(
+        zod
+          .object({
+            role: zod.enum(["user", "assistant"]),
+            content: zod.string(),
+            ts: zod
+              .string()
+              .describe("ISO timestamp of when the message was created."),
+          })
+          .describe("A single turn in the reviewer chat history."),
+      )
+      .describe("Full updated conversation history (max 20 messages)."),
+  })
+  .describe("Reviewer reply and updated chat history.");
+
+/**
  * Feeds the rule-based reviewer report + a summary of `innovationMeta`
 to gpt-5-mini and returns a Markdown narrative with reviewer-persona
 commentary (max 1 200 completion tokens). Auth-gated by
@@ -3466,12 +3515,22 @@ export const GetSessionLandscapeResponse = zod
 Result is cached in `sessions.landscapeMeta.gapReport` keyed by
 `landscapeVersion`. Re-calling after a landscape rebuild regenerates
 automatically (old version != new landscapeVersion → cache miss).
+Pass `force=true` to bypass the cache and always re-run AI.
 Auth-gated by `loadAuthorizedSession`.
 
  * @summary Generate (or return cached) AI gap report for this session's landscape
  */
 export const GenerateSessionGapReportParams = zod.object({
   id: zod.coerce.number(),
+});
+
+export const GenerateSessionGapReportQueryParams = zod.object({
+  force: zod.coerce
+    .boolean()
+    .optional()
+    .describe(
+      "If true, bypass the gapReport cache and re-run AI even when the version matches.",
+    ),
 });
 
 export const GenerateSessionGapReportResponse = zod

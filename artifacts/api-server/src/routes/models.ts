@@ -3467,6 +3467,105 @@ router.post("/sessions/:id/models/:modelId/ai-review", async (req, res): Promise
   }
 });
 
+// POST /sessions/:id/models/:modelId/reviewer-chat
+// Interactive conversation with a virtual peer-reviewer. Persists history in
+// innovationMeta.reviewerChat (max 20 messages = 10 user+assistant pairs).
+router.post("/sessions/:id/models/:modelId/reviewer-chat", async (req, res): Promise<void> => {
+  const sessionId = Number.parseInt(req.params.id, 10);
+  const modelId = Number.parseInt(req.params.modelId, 10);
+  if (!Number.isFinite(sessionId) || !Number.isFinite(modelId)) {
+    res.status(400).json({ error: "invalid id" });
+    return;
+  }
+  const model = await loadAuthorizedModel(sessionId, modelId);
+  if (!model) {
+    res.status(404).json({ error: "model not found" });
+    return;
+  }
+  const meta = model.innovationMeta as InnovationMeta | null;
+  if (!meta) {
+    res.status(400).json({ error: "model has no innovationMeta — run recompute-innovation first" });
+    return;
+  }
+  const { message, dimension } = req.body as { message?: unknown; dimension?: unknown };
+  if (typeof message !== "string" || !message.trim()) {
+    res.status(400).json({ error: "message is required" });
+    return;
+  }
+
+  const history = Array.isArray(meta.reviewerChat) ? [...meta.reviewerChat] : [];
+
+  // Build a compact edge novelty summary (top 6 tags) for the system prompt.
+  const edgeSummary = meta.edgeNoveltyTags
+    .slice(0, 6)
+    .map((t) => {
+      const tag = t as { fromVar?: string; toVar?: string; tag: string; subscore: number };
+      return `  ${tag.fromVar ?? "?"} → ${tag.toVar ?? "?"}: ${tag.tag}(${tag.subscore})`;
+    })
+    .join("\n");
+
+  const [session] = await db
+    .select({ topic: sessionsTable.topic })
+    .from(sessionsTable)
+    .where(eq(sessionsTable.id, sessionId));
+  const topic = session?.topic ?? "";
+
+  const dimensionFocus =
+    typeof dimension === "string" && dimension.trim()
+      ? `\n\n用户希望聚焦改进维度：**${dimension}**。请重点围绕此维度给出建议。`
+      : "";
+
+  const systemPrompt = `你是顶级管理学期刊（如MIS Quarterly、AMJ、MISQ）的资深同行评审专家，正在以辅导身份帮助一位博士生改进其理论模型的创新论证。
+
+研究主题：${topic}
+
+当前模型创新评分概况：
+  贡献总分：${meta.contributionScore}/100
+  差异化得分（Differentiation）：${meta.subScores.differentiation}/100
+  缺口匹配（Gap Fit）：${meta.subScores.gapFit}/100
+  理论稳健性（Theoretical Soundness）：${meta.subScores.theoreticalSoundness}/100
+  证据支撑（Evidence Support）：${meta.subScores.evidenceSupport}/100
+
+识别到的创新类型：${meta.innovationTypes.join("、") || "无"}
+
+各关系边创新标签（前6条）：
+${edgeSummary || "  暂无标签"}
+${dimensionFocus}
+请根据用户的具体问题，给出具体、可操作的改进建议。
+要求：中文回答，专业但易懂，每次不超过300字。不要重复罗列上方数字，专注于改进行动和学术逻辑。`;
+
+  const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
+    { role: "system", content: systemPrompt },
+    ...history.map((h) => ({ role: h.role as "user" | "assistant", content: h.content })),
+    { role: "user", content: message.trim() },
+  ];
+
+  try {
+    const completion = await openai.chat.completions.create({
+      model: "gpt-5-mini",
+      max_completion_tokens: 600,
+      messages,
+    });
+    logAiUsageFromOpenAI(completion, { route: "reviewer/chat", sessionId, userId: req.user?.id ?? null });
+
+    const reply = completion.choices[0]?.message?.content ?? "";
+    const now = new Date().toISOString();
+    const updatedHistory = [
+      ...history,
+      { role: "user" as const, content: message.trim(), ts: now },
+      { role: "assistant" as const, content: reply, ts: now },
+    ].slice(-20); // cap at 20 messages (10 user+assistant pairs)
+
+    const updatedMeta: InnovationMeta = { ...meta, reviewerChat: updatedHistory };
+    await db.update(researchModelsTable).set({ innovationMeta: updatedMeta }).where(eq(researchModelsTable.id, modelId));
+    invalidateModelCaches(modelId);
+    res.json({ reply, history: updatedHistory });
+  } catch (err) {
+    req.log.error({ err, modelId }, "reviewer-chat failed");
+    res.status(503).json({ error: "AI unavailable" });
+  }
+});
+
 router.get("/models/:id", async (req, res): Promise<void> => {
   const params = GetModelParams.safeParse(req.params);
   if (!params.success) {
