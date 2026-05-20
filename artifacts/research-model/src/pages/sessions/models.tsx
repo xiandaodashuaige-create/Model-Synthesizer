@@ -39,6 +39,7 @@ import { useT } from "@/lib/i18n";
 import { loadFocusedClusterKeys, saveFocusedClusterKeys, expandToVariableIds } from "@/lib/focus-selection";
 import { InnovationMetaPanel } from "@/components/innovation-meta-panel";
 import { ReadinessErrorCard, type GenerationReadinessError } from "@/components/readiness-error-card";
+import { RationaleDisplay } from "@/components/rationale-display";
 
 // Surface the *real* server error in the toast. Previously we only checked
 // `err.data.error`, which is empty when:
@@ -903,7 +904,7 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
 
               <div className="border-t border-border pt-4 mt-4">
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">{t("common.rationale" as any)}</p>
-                <p className="text-sm text-muted-foreground leading-relaxed">{model.rationale}</p>
+                <RationaleDisplay rationale={model.rationale ?? ""} compact />
               </div>
 
               {(model.edges ?? []).length > 0 && (

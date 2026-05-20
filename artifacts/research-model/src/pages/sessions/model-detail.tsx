@@ -25,6 +25,7 @@ import { ModelGraph, buildEdgeHTagMap, buildPaperTagMap } from "@/components/mod
 import { EditableModelGraph } from "@/components/editable-model-graph";
 import { EvidenceMatchDialog } from "@/components/evidence-match-dialog";
 import { InnovationMetaPanel } from "@/components/innovation-meta-panel";
+import { RationaleDisplay } from "@/components/rationale-display";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -682,7 +683,7 @@ export default function SessionModelDetail({ params: routeParams }: { params?: {
             className="w-full text-sm text-foreground bg-background border border-input rounded-md px-3 py-2 leading-relaxed"
           />
         ) : (
-          <p className="text-sm text-foreground leading-relaxed">{model.rationale}</p>
+          <RationaleDisplay rationale={model.rationale ?? ""} />
         )}
       </div>
 

@@ -422,7 +422,7 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
           toast({
             title: t("papers.toast.extractOneFailed" as any, { title: p.title.slice(0, 60) }),
             description: desc,
-            variant: "destructive",
+            variant: code === "no_variables" ? "warning" : "destructive",
           });
         }
         done++;
@@ -479,12 +479,14 @@ export default function SessionPapers({ params: routeParams }: { params?: { id?:
             });
           }
         },
-        onError: () =>
+        onError: (err) => {
+          const errCode = (err as { data?: { code?: string } })?.data?.code;
           toast({
             title: t("papers.toast.extractFailed" as any),
             description: t("papers.toast.extractFailedDesc" as any),
-            variant: "destructive",
-          }),
+            variant: errCode === "no_variables" ? "warning" : "destructive",
+          });
+        },
       },
     );
   };

@@ -10,6 +10,9 @@ import { eq, and, sql } from "drizzle-orm";
 import { db, papersTable } from "@workspace/db";
 import { openai } from "@workspace/integrations-openai-ai-server";
 import { logger } from "./logger";
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 
 export type EdgeInput = {
   edgeKey: string;
@@ -75,8 +78,57 @@ const TOP_OVERALL = 8;
 const EVIDENCE_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 type CacheEntry<T> = { data: T; expiresAt: number };
-const scholarCache = new Map<string, CacheEntry<ScholarCandidate[]>>();
-const imagesCache = new Map<string, CacheEntry<ImageHit[]>>();
+
+// ---------------------------------------------------------------------------
+// Persistent file-backed cache — survives server restarts.
+// Falls back gracefully if the file is missing or malformed.
+// ---------------------------------------------------------------------------
+const _dir = dirname(fileURLToPath(import.meta.url));
+const CACHE_FILE_PATH = join(_dir, "../../../../../.local/serpapi-cache.json");
+
+interface CacheFile {
+  scholar: Record<string, CacheEntry<ScholarCandidate[]>>;
+  images: Record<string, CacheEntry<ImageHit[]>>;
+}
+
+function loadCacheFile(): CacheFile {
+  try {
+    const raw = readFileSync(CACHE_FILE_PATH, "utf8");
+    const parsed = JSON.parse(raw) as CacheFile;
+    return {
+      scholar: parsed.scholar ?? {},
+      images: parsed.images ?? {},
+    };
+  } catch {
+    return { scholar: {}, images: {} };
+  }
+}
+
+function saveCacheFile() {
+  try {
+    mkdirSync(dirname(CACHE_FILE_PATH), { recursive: true });
+    const now = Date.now();
+    const scholar: Record<string, CacheEntry<ScholarCandidate[]>> = {};
+    const images: Record<string, CacheEntry<ImageHit[]>> = {};
+    for (const [k, v] of scholarCache) if (v.expiresAt > now) scholar[k] = v;
+    for (const [k, v] of imagesCache) if (v.expiresAt > now) images[k] = v;
+    writeFileSync(CACHE_FILE_PATH, JSON.stringify({ scholar, images }), "utf8");
+  } catch (err) {
+    logger.warn({ err }, "serpapi-cache: failed to persist cache to disk");
+  }
+}
+
+const _initialCache = loadCacheFile();
+const scholarCache = new Map<string, CacheEntry<ScholarCandidate[]>>(
+  Object.entries(_initialCache.scholar),
+);
+const imagesCache = new Map<string, CacheEntry<ImageHit[]>>(
+  Object.entries(_initialCache.images),
+);
+logger.info(
+  { scholarEntries: scholarCache.size, imageEntries: imagesCache.size },
+  "serpapi-cache: loaded from disk",
+);
 
 const OPENALEX_HEADERS = {
   "User-Agent": "ResearchModelBuilder/1.0 (mailto:research@researchmodelbuilder.app)",
@@ -195,6 +247,7 @@ async function fetchGoogleScholar(query: string, perPage: number): Promise<Schol
     });
   }
   scholarCache.set(cacheKey, { data: out, expiresAt: Date.now() + EVIDENCE_CACHE_TTL_MS });
+  saveCacheFile();
   return out;
 }
 
@@ -260,6 +313,7 @@ async function fetchEdgeFigures(edge: EdgeInput): Promise<ImageHit[]> {
     if (out.length >= 3) break;
   }
   imagesCache.set(imgCacheKey, { data: out, expiresAt: Date.now() + EVIDENCE_CACHE_TTL_MS });
+  saveCacheFile();
   return out;
 }
 

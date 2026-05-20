@@ -9,6 +9,7 @@
     "selftest:phase-2": "tsx ./src/selftest-phase-2.ts",
     "selftest:phase-3": "tsx ./src/selftest-phase-3.ts",
     "selftest:phase-4": "tsx ./src/selftest-phase-4.ts",
+    "selftest:readiness": "tsx ./src/selftest-readiness.ts",
     "probe:phase-2-real": "tsx ./src/probe-phase-2-real.ts",
     "d2-probe": "tsx ./src/d2-probe.ts",
     "pilot-reextract": "tsx ./src/pilot-reextract.ts",
