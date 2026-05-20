@@ -690,7 +690,9 @@ router.post("/sessions/:id/papers/external", async (req, res): Promise<void> => 
   // Build a stable URL for external documents — a no-op placeholder that is
   // still a valid non-empty string (the url column is NOT NULL).
   const externalId = `report:${crypto.randomUUID()}`;
-  const url = `report:${externalId}`;
+  // Use externalId directly as the placeholder URL — avoids the "report:report:…"
+  // double-prefix that occurred when prepending "report:" to an already-prefixed id.
+  const url = externalId;
 
   // authors field = [sourceOrg] when provided, else empty — keeps the
   // existing paper card rendering working without any special-casing.

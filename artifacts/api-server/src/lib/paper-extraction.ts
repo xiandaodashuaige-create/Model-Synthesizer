@@ -101,8 +101,12 @@ function tryRepairTruncatedJson(raw: string): string | null {
 
 export function buildExtractionPrompt(paper: Paper, sessionTopic: string): string {
   const baseHeader = `Title: ${paper.title}\nAuthors: ${paper.authors.join(", ")} (${paper.year ?? "unknown year"})`;
-  const paperContext = paper.fullText && paper.fullText.length > 500
-    ? `${baseHeader}\nFull text (truncated to keep within token limits):\n${paper.fullText.slice(0, 30000)}`
+  // Prefer fullText over abstract whenever it is present and non-empty.
+  // Approximation: 1 token ≈ 4 chars (English) / 2 chars (Chinese);
+  // 6000 chars is a safe ~1500-token cap that avoids inflating prompt size.
+  const FULL_TEXT_CHAR_CAP = 6000;
+  const paperContext = paper.fullText && paper.fullText.trim().length > 0
+    ? `${baseHeader}\nFull text (excerpt):\n${paper.fullText.slice(0, FULL_TEXT_CHAR_CAP)}`
     : `${baseHeader}\nAbstract: ${paper.abstract ?? "No abstract available"}`;
 
   const topicBlock = sessionTopic && sessionTopic.trim().length > 0
