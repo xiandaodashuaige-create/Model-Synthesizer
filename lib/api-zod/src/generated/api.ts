@@ -1076,6 +1076,12 @@ export const GenerateModelsBody = zod.object({
     .describe(
       "When true, allow generation even if some papers in the session have\nnot had their variables extracted yet. The server will record which\npapers were skipped on each generated model's `partialPassMeta`.\nWhen false (default), the server returns 422 if any paper is missing\nextracted variables.\n",
     ),
+  includedPaperIds: zod
+    .array(zod.number())
+    .optional()
+    .describe(
+      "When provided, only variables from these paper IDs are used for model\ngeneration. Papers not in this list are excluded from the variable pool.\nObtain AI recommendations by calling score-papers first.\n",
+    ),
 });
 
 export const generateModelsResponseInnovationMetaOneEdgeNoveltyTagsItemEdgeIndexMin = 0;
@@ -1451,6 +1457,30 @@ export const GenerateModelsResponseItem = zod.object({
   createdAt: zod.string(),
 });
 export const GenerateModelsResponse = zod.array(GenerateModelsResponseItem);
+
+/**
+ * @summary AI-score each session paper by relevance to the research topic
+ */
+export const ScorePapersForGenerationParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const scorePapersForGenerationResponseRelevanceScoreMin = 0;
+export const scorePapersForGenerationResponseRelevanceScoreMax = 100;
+
+export const ScorePapersForGenerationResponseItem = zod.object({
+  paperId: zod.number(),
+  title: zod.string(),
+  relevanceScore: zod
+    .number()
+    .min(scorePapersForGenerationResponseRelevanceScoreMin)
+    .max(scorePapersForGenerationResponseRelevanceScoreMax),
+  recommendation: zod.enum(["include", "borderline", "exclude"]),
+  reason: zod.string(),
+});
+export const ScorePapersForGenerationResponse = zod.array(
+  ScorePapersForGenerationResponseItem,
+);
 
 /**
  * @summary List generated models for a session

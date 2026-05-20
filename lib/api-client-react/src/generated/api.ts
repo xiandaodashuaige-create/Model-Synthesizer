@@ -58,6 +58,7 @@ import type {
   ModelVersionSummary,
   Paper,
   PaperFullTextHit,
+  PaperRelevanceScore,
   PaperSearchResult,
   ResearchModel,
   ReviewerReport,
@@ -3360,6 +3361,93 @@ export const useGenerateModels = <
   TContext
 > => {
   return useMutation(getGenerateModelsMutationOptions(options));
+};
+
+/**
+ * @summary AI-score each session paper by relevance to the research topic
+ */
+export const getScorePapersForGenerationUrl = (id: number) => {
+  return `/api/sessions/${id}/models/score-papers`;
+};
+
+export const scorePapersForGeneration = async (
+  id: number,
+  options?: RequestInit,
+): Promise<PaperRelevanceScore[]> => {
+  return customFetch<PaperRelevanceScore[]>(
+    getScorePapersForGenerationUrl(id),
+    {
+      ...options,
+      method: "POST",
+    },
+  );
+};
+
+export const getScorePapersForGenerationMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof scorePapersForGeneration>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof scorePapersForGeneration>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  const mutationKey = ["scorePapersForGeneration"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof scorePapersForGeneration>>,
+    { id: number }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return scorePapersForGeneration(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ScorePapersForGenerationMutationResult = NonNullable<
+  Awaited<ReturnType<typeof scorePapersForGeneration>>
+>;
+
+export type ScorePapersForGenerationMutationError = ErrorType<unknown>;
+
+/**
+ * @summary AI-score each session paper by relevance to the research topic
+ */
+export const useScorePapersForGeneration = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof scorePapersForGeneration>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof scorePapersForGeneration>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  return useMutation(getScorePapersForGenerationMutationOptions(options));
 };
 
 /**

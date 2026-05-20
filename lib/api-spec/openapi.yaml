@@ -1271,6 +1271,14 @@ paths:
                     papers were skipped on each generated model's `partialPassMeta`.
                     When false (default), the server returns 422 if any paper is missing
                     extracted variables.
+                includedPaperIds:
+                  type: array
+                  items:
+                    type: integer
+                  description: |
+                    When provided, only variables from these paper IDs are used for model
+                    generation. Papers not in this list are excluded from the variable pool.
+                    Obtain AI recommendations by calling score-papers first.
       responses:
         "200":
           description: Generated model combinations
@@ -1286,6 +1294,27 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/GenerationReadinessError"
+
+  /sessions/{id}/models/score-papers:
+    post:
+      operationId: scorePapersForGeneration
+      tags: [models]
+      summary: AI-score each session paper by relevance to the research topic
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Per-paper relevance scores
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PaperRelevanceScore"
 
   /sessions/{id}/models:
     get:
@@ -2222,6 +2251,23 @@ paths:
 
 components:
   schemas:
+    PaperRelevanceScore:
+      type: object
+      required: [paperId, title, relevanceScore, recommendation, reason]
+      properties:
+        paperId:
+          type: integer
+        title:
+          type: string
+        relevanceScore:
+          type: integer
+          minimum: 0
+          maximum: 100
+        recommendation:
+          type: string
+          enum: [include, borderline, exclude]
+        reason:
+          type: string
     GenerationReadinessError:
       type: object
       required: [code, message, issues]

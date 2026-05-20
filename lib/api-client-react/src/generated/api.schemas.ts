@@ -5,6 +5,27 @@
  * Research Model Builder API
  * OpenAPI spec version: 0.1.0
  */
+export type PaperRelevanceScoreRecommendation =
+  (typeof PaperRelevanceScoreRecommendation)[keyof typeof PaperRelevanceScoreRecommendation];
+
+export const PaperRelevanceScoreRecommendation = {
+  include: "include",
+  borderline: "borderline",
+  exclude: "exclude",
+} as const;
+
+export interface PaperRelevanceScore {
+  paperId: number;
+  title: string;
+  /**
+   * @minimum 0
+   * @maximum 100
+   */
+  relevanceScore: number;
+  recommendation: PaperRelevanceScoreRecommendation;
+  reason: string;
+}
+
 export type GenerationReadinessErrorCode =
   (typeof GenerationReadinessErrorCode)[keyof typeof GenerationReadinessErrorCode];
 
@@ -1695,6 +1716,11 @@ When false (default), the server returns 422 if any paper is missing
 extracted variables.
  */
   allowPartial?: boolean;
+  /** When provided, only variables from these paper IDs are used for model
+generation. Papers not in this list are excluded from the variable pool.
+Obtain AI recommendations by calling score-papers first.
+ */
+  includedPaperIds?: number[];
 };
 
 export type GetSessionLearningStats200 = {

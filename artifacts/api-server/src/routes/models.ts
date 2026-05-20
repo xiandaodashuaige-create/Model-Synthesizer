@@ -25,6 +25,7 @@ import {
   UpdateModelBody,
   GetSessionLearningStatsParams,
   GenerateModelLiteratureReviewBody,
+  ScorePapersForGenerationParams,
 } from "@workspace/api-zod";
 import { openai } from "@workspace/integrations-openai-ai-server";
 import { logAiUsageFromOpenAI } from "../lib/ai-usage";
@@ -705,6 +706,112 @@ ${nodeLines || "      (none)"}
 ${edgeLines || "      (none)"}`;
 }
 
+// ── score-papers ──────────────────────────────────────────────────────────────
+// AI-scores each session paper by relevance to the session topic so the user
+// can choose which papers to include before triggering model generation.
+// Uses gpt-5-mini (fast, cheap). Returns immediately for sessions with ≤1 paper
+// (trivially "all included").
+
+router.post("/sessions/:id/models/score-papers", async (req, res): Promise<void> => {
+  const params = ScorePapersForGenerationParams.safeParse(req.params);
+  if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
+  const sessionId = params.data.id;
+
+  const sessionRow = await db.select({ topic: sessionsTable.topic, name: sessionsTable.name })
+    .from(sessionsTable).where(eq(sessionsTable.id, sessionId)).limit(1).then((r) => r[0]);
+  if (!sessionRow) { res.status(404).json({ error: "Session not found" }); return; }
+
+  const papers = await db.select({
+    id: papersTable.id,
+    title: papersTable.title,
+    abstract: papersTable.abstract,
+    year: papersTable.year,
+    citationCount: papersTable.citationCount,
+  }).from(papersTable).where(
+    and(
+      eq(papersTable.sessionId, sessionId),
+      sql`${papersTable.externalId} NOT LIKE 'manual:%' AND ${papersTable.tangential} IS NOT TRUE`,
+    ),
+  );
+
+  if (papers.length <= 1) {
+    res.json(papers.map((p) => ({
+      paperId: p.id,
+      title: p.title ?? "",
+      relevanceScore: 100,
+      recommendation: "include" as const,
+      reason: "文献数量极少，全部纳入。",
+    })));
+    return;
+  }
+
+  const topic = (sessionRow.topic ?? sessionRow.name ?? "").trim();
+  const topicLine = topic ? `研究主题：${topic}` : "（未设定具体研究主题，按整体相关性评估）";
+
+  const paperLines = papers.map((p) => {
+    const abs = (p.abstract ?? "").slice(0, 350);
+    return `[${p.id}] ${p.title ?? "(no title)"} (${p.year ?? "?"}年，引用 ${p.citationCount ?? 0} 次)\n摘要：${abs || "无摘要"}`;
+  }).join("\n\n");
+
+  const systemPrompt = `你是一位科研助理，帮助研究者评估每篇论文与当前研究主题的相关度，决定是否纳入模型生成。
+只返回合法 JSON，不要任何解释文字。`;
+
+  const userMsg = `${topicLine}
+
+以下是该研究会话中的论文，请逐篇评估：
+
+${paperLines}
+
+对每篇论文给出：
+- paperId：论文 ID（原样返回，整数）
+- relevanceScore：0–100 分，越高越相关
+- recommendation：include（80+分推荐纳入）/ borderline（50–79分建议谨慎）/ exclude（50分以下建议排除）
+- reason：1 句中文理由，说明该论文与主题的关联或偏离
+
+返回格式（只返回 JSON，不要 markdown 代码块）：
+{"scores":[{"paperId":1,"relevanceScore":90,"recommendation":"include","reason":"..."}]}`;
+
+  let scores: Array<{ paperId: number; relevanceScore: number; recommendation: "include" | "borderline" | "exclude"; reason: string }> = [];
+
+  try {
+    const completion = await openai.chat.completions.create({
+      model: "gpt-5-mini",
+      messages: [{ role: "system", content: systemPrompt }, { role: "user", content: userMsg }],
+      response_format: { type: "json_object" },
+      max_completion_tokens: 1200,
+    });
+    logAiUsageFromOpenAI(completion, { route: "models/score-papers", sessionId });
+    const raw = completion.choices[0]?.message?.content ?? "";
+    const parsed = JSON.parse(raw) as { scores?: unknown[] };
+    const rawScores = Array.isArray(parsed.scores) ? parsed.scores : [];
+    for (const s of rawScores) {
+      if (typeof s !== "object" || s === null) continue;
+      const item = s as Record<string, unknown>;
+      const paperId = typeof item.paperId === "number" ? item.paperId : Number(item.paperId);
+      const relevanceScore = Math.max(0, Math.min(100, typeof item.relevanceScore === "number" ? item.relevanceScore : 0));
+      const rec = item.recommendation === "include" ? "include"
+        : item.recommendation === "exclude" ? "exclude"
+        : "borderline";
+      scores.push({ paperId, relevanceScore, recommendation: rec, reason: String(item.reason ?? "") });
+    }
+  } catch (err) {
+    req.log.error({ err }, "score-papers: AI call failed, falling back to all-include");
+  }
+
+  // Build a map for fast lookup; fill in any papers the AI missed.
+  const scoreMap = new Map(scores.map((s) => [s.paperId, s]));
+  const result = papers.map((p) => {
+    const s = scoreMap.get(p.id);
+    if (s) {
+      const { paperId: _pid, ...sRest } = s;
+      return { paperId: p.id, title: p.title ?? "", ...sRest };
+    }
+    return { paperId: p.id, title: p.title ?? "", relevanceScore: 70, recommendation: "borderline" as const, reason: "未能评估，默认建议谨慎纳入。" };
+  });
+
+  res.json(result);
+});
+
 router.post("/sessions/:id/models/generate", async (req, res): Promise<void> => {
   // Wall-clock anchor for the ENTIRE request — moved to the top of the route
   // (was previously set just before the parallel fanout, missing ~5-10s of
@@ -724,6 +831,10 @@ router.post("/sessions/:id/models/generate", async (req, res): Promise<void> => 
   const numModels = bodyParse.success && bodyParse.data.numModels ? bodyParse.data.numModels : 1;
   const focusVariableIds = bodyParse.success && bodyParse.data.focusVariableIds ? bodyParse.data.focusVariableIds : [];
   const allowPartial = bodyParse.success && bodyParse.data.allowPartial === true;
+  const includedPaperIds: Set<number> | null =
+    bodyParse.success && bodyParse.data.includedPaperIds?.length
+      ? new Set(bodyParse.data.includedPaperIds)
+      : null;
 
   // Latency strategy: instead of one LLM call producing N models (input ~30k
   // tokens + output ~12k tokens easily blows past the 55s OpenAI-call budget
@@ -750,7 +861,7 @@ router.post("/sessions/:id/models/generate", async (req, res): Promise<void> => 
   // injected into the prompt below so the AI doesn't generate models that
   // ignore what the user actually wants to research. Pre-fix this was
   // serialized, paying ~3× DB round-trip latency on every generation.
-  const [sessionRows, variables, papers] = await Promise.all([
+  const [sessionRows, variablesRaw, papersRaw] = await Promise.all([
     db.select({ topic: sessionsTable.topic, name: sessionsTable.name, landscapeMeta: sessionsTable.landscapeMeta })
       .from(sessionsTable).where(eq(sessionsTable.id, sessionId)).limit(1),
     db.select().from(variablesTable).where(eq(variablesTable.sessionId, sessionId)),
@@ -760,6 +871,18 @@ router.post("/sessions/:id/models/generate", async (req, res): Promise<void> => 
     // (minDistinctPapers), per-paper backbone tally, evidence corpus, etc.
     db.select().from(papersTable).where(and(eq(papersTable.sessionId, sessionId), sql`${papersTable.externalId} NOT LIKE 'manual:%' AND ${papersTable.tangential} IS NOT TRUE`)),
   ]);
+  // When the user has pre-selected which papers to include (via the score-papers
+  // step), restrict both the variable pool and the paper pool to those IDs only.
+  // Manual-sentinel variables (paperId === null) are always kept.
+  let variables = variablesRaw;
+  let papers = papersRaw;
+  if (includedPaperIds !== null) {
+    const before = variables.length;
+    variables = variables.filter((v) => v.paperId === null || includedPaperIds.has(v.paperId));
+    papers = papers.filter((p) => includedPaperIds.has(p.id));
+    req.log.info({ sessionId, includedPaperCount: papers.length, variablesBefore: before, variablesAfter: variables.length }, "models/generate: paper filter applied");
+  }
+
   const sessionTopic = (sessionRows[0]?.topic ?? "").trim();
   const sessionName = (sessionRows[0]?.name ?? "").trim();
 

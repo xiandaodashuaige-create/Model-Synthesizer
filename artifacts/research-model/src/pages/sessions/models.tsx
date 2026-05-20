@@ -40,6 +40,7 @@ import { loadFocusedClusterKeys, saveFocusedClusterKeys, expandToVariableIds } f
 import { InnovationMetaPanel } from "@/components/innovation-meta-panel";
 import { ReadinessErrorCard, type GenerationReadinessError } from "@/components/readiness-error-card";
 import { RationaleDisplay } from "@/components/rationale-display";
+import { PaperSelectionDialog } from "@/components/paper-selection-dialog";
 
 // Surface the *real* server error in the toast. Previously we only checked
 // `err.data.error`, which is empty when:
@@ -175,6 +176,8 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
   // exactly two and clicks the sticky CTA to navigate to the compare page.
   const [compareMode, setCompareMode] = useState(false);
   const [compareSelected, setCompareSelected] = useState<number[]>([]);
+  const [paperSelectionOpen, setPaperSelectionOpen] = useState(false);
+  const [pendingAllowPartial, setPendingAllowPartial] = useState(false);
   const missingPapersList = useMemo(
     () => (papersForGuard ?? []).filter((p) => !p.extracted),
     [papersForGuard],
@@ -234,12 +237,10 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
     });
   };
 
-  const handleGenerate = (opts: { allowPartial?: boolean } = {}) => {
+  // Core generation executor — called both from the paper selection dialog
+  // (with includedPaperIds) and from the AI chat suggestion flow (without).
+  const executeGenerate = (opts: { allowPartial?: boolean; includedPaperIds?: number[] } = {}) => {
     const allowPartial = opts.allowPartial === true;
-    // Defense-in-depth: the button is also disabled, but guard the action
-    // itself in case of programmatic invocation or stale state. The
-    // pending-papers branch of the guard is intentionally bypassed when
-    // `allowPartial` is true (the user has just confirmed the warning dialog).
     if (guardLoading || isExtracting) return;
     if (!allowPartial && hasPendingPapers) return;
     setReadinessError(null);
@@ -250,6 +251,7 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
         numModels,
         focusVariableIds: focusVariableIds.length ? focusVariableIds : undefined,
         ...(allowPartial ? { allowPartial: true } : {}),
+        ...(opts.includedPaperIds?.length ? { includedPaperIds: opts.includedPaperIds } : {}),
       },
     }, {
       onSuccess: (result) => {
@@ -276,6 +278,13 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
         });
       },
     });
+  };
+
+  // Opens the paper selection dialog before generation. allowPartial is stored
+  // so the dialog can pass it through to executeGenerate when the user confirms.
+  const handleGenerate = (opts: { allowPartial?: boolean } = {}) => {
+    setPendingAllowPartial(opts.allowPartial === true);
+    setPaperSelectionOpen(true);
   };
 
   const toggleCompareSelected = (modelId: number) => {
@@ -998,6 +1007,14 @@ export default function SessionModels({ params: routeParams }: { params?: { id?:
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <PaperSelectionDialog
+        open={paperSelectionOpen}
+        onOpenChange={setPaperSelectionOpen}
+        sessionId={sessionId}
+        onConfirm={(ids) => executeGenerate({ allowPartial: pendingAllowPartial, includedPaperIds: ids })}
+        onSkip={() => executeGenerate({ allowPartial: pendingAllowPartial })}
+      />
 
       <AlertDialog open={!!pendingSelect} onOpenChange={(open) => { if (!open) setPendingSelect(null); }}>
         <AlertDialogContent>
