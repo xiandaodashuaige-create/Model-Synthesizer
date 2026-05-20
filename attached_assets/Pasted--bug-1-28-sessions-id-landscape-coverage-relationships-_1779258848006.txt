@@ -1,0 +1,169 @@
+一、目前代码有没有明显 bug？
+1. #28 文献充分性检查：基本可用
+后端 /sessions/:id/landscape 现在会返回：
+
+coverage
+relationships
+theoryClusters
+evidencedBackbones
+sufficiency
+gapReport
+前端 landscape.tsx 已经在 coverage banner 后显示 SufficiencyCard。
+
+四个维度也符合之前设计：
+
+论文数量
+近 5 年比例
+理论骨架数量
+landscape coverage
+总评级用木桶原则：
+
+minimal / fair / sufficient
+这是对的。
+
+2. 一个小 bug / UX 不一致：Gap Report 按钮显示“重新生成”，但后端会直接返回缓存
+前端逻辑：
+
+如果 gapReport 存在，按钮显示 regenerate / 重新生成
+但后端逻辑是：
+
+if gapReport.version === landscapeVersion:
+  return cached gapReport
+所以用户点“重新生成”时，其实不会真的重新生成，只会返回缓存。
+
+这不是严重 bug，但会让用户误解。
+
+建议二选一：
+
+方案 A：改按钮文案
+刷新报告
+或：
+
+查看最新报告
+方案 B：支持 force 参数
+POST /sessions/:id/landscape/gap-report?force=true
+用户点“重新生成”时才强制调用 AI。
+
+我建议先做 A，省钱且简单。
+
+3. OpenAPI 里 numModels default 3 可能已经过时
+openapi.yaml 里还写：
+
+numModels description: default 3
+但你们为了降本已经把默认模型数量降过。需要确认后端实际默认值。
+
+如果后端默认已经是 1 或 2，OpenAPI 文案要同步，否则前端/文档会误导。
+
+建议检查并统一：
+
+默认生成 1 个模型
+4. replit.md 有些状态说明可能过时
+我看到里面还有：
+
+Slice 3 status (in progress — UI shipped, contributionStatement still backend-null)
+但后续你们已经做了 contributionStatement、AI review、Phase 4、#28。
+
+这不是运行 bug，但会影响后续 Agent 读上下文，容易让它重复开发。
+
+建议更新 replit.md：
+
+Phase 1-4 shipped
+#28 sufficiency shipped
+Phase 5 pending
+5. 文献充分性搜索词对中文主题可能不够强
+后端生成搜索词时：
+
+topicEnWords = rawTopic 去掉中文后拼英文词
+如果 session topic 是纯中文，topicEnWords 可能为空，搜索词主要依赖 construct。
+
+这不是 bug，但建议后续增强：
+
+中文 topic → 英文关键词映射；
+或直接使用 canonical constructs + study context；
+或用已有变量中的英文 canonicalConstruct。
+当前版本可接受。
+
+二、目前下一步应该做什么？
+先做三个收尾小任务
+1. Merge #8
+#8 还是 Ready，先在 Replit 面板点 Merge。
+
+这是小修，不要继续挂着。
+
+2. 清理任务状态
+归档已经完成的：
+
+#9
+#10
+#12
+#14
+#19
+#20
+#24
+如果 #28 已经合并，也归档 #28。
+
+3. 修两个小一致性问题
+建议新建一个很小的 cleanup 任务：
+
+#29 文案/状态同步 cleanup
+内容：
+
+Gap report 按钮文案别写“重新生成”，除非支持 force；
+OpenAPI numModels default 与后端一致；
+replit.md 更新 Phase 状态。
+这个任务很小，但能防止后面 Agent 被旧文档误导。
+
+三、这一版距离“全部做完”还差什么？
+我按“当前版本上线可用”标准给你列。
+
+必做收尾
+任务	状态	是否必须
+#8 合并	Ready	必须
+已完成任务归档	手动	必须
+Gap report 按钮/缓存文案修正	小 bug	建议必须
+OpenAPI 默认模型数量文案同步	小 bug	建议必须
+replit.md 状态同步	文档	建议必须
+建议做，但不阻塞当前版本
+任务	原因
+#12 手测记录补充	你说已手测没问题，可记录一下
+#23 SerpAPI 持久化缓存	如果服务重启频繁再做
+#18 SerpAPI 缓存持久化	同 #23，可能重复
+大 session token/cost 回归	验证 #14 长期效果
+英文 i18n 完整化	如果面向英文用户再做
+大功能，建议放下一版
+任务	判断
+Phase 5 完整评审模拟器	大功能，先不要急
+行业/政府报告模块	很有价值，但应单独 Phase
+一键扩展验证全领域 novelty	很有价值，但需要谨慎控成本
+文献充分性 AI 增强版	当前规则版先够用
+四、现在最推荐的执行顺序
+我建议你现在这样走：
+
+1. 手动 Merge #8
+2. Archive 已完成任务
+3. 做一个小 cleanup：
+   - Gap report 按钮文案
+   - OpenAPI 默认 numModels 文案
+   - replit.md 状态同步
+4. 手测文献全景页 sufficiency 卡片
+5. 暂停大功能，观察一轮成本和用户体验
+6. 再决定是否做 Phase 5 或行业/政策报告模块
+五、我不建议现在马上做什么
+不建议马上做完整 Phase 5
+原因：
+
+会新增 AI 调用；
+当前已有规则版答辩问题；
+需要先观察用户是否真的需要 AI 对话式评审。
+不建议马上做全网扩展 novelty 验证
+这个会增加 OpenAlex / Scholar / AI matching 成本。
+等你确认本地文献池流程稳定后再做。
+
+最终判断
+当前上传的代码整体是可继续推进的，没有看到阻断级问题。
+主要剩下的是：
+
+状态清理 + 小文案/契约一致性修复 + 手测 #28
+而不是继续堆大功能。
+
+一句话：这一版已经接近收尾；先合 #8、归档、修小一致性问题，再考虑下一大阶段（行业/政府报告或 Phase 5 AI 评审）。
