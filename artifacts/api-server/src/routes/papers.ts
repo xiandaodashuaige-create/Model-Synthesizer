@@ -1146,15 +1146,41 @@ const SITE_RESTRICTIONS: Record<string, string> = {
   all: "site:gov.cn OR site:*.gov OR site:*.org.cn OR site:*.edu.cn",
 };
 
+// Allowlisted TLDs/domains that industry-search results are expected to come from.
+// This is defence-in-depth on top of the SerpAPI site: restrictions already applied
+// at search time — only fetch pages whose host matches one of these patterns.
+const ALLOWED_FETCH_TLDS = [".gov.cn", ".gov", ".org.cn", ".edu.cn", ".org", ".caict.ac.cn", ".ccidnet.com", ".drcnet.com.cn", ".casted.org.cn"];
+
+// Private / loopback / link-local CIDR prefixes that must never be fetched.
+// Blocks SSRF to internal infrastructure even via a redirect chain.
+const PRIVATE_IP_RE = /^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.|0\.|::1$|fc00:|fd)/i;
+
+function isUrlSafeToFetch(rawUrl: string): boolean {
+  let parsed: URL;
+  try { parsed = new URL(rawUrl); } catch { return false; }
+  // HTTPS only — no http, no file://, no ftp://, etc.
+  if (parsed.protocol !== "https:") return false;
+  const host = parsed.hostname.toLowerCase();
+  // Block private/loopback IPs
+  if (PRIVATE_IP_RE.test(host)) return false;
+  // Allowlist check: host must end with one of the permitted TLDs/domains
+  if (!ALLOWED_FETCH_TLDS.some((tld) => host === tld.replace(/^\./, "") || host.endsWith(tld))) return false;
+  return true;
+}
+
 async function fetchBodyText(url: string): Promise<string | null> {
+  if (!isUrlSafeToFetch(url)) return null;
   try {
     const ctl = new AbortController();
     const timer = setTimeout(() => ctl.abort(), 8_000);
     const r = await fetch(url, {
       signal: ctl.signal,
+      redirect: "follow",
       headers: { "User-Agent": "Mozilla/5.0 (compatible; ResearchBot/1.0)" },
     });
     clearTimeout(timer);
+    // After following redirects, validate the final URL is also safe
+    if (!isUrlSafeToFetch(r.url)) return null;
     if (!r.ok) return null;
     const html = await r.text();
     // Strip HTML tags and collapse whitespace; limit to ~6000 chars (~1500 tokens)
