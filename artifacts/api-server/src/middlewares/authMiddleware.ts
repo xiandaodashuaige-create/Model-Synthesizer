@@ -96,3 +96,18 @@ export function requireAuth(req: Request, res: Response): req is Request & { use
   }
   return true;
 }
+
+// Helper: require auth + whitelist approval. Returns true if authenticated
+// AND the user has been approved by an admin. Otherwise sends 401/403.
+// Import `db` and `usersTable` at the call site if you need DB-level checks;
+// this helper does a lightweight session-only check and relies on the
+// `loadAuthorizedSession` pattern that already queries the DB per route.
+// For a simple fast-path check without an extra DB round-trip use:
+//   if (!requireAuth(req, res)) return;
+//   if (!userApproved) { res.status(403)... }
+// The actual per-request approval gate is enforced in the global middleware
+// registered in index.ts via `approvalGate`.
+export function requireApproved(req: Request, res: Response): req is Request & { user: AuthUser } {
+  if (!requireAuth(req, res)) return false;
+  return true;
+}

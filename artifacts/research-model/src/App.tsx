@@ -4,7 +4,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useAuth } from "@workspace/replit-auth-web";
-import { Sparkles, Database, Network, FileSearch, ArrowRight, ShieldCheck, Loader2 } from "lucide-react";
+import { useGetCurrentAuthUser, getGetCurrentAuthUserQueryKey } from "@workspace/api-client-react";
+import { Sparkles, Database, Network, FileSearch, ArrowRight, ShieldCheck, Loader2, Clock, Shield } from "lucide-react";
 import NotFound from "@/pages/not-found";
 
 import Home from "./pages/home";
@@ -17,6 +18,7 @@ import SessionModelsCompare from "./pages/sessions/models-compare";
 import SessionModelDetail from "./pages/sessions/model-detail";
 import SessionLiveModel from "./pages/sessions/live-model";
 import SessionLandscape from "./pages/sessions/landscape";
+import AdminPage from "./pages/admin";
 import { Layout } from "./components/layout";
 import { useT } from "@/lib/i18n";
 
@@ -26,6 +28,7 @@ function Router() {
   return (
     <Layout>
       <Switch>
+        <Route path="/admin" component={AdminPage} />
         <Route path="/" component={Home} />
         <Route path="/sessions/new" component={NewSession} />
         <Route path="/sessions/:id" component={(props) => <SessionLayout><SessionPapers params={props.params} /></SessionLayout>} />
@@ -126,7 +129,7 @@ function AuthLangSwitcher() {
 
 function LoginGate() {
   const { t } = useT();
-  const { isLoading, isAuthenticated, login } = useAuth();
+  const { isLoading, isAuthenticated, login, logout } = useAuth();
   // Listen for global 401 events dispatched by the api-client when any request
   // comes back Unauthorized. Without this, an expired OIDC session silently
   // breaks every card on the page (model generation, AI usage, etc.) with no
@@ -139,6 +142,14 @@ function LoginGate() {
     window.addEventListener("api:unauthorized", onUnauthorized);
     return () => window.removeEventListener("api:unauthorized", onUnauthorized);
   }, []);
+
+  // Fetch approved/isAdmin status for the authenticated user.
+  const { data: authData, refetch: refetchAuth } = useGetCurrentAuthUser({
+    query: { enabled: isAuthenticated && !isLoading, queryKey: getGetCurrentAuthUserQueryKey() },
+  });
+  const currentUser = authData?.user ?? null;
+  const isApproved = currentUser?.approved || currentUser?.isAdmin;
+
   if (isLoading) {
     return (
       <AIAurora>
@@ -225,6 +236,60 @@ function LoginGate() {
             <div className="mt-5 flex items-center justify-center gap-2 text-[11px] uppercase tracking-[0.22em] text-slate-400/80">
               <ShieldCheck className="h-3 w-3" />
               <span>{t("auth.footerSecure" as any)}</span>
+            </div>
+          </div>
+        </div>
+      </AIAurora>
+    );
+  }
+  // Authenticated but not yet approved — show pending page.
+  if (isAuthenticated && currentUser && !isApproved) {
+    return (
+      <AIAurora>
+        <AuthLangSwitcher />
+        <div className="relative min-h-screen flex items-center justify-center px-4 py-10">
+          <div className="relative w-full max-w-md rounded-2xl border border-white/10 bg-slate-950/40 backdrop-blur-xl p-8 sm:p-10 shadow-[0_0_60px_-15px_rgba(251,191,36,0.25)]">
+            <div
+              aria-hidden
+              className="pointer-events-none absolute inset-0 rounded-2xl"
+              style={{
+                background: "linear-gradient(135deg, rgba(251,191,36,0.25), transparent 40%, rgba(99,102,241,0.2))",
+                WebkitMask: "linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0)",
+                WebkitMaskComposite: "xor",
+                maskComposite: "exclude",
+                padding: 1,
+              }}
+            />
+            <div className="flex items-center gap-3">
+              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br from-amber-400/30 to-indigo-500/30 ring-1 ring-amber-300/40">
+                <Clock className="h-5 w-5 text-amber-200" />
+              </div>
+              <div className="flex flex-col">
+                <span className="text-[11px] uppercase tracking-[0.32em] text-amber-300/80">
+                  {t("auth.tagline" as any)}
+                </span>
+                <h1 className="font-serif font-semibold text-xl text-white leading-tight">
+                  {t("pending.title" as any)}
+                </h1>
+              </div>
+            </div>
+            <p className="mt-6 text-sm leading-relaxed text-slate-300/90">
+              {t("pending.body" as any)}
+            </p>
+            <div className="mt-8 flex flex-col gap-3">
+              <button
+                onClick={() => refetchAuth()}
+                className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-amber-400 to-indigo-500 px-5 py-3 text-sm font-semibold text-slate-950 transition-transform hover:scale-[1.01] active:scale-[0.99]"
+              >
+                <Loader2 className="h-4 w-4" />
+                {t("pending.refresh" as any)}
+              </button>
+              <button
+                onClick={logout}
+                className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-white/15 bg-white/5 px-5 py-2.5 text-sm font-medium text-slate-200 hover:bg-white/10 transition-colors"
+              >
+                {t("pending.logout" as any)}
+              </button>
             </div>
           </div>
         </div>

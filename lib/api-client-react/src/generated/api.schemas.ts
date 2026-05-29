@@ -86,6 +86,25 @@ export interface AuthUser {
   lastName: string | null;
   /** @nullable */
   profileImageUrl: string | null;
+  /** Whether this user has been approved by an admin to use the app. */
+  approved: boolean;
+  /** Whether this user has admin rights (can approve other users). */
+  isAdmin: boolean;
+}
+
+export interface AdminUserItem {
+  id: string;
+  /** @nullable */
+  email: string | null;
+  /** @nullable */
+  firstName: string | null;
+  /** @nullable */
+  lastName: string | null;
+  /** @nullable */
+  profileImageUrl: string | null;
+  approved: boolean;
+  isAdmin: boolean;
+  createdAt: string;
 }
 
 export interface AuthUserEnvelope {
@@ -1464,6 +1483,14 @@ export interface ModelVersionSummary {
   edgeCount: number;
   createdAt: string;
 }
+
+export type ListAdminUsers200 = {
+  users: AdminUserItem[];
+};
+
+export type ApproveUserBody = {
+  approved: boolean;
+};
 
 export type SearchSessionPapersFullTextParams = {
   /**

@@ -22,8 +22,10 @@ import type {
   AddLiveModelEdgeBody,
   AddLiveModelNodeBody,
   AddPaperBody,
+  AdminUserItem,
   AiReviewResult,
   AiUsageSummary,
+  ApproveUserBody,
   AuthUserEnvelope,
   BulkImportPapersBody,
   BulkImportPapersResponse,
@@ -56,6 +58,7 @@ import type {
   ImportLiveModelFromModelBody,
   IndustrySearchBody,
   IndustrySearchPapers200,
+  ListAdminUsers200,
   LiveModelDetail,
   LookupPaper404,
   LookupPaperBody,
@@ -95,6 +98,168 @@ type AwaitedInput<T> = PromiseLike<T> | T;
 type Awaited<O> = O extends AwaitedInput<infer T> ? T : never;
 
 type SecondParameter<T extends (...args: never) => unknown> = Parameters<T>[1];
+
+/**
+ * @summary List all registered users (admin only)
+ */
+export const getListAdminUsersUrl = () => {
+  return `/api/admin/users`;
+};
+
+export const listAdminUsers = async (
+  options?: RequestInit,
+): Promise<ListAdminUsers200> => {
+  return customFetch<ListAdminUsers200>(getListAdminUsersUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListAdminUsersQueryKey = () => {
+  return [`/api/admin/users`] as const;
+};
+
+export const getListAdminUsersQueryOptions = <
+  TData = Awaited<ReturnType<typeof listAdminUsers>>,
+  TError = ErrorType<void>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listAdminUsers>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListAdminUsersQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listAdminUsers>>> = ({
+    signal,
+  }) => listAdminUsers({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listAdminUsers>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListAdminUsersQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listAdminUsers>>
+>;
+export type ListAdminUsersQueryError = ErrorType<void>;
+
+/**
+ * @summary List all registered users (admin only)
+ */
+
+export function useListAdminUsers<
+  TData = Awaited<ReturnType<typeof listAdminUsers>>,
+  TError = ErrorType<void>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listAdminUsers>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListAdminUsersQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Approve (or revoke) a user's access (admin only)
+ */
+export const getApproveUserUrl = (userId: string) => {
+  return `/api/admin/users/${userId}/approve`;
+};
+
+export const approveUser = async (
+  userId: string,
+  approveUserBody: ApproveUserBody,
+  options?: RequestInit,
+): Promise<AdminUserItem> => {
+  return customFetch<AdminUserItem>(getApproveUserUrl(userId), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(approveUserBody),
+  });
+};
+
+export const getApproveUserMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof approveUser>>,
+    TError,
+    { userId: string; data: BodyType<ApproveUserBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof approveUser>>,
+  TError,
+  { userId: string; data: BodyType<ApproveUserBody> },
+  TContext
+> => {
+  const mutationKey = ["approveUser"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof approveUser>>,
+    { userId: string; data: BodyType<ApproveUserBody> }
+  > = (props) => {
+    const { userId, data } = props ?? {};
+
+    return approveUser(userId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ApproveUserMutationResult = NonNullable<
+  Awaited<ReturnType<typeof approveUser>>
+>;
+export type ApproveUserMutationBody = BodyType<ApproveUserBody>;
+export type ApproveUserMutationError = ErrorType<void>;
+
+/**
+ * @summary Approve (or revoke) a user's access (admin only)
+ */
+export const useApproveUser = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof approveUser>>,
+    TError,
+    { userId: string; data: BodyType<ApproveUserBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof approveUser>>,
+  TError,
+  { userId: string; data: BodyType<ApproveUserBody> },
+  TContext
+> => {
+  return useMutation(getApproveUserMutationOptions(options));
+};
 
 /**
  * @summary Get the currently authenticated user

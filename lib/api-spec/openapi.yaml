@@ -24,6 +24,55 @@ tags:
   - name: personalization
     description: Per-user AI learning profile
 paths:
+  /admin/users:
+    get:
+      tags: [Admin]
+      operationId: listAdminUsers
+      summary: List all registered users (admin only)
+      responses:
+        "200":
+          description: User list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [users]
+                properties:
+                  users:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AdminUserItem"
+        "401": { description: Unauthorized }
+        "403": { description: Forbidden }
+  /admin/users/{userId}/approve:
+    post:
+      tags: [Admin]
+      operationId: approveUser
+      summary: Approve (or revoke) a user's access (admin only)
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [approved]
+              properties:
+                approved: { type: boolean }
+      responses:
+        "200":
+          description: Updated user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminUserItem"
+        "401": { description: Unauthorized }
+        "403": { description: Forbidden }
+        "404": { description: User not found }
   /auth/user:
     get:
       tags: [Auth]
@@ -2471,13 +2520,27 @@ components:
           type: string
     AuthUser:
       type: object
-      required: [id, email, firstName, lastName, profileImageUrl]
+      required: [id, email, firstName, lastName, profileImageUrl, approved, isAdmin]
       properties:
         id: { type: string }
         email: { type: [string, "null"] }
         firstName: { type: [string, "null"] }
         lastName: { type: [string, "null"] }
         profileImageUrl: { type: [string, "null"] }
+        approved: { type: boolean, description: "Whether this user has been approved by an admin to use the app." }
+        isAdmin: { type: boolean, description: "Whether this user has admin rights (can approve other users)." }
+    AdminUserItem:
+      type: object
+      required: [id, email, firstName, lastName, profileImageUrl, approved, isAdmin, createdAt]
+      properties:
+        id: { type: string }
+        email: { type: [string, "null"] }
+        firstName: { type: [string, "null"] }
+        lastName: { type: [string, "null"] }
+        profileImageUrl: { type: [string, "null"] }
+        approved: { type: boolean }
+        isAdmin: { type: boolean }
+        createdAt: { type: string, format: date-time }
     AuthUserEnvelope:
       type: object
       required: [user]

@@ -2,7 +2,8 @@ import * as oidc from "openid-client";
 import { Router, type IRouter, type Request, type Response } from "express";
 import { GetCurrentAuthUserResponse } from "@workspace/api-zod";
 import { db, usersTable, sessionsTable } from "@workspace/db";
-import { isNull, sql } from "drizzle-orm";
+import { eq, isNull, sql } from "drizzle-orm";
+import { requireAuth } from "../middlewares/authMiddleware";
 import {
   clearOidcSession,
   getOidcConfig,
@@ -64,7 +65,12 @@ async function upsertUser(claims: Record<string, unknown>) {
 
   const [user] = await db
     .insert(usersTable)
-    .values(userData)
+    .values({
+      ...userData,
+      // The very first user to sign in becomes admin and is auto-approved.
+      approved: isFirstUser,
+      isAdmin: isFirstUser,
+    })
     .onConflictDoUpdate({
       target: usersTable.id,
       set: { ...userData, updatedAt: new Date() },
@@ -85,12 +91,83 @@ async function upsertUser(claims: Record<string, unknown>) {
   return user;
 }
 
-router.get("/auth/user", (req: Request, res: Response) => {
+router.get("/auth/user", async (req: Request, res: Response) => {
+  if (!req.isAuthenticated()) {
+    res.json(GetCurrentAuthUserResponse.parse({ user: null }));
+    return;
+  }
+  // Fetch fresh approved/isAdmin from DB so the client always has current status.
+  const [dbUser] = await db
+    .select({
+      id: usersTable.id,
+      email: usersTable.email,
+      firstName: usersTable.firstName,
+      lastName: usersTable.lastName,
+      profileImageUrl: usersTable.profileImageUrl,
+      approved: usersTable.approved,
+      isAdmin: usersTable.isAdmin,
+    })
+    .from(usersTable)
+    .where(eq(usersTable.id, req.user.id));
+
   res.json(
     GetCurrentAuthUserResponse.parse({
-      user: req.isAuthenticated() ? req.user : null,
+      user: dbUser ?? null,
     }),
   );
+});
+
+// ---------------------------------------------------------------------------
+// Admin routes — list all users, approve / revoke access
+// ---------------------------------------------------------------------------
+
+router.get("/admin/users", async (req: Request, res: Response) => {
+  if (!requireAuth(req, res)) return;
+  const [me] = await db.select({ isAdmin: usersTable.isAdmin }).from(usersTable).where(eq(usersTable.id, req.user.id));
+  if (!me?.isAdmin) { res.status(403).json({ error: "Forbidden" }); return; }
+
+  const users = await db
+    .select({
+      id: usersTable.id,
+      email: usersTable.email,
+      firstName: usersTable.firstName,
+      lastName: usersTable.lastName,
+      profileImageUrl: usersTable.profileImageUrl,
+      approved: usersTable.approved,
+      isAdmin: usersTable.isAdmin,
+      createdAt: usersTable.createdAt,
+    })
+    .from(usersTable)
+    .orderBy(usersTable.createdAt);
+
+  res.json({ users });
+});
+
+router.post("/admin/users/:userId/approve", async (req: Request, res: Response) => {
+  if (!requireAuth(req, res)) return;
+  const [me] = await db.select({ isAdmin: usersTable.isAdmin }).from(usersTable).where(eq(usersTable.id, req.user.id));
+  if (!me?.isAdmin) { res.status(403).json({ error: "Forbidden" }); return; }
+
+  const userId = String(req.params.userId);
+  const { approved } = req.body as { approved: boolean };
+
+  const [updated] = await db
+    .update(usersTable)
+    .set({ approved: Boolean(approved), updatedAt: new Date() })
+    .where(eq(usersTable.id, userId))
+    .returning({
+      id: usersTable.id,
+      email: usersTable.email,
+      firstName: usersTable.firstName,
+      lastName: usersTable.lastName,
+      profileImageUrl: usersTable.profileImageUrl,
+      approved: usersTable.approved,
+      isAdmin: usersTable.isAdmin,
+      createdAt: usersTable.createdAt,
+    });
+
+  if (!updated) { res.status(404).json({ error: "User not found" }); return; }
+  res.json(updated);
 });
 
 router.get("/login", async (req: Request, res: Response) => {

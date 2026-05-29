@@ -8,6 +8,46 @@
 import * as zod from "zod";
 
 /**
+ * @summary List all registered users (admin only)
+ */
+export const ListAdminUsersResponse = zod.object({
+  users: zod.array(
+    zod.object({
+      id: zod.string(),
+      email: zod.string().nullable(),
+      firstName: zod.string().nullable(),
+      lastName: zod.string().nullable(),
+      profileImageUrl: zod.string().nullable(),
+      approved: zod.boolean(),
+      isAdmin: zod.boolean(),
+      createdAt: zod.coerce.date(),
+    }),
+  ),
+});
+
+/**
+ * @summary Approve (or revoke) a user's access (admin only)
+ */
+export const ApproveUserParams = zod.object({
+  userId: zod.coerce.string(),
+});
+
+export const ApproveUserBody = zod.object({
+  approved: zod.boolean(),
+});
+
+export const ApproveUserResponse = zod.object({
+  id: zod.string(),
+  email: zod.string().nullable(),
+  firstName: zod.string().nullable(),
+  lastName: zod.string().nullable(),
+  profileImageUrl: zod.string().nullable(),
+  approved: zod.boolean(),
+  isAdmin: zod.boolean(),
+  createdAt: zod.coerce.date(),
+});
+
+/**
  * @summary Get the currently authenticated user
  */
 export const GetCurrentAuthUserResponse = zod.object({
@@ -18,6 +58,16 @@ export const GetCurrentAuthUserResponse = zod.object({
       firstName: zod.string().nullable(),
       lastName: zod.string().nullable(),
       profileImageUrl: zod.string().nullable(),
+      approved: zod
+        .boolean()
+        .describe(
+          "Whether this user has been approved by an admin to use the app.",
+        ),
+      isAdmin: zod
+        .boolean()
+        .describe(
+          "Whether this user has admin rights (can approve other users).",
+        ),
     }),
     zod.null(),
   ]),
