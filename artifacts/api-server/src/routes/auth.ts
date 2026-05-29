@@ -275,4 +275,59 @@ router.get("/logout", async (req: Request, res: Response) => {
   res.redirect(endSessionUrl.href);
 });
 
+// ---------------------------------------------------------------------------
+// Admin settings — global AI kill-switch
+// ---------------------------------------------------------------------------
+import { systemSettingsTable } from "@workspace/db";
+import { invalidateAiGateCache } from "../lib/ai-gate";
+
+router.get("/admin/settings", async (req: Request, res: Response) => {
+  if (!requireAuth(req, res)) return;
+  const [me] = await db.select({ isAdmin: usersTable.isAdmin }).from(usersTable).where(eq(usersTable.id, req.user.id));
+  if (!me?.isAdmin) { res.status(403).json({ error: "Forbidden" }); return; }
+
+  let [row] = await db
+    .select({ aiEnabled: systemSettingsTable.aiEnabled, updatedAt: systemSettingsTable.updatedAt })
+    .from(systemSettingsTable)
+    .where(eq(systemSettingsTable.id, 1))
+    .limit(1);
+
+  if (!row) {
+    await db.insert(systemSettingsTable).values({ id: 1, aiEnabled: true }).onConflictDoNothing();
+    [row] = await db
+      .select({ aiEnabled: systemSettingsTable.aiEnabled, updatedAt: systemSettingsTable.updatedAt })
+      .from(systemSettingsTable)
+      .where(eq(systemSettingsTable.id, 1))
+      .limit(1);
+  }
+
+  res.json(row);
+});
+
+router.post("/admin/settings", async (req: Request, res: Response) => {
+  if (!requireAuth(req, res)) return;
+  const [me] = await db.select({ isAdmin: usersTable.isAdmin }).from(usersTable).where(eq(usersTable.id, req.user.id));
+  if (!me?.isAdmin) { res.status(403).json({ error: "Forbidden" }); return; }
+
+  const { aiEnabled } = req.body as { aiEnabled: boolean };
+
+  await db
+    .insert(systemSettingsTable)
+    .values({ id: 1, aiEnabled: Boolean(aiEnabled), updatedAt: new Date() })
+    .onConflictDoUpdate({
+      target: systemSettingsTable.id,
+      set: { aiEnabled: Boolean(aiEnabled), updatedAt: new Date() },
+    });
+
+  invalidateAiGateCache();
+
+  const [updated] = await db
+    .select({ aiEnabled: systemSettingsTable.aiEnabled, updatedAt: systemSettingsTable.updatedAt })
+    .from(systemSettingsTable)
+    .where(eq(systemSettingsTable.id, 1))
+    .limit(1);
+
+  res.json(updated);
+});
+
 export default router;

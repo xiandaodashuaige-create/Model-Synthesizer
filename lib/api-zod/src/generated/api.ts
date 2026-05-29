@@ -48,6 +48,30 @@ export const ApproveUserResponse = zod.object({
 });
 
 /**
+ * @summary Get global system settings (admin only)
+ */
+export const GetAdminSettingsResponse = zod.object({
+  aiEnabled: zod
+    .boolean()
+    .describe("When false all AI-cost endpoints return 503 immediately."),
+  updatedAt: zod.coerce.date(),
+});
+
+/**
+ * @summary Update global system settings (admin only)
+ */
+export const UpdateAdminSettingsBody = zod.object({
+  aiEnabled: zod.boolean(),
+});
+
+export const UpdateAdminSettingsResponse = zod.object({
+  aiEnabled: zod
+    .boolean()
+    .describe("When false all AI-cost endpoints return 503 immediately."),
+  updatedAt: zod.coerce.date(),
+});
+
+/**
  * @summary Get the currently authenticated user
  */
 export const GetCurrentAuthUserResponse = zod.object({

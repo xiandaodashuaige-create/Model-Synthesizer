@@ -6,6 +6,7 @@ import router from "./routes";
 import { authMiddleware } from "./middlewares/authMiddleware";
 import { loadAuthorizedSession } from "./middlewares/sessionOwnership";
 import { logger } from "./lib/logger";
+import { aiGate } from "./lib/ai-gate";
 import { db, usersTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 
@@ -74,6 +75,9 @@ async function approvalGate(req: Request, res: Response, next: NextFunction) {
 }
 
 app.use("/api", approvalGate);
+
+// Global AI kill-switch — blocks AI-cost routes when admin has disabled AI.
+app.use("/api", aiGate);
 
 // Auth + ownership gate for ALL /api/sessions/:id/* (and /api/sessions/:sessionId/*).
 // Individual route handlers can rely on res.locals.session being a session

@@ -92,6 +92,12 @@ export interface AuthUser {
   isAdmin: boolean;
 }
 
+export interface SystemSettings {
+  /** When false all AI-cost endpoints return 503 immediately. */
+  aiEnabled: boolean;
+  updatedAt: string;
+}
+
 export interface AdminUserItem {
   id: string;
   /** @nullable */
@@ -1490,6 +1496,10 @@ export type ListAdminUsers200 = {
 
 export type ApproveUserBody = {
   approved: boolean;
+};
+
+export type UpdateAdminSettingsBody = {
+  aiEnabled: boolean;
 };
 
 export type SearchSessionPapersFullTextParams = {
